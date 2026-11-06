@@ -32,9 +32,13 @@ export async function apiRequest<T>(
     headers['x-csrf-token'] = options.csrfToken;
   }
 
+  headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+  headers['Pragma'] = 'no-cache';
+
   const res = await fetch(path, {
     method,
     headers,
+    cache: 'no-store',
     credentials: 'include',
     signal: options.signal,
     body: options.isFormData
