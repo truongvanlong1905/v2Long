@@ -3,18 +3,17 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-if (
-  process.env.NODE_ENV !== 'production' &&
-  (!process.env.DATABASE_URL ||
-    process.env.DATABASE_URL === 'file:./independent_v2.db' ||
-    process.env.DATABASE_URL === 'file:./dev.db')
-) {
-  const defaultDbFile = path.resolve(__dirname, '../prisma/independent_v2.db').replace(/\\/g, '/');
-  process.env.DATABASE_URL = `file:${defaultDbFile}`;
-}
+const defaultDbFile = path.resolve(__dirname, '../prisma/dev.db').replace(/\\/g, '/');
+process.env.DATABASE_URL = `file:${defaultDbFile}`;
 const { PrismaClient } = require('@prisma/client');
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  datasources: {
+    db: {
+      url: `file:${defaultDbFile}`,
+    },
+  },
+});
 
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
