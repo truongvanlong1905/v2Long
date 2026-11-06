@@ -44,12 +44,24 @@ jobs:
 
       - name: Run Core security & RBAC unit tests
         run: |
-          set -e
-          node --test --test-reporter spec apps/api/src/core/__tests__/core-security.test.js
-          node --test --test-reporter spec apps/api/src/core/__tests__/ai-design-studio-upgrade.test.js
-          node --test --test-reporter spec apps/api/src/core/__tests__/five-modules-integration.test.js
-          node --test --test-reporter spec apps/api/src/core/__tests__/reports-and-ads-upgrade.test.js
-          node --test --test-reporter spec apps/api/src/core/__tests__/database-shared-schema.test.js
+          for test_file in \
+            apps/api/src/core/__tests__/core-security.test.js \
+            apps/api/src/core/__tests__/ai-design-studio-upgrade.test.js \
+            apps/api/src/core/__tests__/five-modules-integration.test.js \
+            apps/api/src/core/__tests__/reports-and-ads-upgrade.test.js \
+            apps/api/src/core/__tests__/database-shared-schema.test.js; do
+            echo "::group::Running $test_file"
+            if ! node --test --test-reporter spec "$test_file" 2>&1 | tee test_out.log; then
+              echo "::endgroup::"
+              echo "### ❌ Test Failed: \`$test_file\`" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              cat test_out.log >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              exit 1
+            fi
+            echo "::endgroup::"
+            echo "✅ $test_file passed"
+          done
 
       - name: Run TypeScript typecheck across workspaces
         run: npm run typecheck
