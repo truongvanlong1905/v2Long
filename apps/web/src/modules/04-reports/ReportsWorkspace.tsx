@@ -391,19 +391,24 @@ export function ReportsWorkspace() {
 
           {/* Unanswered Quotes > 7 days Alert Table */}
           <section className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-card">
-            <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+            <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="font-display text-base font-bold text-ink">
-                  Danh sách báo giá đã gửi đang chờ khách hàng phản hồi (Cảnh báo đỏ khi &ge; 7 ngày)
+                <h2 className="font-display text-base font-bold text-ink flex items-center gap-2">
+                  <span>Danh sách báo giá đã gửi đang chờ khách hàng phản hồi</span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold whitespace-nowrap">
+                    Cảnh báo khi &ge; 7 ngày
+                  </span>
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Hỗ trợ Trưởng nhóm Sales và Ban Giám đốc đôn đốc các hồ sơ đã gửi báo giá nhưng khách chưa phản hồi
                 </p>
               </div>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold whitespace-nowrap">
-                <Clock className="w-3.5 h-3.5 text-amber-600" />
-                <span>{data.unansweredQuotes.length} hồ sơ chờ phản hồi</span>
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold whitespace-nowrap">
+                  <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span>{data.unansweredQuotes.length} hồ sơ chờ phản hồi</span>
+                </span>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-sm">
@@ -413,7 +418,7 @@ export function ReportsWorkspace() {
                     <th className="py-3.5 px-4 font-bold min-w-[220px]">Khách hàng / Đơn vị</th>
                     <th className="py-3.5 px-4 font-bold whitespace-nowrap">Số điện thoại</th>
                     <th className="py-3.5 px-4 font-bold whitespace-nowrap">Sales phụ trách</th>
-                    <th className="py-3.5 px-4 font-bold min-w-[180px]">Sản phẩm báo giá</th>
+                    <th className="py-3.5 px-4 font-bold min-w-[200px]">Sản phẩm báo giá</th>
                     <th className="py-3.5 px-4 font-bold whitespace-nowrap">Thời điểm gửi</th>
                     <th className="py-3.5 px-4 font-bold text-right whitespace-nowrap">Số ngày chờ</th>
                   </tr>
@@ -426,57 +431,80 @@ export function ReportsWorkspace() {
                       </td>
                     </tr>
                   ) : (
-                    data.unansweredQuotes.map((q) => (
-                      <tr
-                        key={q.leadId}
-                        className={
-                          q.isOverdue7Days
-                            ? 'bg-rose-50/50 hover:bg-rose-50/80 transition-colors'
-                            : 'hover:bg-slate-50/80 transition-colors'
-                        }
-                      >
-                        <td className="py-3.5 px-4 tabular-nums font-bold text-brand whitespace-nowrap">
-                          <a
-                            href={`/leads?highlight=${q.leadId}`}
-                            className="hover:underline"
-                            title="Mở hồ sơ Lead để cập nhật phản hồi báo giá"
-                          >
-                            {q.leadCode}
-                          </a>
-                        </td>
-                        <td className="py-3.5 px-4 font-semibold text-ink">
-                          {q.companyOrContact.replace(/\s*\(Dữ liệu tổng hợp\)/gi, '')}
-                        </td>
-                        <td className="py-3.5 px-4 tabular-nums font-medium text-slate-700 whitespace-nowrap">
-                          {q.phone}
-                        </td>
-                        <td className="py-3.5 px-4 font-medium text-slate-700 whitespace-nowrap">
-                          {q.assignedSalesName}
-                        </td>
-                        <td className="py-3.5 px-4 text-slate-600">{q.productSummary}</td>
-                        <td className="py-3.5 px-4 tabular-nums text-slate-500 whitespace-nowrap">
-                          {new Date(q.quoteSentAt).toLocaleDateString('vi-VN')}
-                        </td>
-                        <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                          <span
-                            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-bold text-xs whitespace-nowrap ${
-                              q.isOverdue7Days
-                                ? 'bg-rose-600 text-white shadow-2xs'
-                                : 'bg-amber-100 text-amber-800 border border-amber-200'
-                            }`}
-                          >
-                            {q.isOverdue7Days ? (
-                              <>
-                                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                                <span>Quá hạn · {q.daysWaiting} ngày</span>
-                              </>
-                            ) : (
-                              <span>Chờ {q.daysWaiting} ngày</span>
-                            )}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
+                    data.unansweredQuotes.map((q) => {
+                      const productItems = q.productSummary
+                        ? q.productSummary
+                            .split(',')
+                            .map((s) => s.trim())
+                            .filter(Boolean)
+                        : [];
+                      return (
+                        <tr
+                          key={q.leadId}
+                          className={
+                            q.isOverdue7Days
+                              ? 'bg-rose-50/40 hover:bg-rose-50/75 transition-colors'
+                              : 'hover:bg-slate-50/80 transition-colors'
+                          }
+                        >
+                          <td className="py-3.5 px-4 whitespace-nowrap">
+                            <a
+                              href={`/leads?highlight=${q.leadId}`}
+                              className="inline-flex items-center px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200/80 text-brand font-bold text-xs tabular-nums whitespace-nowrap transition-colors"
+                              title="Mở hồ sơ Lead để cập nhật phản hồi báo giá"
+                            >
+                              {q.leadCode}
+                            </a>
+                          </td>
+                          <td className="py-3.5 px-4 font-bold text-ink">
+                            {q.companyOrContact.replace(/\s*\(Dữ liệu tổng hợp\)/gi, '')}
+                          </td>
+                          <td className="py-3.5 px-4 tabular-nums font-semibold text-slate-700 whitespace-nowrap">
+                            {q.phone}
+                          </td>
+                          <td className="py-3.5 px-4 font-medium text-slate-700 whitespace-nowrap">
+                            {q.assignedSalesName}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {productItems.length > 0 ? (
+                                productItems.map((prod, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="inline-flex items-center px-2.5 py-0.5 rounded-md bg-white border border-slate-200 text-slate-700 text-xs font-medium whitespace-nowrap shadow-2xs"
+                                  >
+                                    {prod}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-xs text-slate-400">{q.productSummary}</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4 tabular-nums text-slate-600 font-medium whitespace-nowrap">
+                            {new Date(q.quoteSentAt).toLocaleDateString('vi-VN')}
+                          </td>
+                          <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                            <span
+                              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-bold text-xs whitespace-nowrap ${
+                                q.isOverdue7Days
+                                  ? 'bg-rose-600 text-white shadow-2xs'
+                                  : 'bg-amber-100 text-amber-800 border border-amber-200'
+                              }`}
+                            >
+                              {q.isOverdue7Days ? (
+                                <>
+                                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                                  <span>Quá hạn · {q.daysWaiting} ngày</span>
+                                </>
+                              ) : (
+                                <span>Chờ {q.daysWaiting} ngày</span>
+                              )}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -698,8 +726,21 @@ export function ReportsWorkspace() {
                             {row.marketingSource}
                           </span>
                         </td>
-                        <td className="py-3.5 px-4 text-slate-600 text-xs sm:text-sm leading-snug">
-                          {row.productsText}
+                        <td className="py-3.5 px-4">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {row.productsText
+                              .split(',')
+                              .map((s) => s.trim())
+                              .filter(Boolean)
+                              .map((prod, idx) => (
+                                <span
+                                  key={idx}
+                                  className="inline-flex items-center px-2.5 py-0.5 rounded-md bg-slate-100/90 border border-slate-200/80 text-slate-700 text-xs font-medium whitespace-nowrap"
+                                >
+                                  {prod}
+                                </span>
+                              ))}
+                          </div>
                         </td>
                         <td className="py-3.5 px-4 text-right whitespace-nowrap">
                           <span

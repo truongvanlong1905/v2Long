@@ -31,7 +31,7 @@ const config: Config = {
       fontFamily: {
         display: ['"Plus Jakarta Sans"', '"Be Vietnam Pro"', 'system-ui', 'sans-serif'],
         sans: ['"Be Vietnam Pro"', 'Inter', 'system-ui', 'sans-serif'],
-        mono: ['"JetBrains Mono"', 'monospace'],
+        mono: ['"Be Vietnam Pro"', 'Inter', 'system-ui', 'sans-serif'],
       },
       borderRadius: {
         xl: '12px',

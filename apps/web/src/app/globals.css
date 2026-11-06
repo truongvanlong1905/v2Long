@@ -34,3 +34,8 @@ h1, h2, h3, .font-display {
   font-family: 'Plus Jakarta Sans', 'Be Vietnam Pro', system-ui, sans-serif;
 }
 
+.font-mono, .tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+
