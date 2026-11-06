@@ -226,6 +226,29 @@ export interface LeadTrackingSummaryDto {
   utmGclidMismatch: boolean;
 }
 
+export interface LeadQuoteVersionDto {
+  id: number;
+  quoteCode: string;
+  versionNumber: number;
+  scopeSummary: string;
+  validUntilDate: string | null;
+  createdByName: string;
+  createdAt: string;
+  bypassPriceCheckConfirmed: boolean;
+}
+
+export interface LeadDesignSummaryDto {
+  id: number;
+  requestType: 'perspective_3d' | 'banner';
+  status: 'pending' | 'ai_drafted' | 'in_review' | 'completed';
+  ledCategory: string | null;
+  screenDimensions: string | null;
+  designerName: string;
+  latestVersionNumber: number;
+  previewImageUrl: string | null;
+  updatedAt: string;
+}
+
 export interface LeadItemDto {
   id: number;
   leadCode: string;
@@ -253,9 +276,6 @@ export interface LeadItemDto {
   quoteSentAt: string | null;
   quoteRespondedAt: string | null;
   isQuoteOverdue7Days: boolean;
-  /** Giữ ở tầng dữ liệu theo Q08; chỉ trả về khi role có thẩm quyền nội bộ */
-  quoteValue: MonetaryAmountDto | null;
-  dealValue: MonetaryAmountDto | null;
   isDuplicateAlert: boolean;
   duplicateType: 'NONE' | 'ACTIVE_RED' | 'PRIOR_LEAD';
   duplicateOfLeadId: number | null;
@@ -279,6 +299,10 @@ export interface LeadItemDto {
   attachmentsCount: number;
   attachments?: LeadAttachmentDto[];
   activities?: LeadActivityDto[];
+  /** Tiến độ các lần gửi báo giá (không chứa số tiền) — trả về cho BOD, Admin, Sales Lead, Sales phụ trách */
+  quoteVersions?: LeadQuoteVersionDto[];
+  /** Liên thông hai chiều với Studio Thiết kế & Phối cảnh 3D AI (M05) */
+  designRequests?: LeadDesignSummaryDto[];
 }
 
 export interface SalesAssigneeOptionDto {
@@ -337,12 +361,42 @@ export const TransitionPipelineSchema = z.object({
   toStatus: z.enum(PIPELINE_STATUSES),
   reason: z.string().trim().max(500).optional().nullable(),
   noteContent: z.string().trim().max(2000).optional().nullable(),
-  quoteValueVndString: BigIntStringSchema.optional().nullable(),
-  dealValueVndString: BigIntStringSchema.optional().nullable(),
   markQuoteResponded: z.boolean().optional(),
+  bypassPriceCheckConfirmed: z.boolean().optional(),
 });
 
 export type TransitionPipelineDto = z.infer<typeof TransitionPipelineSchema>;
+
+/**
+ * Quy tắc nghiệp vụ mới nhất: hệ thống KHÔNG lưu/hiển thị giá sản phẩm, giá trị báo giá,
+ * giá trị hợp đồng, doanh thu hay lợi nhuận. Một "lần gửi báo giá" chỉ ghi nhận tiến độ:
+ * phạm vi kỹ thuật, hạn hiệu lực, người phụ trách và thời điểm.
+ */
+const MONEY_LIKE_PATTERN =
+  /(\d[\d.,\s]*\s*(đ|₫|vnđ|vnd|đồng|triệu|tr\b|tỷ|ty\b|k\b|usd|\$))|((đ|₫|vnđ|vnd|usd|\$)\s*\d)/i;
+
+export function containsMonetaryAmountText(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return MONEY_LIKE_PATTERN.test(text);
+}
+
+export const CreatePrivateQuoteVersionSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  scopeSummary: z
+    .string()
+    .trim()
+    .min(3, 'Vui lòng nhập tóm tắt phạm vi kỹ thuật của lần gửi báo giá.')
+    .max(1500)
+    .refine((v) => !containsMonetaryAmountText(v), {
+      message:
+        'Không nhập số tiền, đơn giá hay giá trị báo giá vào hệ thống. Chỉ ghi phạm vi kỹ thuật và tiến độ.',
+    }),
+  validUntilDate: z.string().trim().max(40).optional().nullable(),
+  transitionToQuoteSent: z.boolean().optional(),
+  bypassPriceCheckConfirmed: z.boolean().optional(),
+});
+
+export type CreatePrivateQuoteVersionDto = z.infer<typeof CreatePrivateQuoteVersionSchema>;
 
 export const ReassignLeadSchema = z.object({
   expectedVersion: z.number().int().positive(),

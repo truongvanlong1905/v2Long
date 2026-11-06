@@ -1,5 +1,6 @@
 import { ConcurrencyConflictError, prisma } from '@toantrung/database';
 import {
+  CreatePrivateQuoteVersionSchema,
   MarkLeadSpamSchema,
   ReassignLeadSchema,
   TransitionPipelineSchema,
@@ -12,6 +13,7 @@ import {
 import {
   assertLeadMutationScope,
   confirmReceiveLead,
+  createPrivateQuoteVersion,
   markLeadSpam,
   reassignLeadSales,
   reviewPendingSpamLead,
@@ -92,6 +94,23 @@ export async function PATCH(
         typeof raw.note === 'string' ? raw.note : undefined,
       );
       return jsonSuccess({ id: updated.id, version: updated.version });
+    }
+
+    if (action === 'create_quote_version') {
+      const parsed = CreatePrivateQuoteVersionSchema.safeParse(raw);
+      if (!parsed.success) {
+        return jsonError(
+          'VALIDATION_ERROR',
+          parsed.error.issues[0]?.message || 'Dữ liệu hồ sơ báo giá nội bộ không hợp lệ.',
+          400,
+        );
+      }
+      const res = await createPrivateQuoteVersion(auth.user, leadId, parsed.data);
+      return jsonSuccess({
+        id: res.lead.id,
+        version: res.lead.version,
+        pipelineStatus: res.lead.pipelineStatus,
+      });
     }
 
     if (action === 'add_note') {

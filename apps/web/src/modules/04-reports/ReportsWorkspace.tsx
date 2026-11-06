@@ -22,6 +22,7 @@ import {
   TrendingUp,
   Users,
 } from 'lucide-react';
+import { formatMoney } from '@/core/format/money';
 import { useSession } from '@/core/session/SessionContext';
 import { ReportDocComposer } from './ReportDocComposer';
 
@@ -71,6 +72,14 @@ export function ReportsWorkspace() {
   useEffect(() => {
     void loadReports();
   }, [loadReports]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('viewReportId')) {
+      setReportViewMode('doc_composer');
+    }
+  }, []);
 
   const [copiedSheets, setCopiedSheets] = useState(false);
 
@@ -126,20 +135,20 @@ export function ReportsWorkspace() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 text-sm">
       {/* Header & Filter Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white border border-slate-200/80 rounded-2xl p-5 shadow-card">
         <div>
           <div className="flex items-center gap-2 text-xs font-bold text-brand uppercase tracking-wider">
             <BarChart3 className="w-4 h-4" />
-            <span>M04 · Dashboard & Báo cáo phân quyền (Canonical D1–D6)</span>
+            <span>Báo cáo & Phân tích điều hành</span>
           </div>
           <h1 className="font-display text-2xl font-bold text-ink mt-1">
             Báo cáo & Phân tích hiệu suất đa phòng ban
           </h1>
           {data && (
-            <p className="text-xs text-slate-600 mt-1 flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-brand shrink-0" />
+            <p className="text-sm text-slate-600 mt-1 flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-brand shrink-0" />
               <span>{data.scopeDescription}</span>
             </p>
           )}
@@ -152,7 +161,7 @@ export function ReportsWorkspace() {
                 key={opt.value}
                 type="button"
                 onClick={() => setPreset(opt.value)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${
                   preset === opt.value
                     ? 'bg-brand text-white shadow-sm'
                     : 'text-slate-600 hover:text-ink'
@@ -169,14 +178,14 @@ export function ReportsWorkspace() {
                 type="date"
                 value={fromDate}
                 onChange={(e) => setFromDate(e.target.value)}
-                className="h-9 px-2.5 rounded-xl border border-slate-200 text-xs font-medium"
+                className="h-9 px-2.5 rounded-xl border border-slate-200 text-sm font-medium"
               />
-              <span className="text-xs text-slate-400">→</span>
+              <span className="text-sm text-slate-400">→</span>
               <input
                 type="date"
                 value={toDate}
                 onChange={(e) => setToDate(e.target.value)}
-                className="h-9 px-2.5 rounded-xl border border-slate-200 text-xs font-medium"
+                className="h-9 px-2.5 rounded-xl border border-slate-200 text-sm font-medium"
               />
             </div>
           )}
@@ -184,35 +193,35 @@ export function ReportsWorkspace() {
           <button
             type="button"
             onClick={() => void loadReports()}
-            className="h-9 px-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 inline-flex items-center gap-1.5"
+            className="h-9 px-3.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-sm font-semibold text-slate-700 inline-flex items-center gap-1.5"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             <span>Làm mới</span>
           </button>
 
-          {/* Switcher between Dashboard Analytics and A4 Word/Docs Composer (Step 5) */}
+          {/* Switcher between Dashboard Analytics and A4 Word/Docs Composer */}
           <div className="inline-flex p-1 rounded-xl bg-slate-100 border border-slate-200/80">
             <button
               type="button"
               onClick={() => setReportViewMode('dashboard')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+              className={`px-3 py-1.5 rounded-lg text-sm font-bold transition ${
                 reportViewMode === 'dashboard'
                   ? 'bg-[#1E3A8A] text-white shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Dashboard D1–D6
+              Số liệu Tổng hợp
             </button>
             <button
               type="button"
               onClick={() => setReportViewMode('doc_composer')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+              className={`px-3 py-1.5 rounded-lg text-sm font-bold transition ${
                 reportViewMode === 'doc_composer'
                   ? 'bg-[#1E3A8A] text-white shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Soạn Báo cáo A4 (Docs/RBAC)
+              Soạn Báo cáo A4 (Docs)
             </button>
           </div>
 
@@ -221,18 +230,25 @@ export function ReportsWorkspace() {
               <button
                 type="button"
                 onClick={() => handleExport('xlsx')}
-                className="h-9 px-3.5 rounded-xl bg-brand hover:bg-brand-deep text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-sm"
+                className="h-9 px-3.5 rounded-xl bg-brand hover:bg-brand-deep text-white text-sm font-bold inline-flex items-center gap-1.5 shadow-sm"
               >
-                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <FileSpreadsheet className="w-4 h-4" />
                 <span>Xuất Excel (.xlsx)</span>
               </button>
+              <a
+                href={`/api/v1/reports/docx?preset=${encodeURIComponent(preset)}`}
+                className="h-9 px-3.5 rounded-xl border border-blue-300 bg-blue-50 hover:bg-[#1E3A8A] text-[#1E3A8A] hover:text-white text-sm font-bold inline-flex items-center gap-1.5 shadow-2xs transition"
+                title="Tải xuống Báo cáo Điều hành định dạng Microsoft Word chuẩn OpenXML (.docx)"
+              >
+                <span>Xuất Word (.docx)</span>
+              </a>
               <button
                 type="button"
                 onClick={handleGoogleSheetsExport}
-                className="h-9 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-sm"
+                className="h-9 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold inline-flex items-center gap-1.5 shadow-sm"
                 title="Tải CSV chuẩn UTF-8 & sao chép bảng vào Clipboard để dán nhanh (Ctrl+V) vào Google Sheets"
               >
-                {copiedSheets ? <Check className="w-3.5 h-3.5 text-white" /> : <Copy className="w-3.5 h-3.5" />}
+                {copiedSheets ? <Check className="w-4 h-4 text-white" /> : <Copy className="w-4 h-4" />}
                 <span>{copiedSheets ? 'Đã sao chép Sheets!' : 'Google Sheets / CSV'}</span>
               </button>
             </>
@@ -241,13 +257,13 @@ export function ReportsWorkspace() {
       </div>
 
       {error && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium">
+        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-sm text-rose-700 font-medium">
           {error}
         </div>
       )}
 
       {copiedSheets && (
-        <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-300 text-xs text-emerald-800 font-medium flex items-center gap-2">
+        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-300 text-sm text-emerald-800 font-medium flex items-center gap-2">
           <Check className="w-4 h-4 text-emerald-600 shrink-0" />
           <span>
             <strong>Đã sao chép bảng dữ liệu vào Clipboard & tải file CSV!</strong> Bạn có thể mở Google Sheets và nhấn <strong>Ctrl+V</strong> để dán trực tiếp, hoặc tải file CSV lên Google Drive.
@@ -263,11 +279,11 @@ export function ReportsWorkspace() {
         <>
           {/* Freshness & Small Sample Alerts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            <div className="p-3.5 rounded-xl bg-brand-soft border border-brand-border text-xs text-slate-700 flex items-start gap-2.5">
+            <div className="p-4 rounded-xl bg-brand-soft border border-brand-border text-sm text-slate-700 flex items-start gap-2.5">
               <Clock className="w-4 h-4 text-brand shrink-0 mt-0.5" />
               <div>
                 <p className="font-semibold text-brand">{data.todayPreliminaryNotice}</p>
-                <p className="text-[11px] text-slate-500 mt-0.5">
+                <p className="text-xs text-slate-500 mt-0.5">
                   Đồng bộ gần nhất:{' '}
                   <strong>
                     {data.lastSyncedAt
@@ -279,7 +295,7 @@ export function ReportsWorkspace() {
             </div>
 
             {data.isSmallSample && data.smallSampleNotice && (
-              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-start gap-2.5">
+              <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-800 flex items-start gap-2.5">
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div>
                   <strong className="font-bold">Cảnh báo cỡ mẫu nhỏ (Small Sample):</strong>
@@ -292,7 +308,7 @@ export function ReportsWorkspace() {
           {/* 4 Main Overview KPI Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             <div className="bg-white border border-blue-200/80 rounded-2xl p-5 shadow-card">
-              <div className="flex items-center justify-between text-xs font-bold text-slate-600">
+              <div className="flex items-center justify-between text-sm font-bold text-slate-700">
                 <span>Tổng Lead (L1 / L2 / L3)</span>
                 <Users className="w-4 h-4 text-brand" />
               </div>
@@ -305,13 +321,13 @@ export function ReportsWorkspace() {
                   <strong className="text-emerald-700">{data.overview.effectiveLeadsL3}</strong>)
                 </span>
               </div>
-              <p className="mt-2 text-[11px] text-slate-500">
+              <p className="mt-2 text-xs text-slate-500">
                 Mới tiếp nhận: {data.overview.newLeadCount} · Đang báo giá: {data.overview.quotingCount}
               </p>
             </div>
 
             <div className="bg-white border border-amber-200/80 rounded-2xl p-5 shadow-card">
-              <div className="flex items-center justify-between text-xs font-bold text-slate-600">
+              <div className="flex items-center justify-between text-sm font-bold text-slate-700">
                 <span>Báo giá chờ khách phản hồi</span>
                 <Clock className="w-4 h-4 text-amber-600" />
               </div>
@@ -320,18 +336,18 @@ export function ReportsWorkspace() {
                   {data.overview.unansweredQuoteCount}
                 </span>
                 {data.overview.overdue7DaysQuoteCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[11px] font-bold">
+                  <span className="px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-700 text-xs font-bold">
                     {data.overview.overdue7DaysQuoteCount} quá hạn &gt; 7 ngày
                   </span>
                 )}
               </div>
-              <p className="mt-2 text-[11px] text-slate-500">
+              <p className="mt-2 text-xs text-slate-500">
                 Tổng hồ sơ ở trạng thái Đã gửi báo giá: {data.overview.quoteSentCount}
               </p>
             </div>
 
             <div className="bg-white border border-emerald-200/80 rounded-2xl p-5 shadow-card">
-              <div className="flex items-center justify-between text-xs font-bold text-slate-600">
+              <div className="flex items-center justify-between text-sm font-bold text-slate-700">
                 <span>Chốt thành công & Win Rate</span>
                 <TrendingUp className="w-4 h-4 text-emerald-600" />
               </div>
@@ -339,61 +355,59 @@ export function ReportsWorkspace() {
                 <span className="font-display text-3xl font-bold text-emerald-700">
                   {data.overview.wonCount}
                 </span>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold">
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold">
                   Win Rate: {data.overview.winRateText}
                 </span>
               </div>
-              <p className="mt-2 text-[11px] text-slate-500">
+              <p className="mt-2 text-xs text-slate-500">
                 Thất bại có lý do: {data.overview.lostCount} hồ sơ (không tính doanh thu tiền tệ)
               </p>
             </div>
 
             <div className="bg-white border border-violet-200/80 rounded-2xl p-5 shadow-card">
-              <div className="flex items-center justify-between text-xs font-bold text-slate-600">
+              <div className="flex items-center justify-between text-sm font-bold text-slate-700">
                 <span>Hiệu quả Quảng cáo & AI Thiết kế</span>
                 <Sparkles className="w-4 h-4 text-violet-600" />
               </div>
               <div className="mt-2">
-                <div className="text-xs text-slate-600">
+                <div className="text-sm text-slate-600">
                   CPL Hiệu quả (L3):{' '}
                   <strong className="font-mono text-ink">
-                    {data.marketingSummary.cplEffective
-                      ? `${data.marketingSummary.cplEffective.formattedDecimal} ${data.marketingSummary.cplEffective.currency}`
-                      : 'Chưa phát sinh'}
+                    {formatMoney(data.marketingSummary.cplEffective, { emptyText: 'Chưa phát sinh' })}
                   </strong>
                 </div>
-                <div className="text-xs text-slate-600 mt-1">
+                <div className="text-sm text-slate-600 mt-1">
                   Yêu cầu thiết kế AI:{' '}
                   <strong className="text-ink">{data.designSummary.totalRequests}</strong> (3D:{' '}
                   {data.designSummary.completed3dCount} · Banner:{' '}
                   {data.designSummary.completedBannerCount})
                 </div>
               </div>
-              <p className="mt-2 text-[11px] text-slate-500">
+              <p className="mt-2 text-xs text-slate-500">
                 Thời gian xử lý AI TB: {data.designSummary.avgProcessingSecText}
               </p>
             </div>
           </div>
 
-          {/* Unanswered Quotes > 7 days Alert Table (BA UC02 / M04) */}
+          {/* Unanswered Quotes > 7 days Alert Table */}
           <section className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-card">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+            <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h2 className="font-display text-sm font-bold text-ink">
+                <h2 className="font-display text-base font-bold text-ink">
                   Danh sách báo giá đã gửi đang chờ khách hàng phản hồi (Cảnh báo đỏ khi &ge; 7 ngày)
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Hỗ trợ Trưởng nhóm Sales và Ban Giám đốc đôn đốc các hồ sơ đã gửi báo giá nhưng khách chưa phản hồi
                 </p>
               </div>
-              <span className="px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold">
+              <span className="px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold">
                 {data.unansweredQuotes.length} hồ sơ chờ phản hồi
               </span>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
+              <table className="w-full text-left border-collapse text-sm">
                 <thead>
-                  <tr className="bg-slate-50 text-slate-500 border-b border-slate-200">
+                  <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
                     <th className="py-3 px-4 font-bold">Mã Lead</th>
                     <th className="py-3 px-4 font-bold">Khách hàng / Đơn vị</th>
                     <th className="py-3 px-4 font-bold">Số điện thoại</th>
@@ -434,7 +448,7 @@ export function ReportsWorkspace() {
                         </td>
                         <td className="py-3 px-4">
                           <span
-                            className={`px-2.5 py-1 rounded-full font-bold text-[11px] ${
+                            className={`px-2.5 py-1 rounded-full font-bold text-xs ${
                               q.isOverdue7Days
                                 ? 'bg-rose-600 text-white'
                                 : 'bg-amber-100 text-amber-800'
@@ -455,15 +469,15 @@ export function ReportsWorkspace() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
             <section className="lg:col-span-7 bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-card">
               <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-                <h2 className="font-display text-sm font-bold text-ink">
+                <h2 className="font-display text-base font-bold text-ink">
                   Hiệu suất xử lý theo nhân sự Sales
                 </h2>
                 <Filter className="w-4 h-4 text-brand" />
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
+                <table className="w-full text-left border-collapse text-sm">
                   <thead>
-                    <tr className="bg-slate-50 text-slate-500 border-b border-slate-200">
+                    <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <th className="py-2.5 px-4 font-bold">Nhân sự Sales</th>
                       <th className="py-2.5 px-3 font-bold text-center">Tổng</th>
                       <th className="py-2.5 px-3 font-bold text-center">Đang BG</th>
@@ -505,15 +519,15 @@ export function ReportsWorkspace() {
 
             <section className="lg:col-span-5 bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-card">
               <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-                <h2 className="font-display text-sm font-bold text-ink">
-                  Thống kê nhu cầu theo sản phẩm LED (BA Catalog)
+                <h2 className="font-display text-base font-bold text-ink">
+                  Thống kê nhu cầu theo sản phẩm LED
                 </h2>
                 <Layers className="w-4 h-4 text-brand" />
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
+                <table className="w-full text-left border-collapse text-sm">
                   <thead>
-                    <tr className="bg-slate-50 text-slate-500 border-b border-slate-200">
+                    <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <th className="py-2.5 px-4 font-bold">Sản phẩm</th>
                       <th className="py-2.5 px-3 font-bold text-center">Lượt hỏi</th>
                       <th className="py-2.5 px-3 font-bold text-center">Đã chốt</th>
@@ -524,7 +538,7 @@ export function ReportsWorkspace() {
                       <tr key={pi.productId} className="hover:bg-slate-50/70">
                         <td className="py-2.5 px-4">
                           <div className="font-semibold text-ink">{pi.productName}</div>
-                          <div className="text-[10px] font-mono text-slate-400">
+                          <div className="text-xs font-mono text-slate-400">
                             {pi.productCode} · {pi.category}
                           </div>
                         </td>
@@ -544,13 +558,13 @@ export function ReportsWorkspace() {
 
           {/* Detailed Scoped Lead Report Table */}
           <section className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-card">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+            <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h2 className="font-display text-sm font-bold text-ink">
+                <h2 className="font-display text-base font-bold text-ink">
                   Bảng chi tiết hồ sơ Lead đồng bộ theo phạm vi phân quyền (Dùng chung cho Xuất Excel/CSV)
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Tự động ẩn danh số điện thoại & tên công ty khách hàng nếu tài khoản thuộc nhóm Marketing / Ads / Designer (UC01 & Q03)
+                  Tự động ẩn danh số điện thoại & tên công ty khách hàng nếu tài khoản thuộc nhóm Marketing / Ads / Designer
                 </p>
               </div>
               <span className="text-xs font-mono text-slate-500">
@@ -558,9 +572,9 @@ export function ReportsWorkspace() {
               </span>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
+              <table className="w-full text-left border-collapse text-sm">
                 <thead>
-                  <tr className="bg-slate-50 text-slate-500 border-b border-slate-200">
+                  <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
                     <th className="py-3 px-4 font-bold">STT</th>
                     <th className="py-3 px-4 font-bold">Mã Lead</th>
                     <th className="py-3 px-4 font-bold">Ngày nhận</th>
@@ -590,7 +604,7 @@ export function ReportsWorkspace() {
                       <td className="py-2.5 px-4">{row.marketingSource}</td>
                       <td className="py-2.5 px-4 text-slate-600">{row.productsText}</td>
                       <td className="py-2.5 px-4">
-                        <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold text-[11px]">
+                        <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold text-xs">
                           {row.pipelineStatusLabel}
                         </span>
                       </td>

@@ -1,16 +1,18 @@
 'use client';
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowUpRight,
   Bell,
   Bold,
   CheckCircle2,
+  Download,
   Eye,
   FileText,
   Heading1,
   Heading2,
+  History,
   Italic,
   List,
   Lock,
@@ -28,9 +30,21 @@ import type { NotificationDto, ReportsDashboardDto, SessionUserDto } from '@toan
 import { apiRequest } from '../../core/http/client';
 import { useSession } from '../../core/session/SessionContext';
 
+interface DispatchedReportItem {
+  id: number;
+  reportCode: string;
+  status?: 'DRAFT' | 'ISSUED';
+  title: string;
+  summary: string;
+  contentHtml: string;
+  authorName: string;
+  authorRole: string;
+  createdAt: string;
+}
+
 interface ReportDocComposerProps {
   user: SessionUserDto | null;
-  data: ReportsDashboardDto;
+  data: ReportsDashboardDto & { dispatchedReports?: DispatchedReportItem[] };
 }
 
 const DEPARTMENTS = [
@@ -66,22 +80,26 @@ export function ReportDocComposer({ user, data }: ReportDocComposerProps) {
   const [fontScale, setFontScale] = useState<number>(100);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [dispatchToast, setDispatchToast] = useState<string | null>(null);
+  const [dispatchError, setDispatchError] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [activeDraftId, setActiveDraftId] = useState<number | null>(null);
 
   const initialHtml = useMemo(() => {
     const todayStr = new Date().toLocaleDateString('vi-VN');
+    const f = data.overview;
     return `
-      <h2>1. Tóm tắt Chỉ số Trọng yếu (Canonical D1–D6)</h2>
+      <h2>1. Tóm tắt Chỉ số Trọng yếu</h2>
       <p>Báo cáo tổng hợp số liệu thực tế từ hệ thống CRM &amp; Đồng bộ Đa nền tảng Toàn Trung tính đến ngày <strong>${todayStr}</strong> (${data.scopeDescription}):</p>
       <ul>
-        <li><strong>Tổng số Lead thu thập (L1):</strong> ${data.overview.totalLeadsL1} hồ sơ</li>
-        <li><strong>Lead hợp lệ đã loại trừ Spam (L2):</strong> ${data.overview.validLeadsL2} hồ sơ</li>
-        <li><strong>Lead hiệu quả đã gửi báo giá / chốt (L3):</strong> ${data.overview.effectiveLeadsL3} hồ sơ</li>
-        <li><strong>Số dự án chốt thành công (Won):</strong> ${data.overview.wonCount} dự án (Tỷ lệ chốt: ${data.overview.winRateText})</li>
-        <li><strong>Hồ sơ báo giá quá hạn &gt; 7 ngày:</strong> ${data.overview.overdue7DaysQuoteCount} hồ sơ</li>
+        <li><strong>Tổng số Lead thu thập (L1):</strong> ${f.totalLeadsL1} hồ sơ</li>
+        <li><strong>Lead hợp lệ đã loại trừ Spam (L2):</strong> ${f.validLeadsL2} hồ sơ</li>
+        <li><strong>Lead hiệu quả tính CPL (L3):</strong> ${f.effectiveLeadsL3} hồ sơ</li>
+        <li><strong>Số dự án chốt thành công (Won):</strong> ${f.wonCount} dự án (Tỷ lệ chốt: ${f.winRateText})</li>
+        <li><strong>Hồ sơ báo giá quá hạn &gt; 7 ngày:</strong> ${f.overdue7DaysQuoteCount} hồ sơ</li>
       </ul>
       <h2>2. Đánh giá Phễu Chuyển đổi &amp; Hiệu quả Kênh</h2>
-      <p>Hệ thống đang theo dõi <strong>${data.overview.newLeadCount}</strong> Lead mới, <strong>${data.overview.quotingCount}</strong> hồ sơ đang làm báo giá và <strong>${data.overview.quoteSentCount}</strong> hồ sơ đã gửi báo giá cho khách hàng.</p>
+      <p>Hệ thống đang theo dõi <strong>${f.newLeadCount}</strong> Lead mới, <strong>${f.quotingCount}</strong> hồ sơ đang làm báo giá và <strong>${f.quoteSentCount}</strong> hồ sơ đã gửi báo giá cho khách hàng.</p>
       <h2>3. Kiến nghị &amp; Chỉ đạo Triển khai</h2>
       <p>- Đội ngũ Kinh doanh ưu tiên rà soát và liên hệ lại các hồ sơ đã gửi báo giá quá 7 ngày chưa phản hồi.</p>
       <p>- Bộ phận Quảng cáo &amp; SEO tiếp tục tối ưu từ khóa màn hình LED hội trường P2.5/P3 Indoor và bảng điện tử công nghiệp.</p>
@@ -90,6 +108,142 @@ export function ReportDocComposer({ user, data }: ReportDocComposerProps) {
 
   const editorRef = useRef<HTMLDivElement | null>(null);
   const [docHtml, setDocHtml] = useState<string>(initialHtml);
+  const [archivedReports, setArchivedReports] = useState<DispatchedReportItem[]>(
+    data.dispatchedReports || [],
+  );
+  const [activeArchivedId, setActiveArchivedId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (data.dispatchedReports) {
+      setArchivedReports(data.dispatchedReports);
+      const latestDraft = data.dispatchedReports.find((r) => r.status === 'DRAFT');
+      if (latestDraft && !activeArchivedId) {
+        setActiveDraftId(latestDraft.id);
+        setDocTitle(latestDraft.title);
+        setDocHtml(latestDraft.contentHtml);
+        if (editorRef.current) {
+          editorRef.current.innerHTML = latestDraft.contentHtml;
+        }
+      }
+    }
+  }, [data.dispatchedReports, activeArchivedId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || archivedReports.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const viewId = Number(params.get('viewReportId'));
+    if (Number.isInteger(viewId) && viewId > 0) {
+      const found = archivedReports.find((r) => r.id === viewId);
+      if (found) {
+        setActiveArchivedId(found.id);
+        setDocTitle(found.title);
+        setDocHtml(found.contentHtml);
+        if (editorRef.current) {
+          editorRef.current.innerHTML = found.contentHtml;
+        }
+      }
+    }
+  }, [archivedReports]);
+
+  const handleLoadArchivedReport = (item: DispatchedReportItem) => {
+    setActiveArchivedId(item.id);
+    setDocTitle(item.title);
+    setDocHtml(item.contentHtml);
+    if (editorRef.current) {
+      editorRef.current.innerHTML = item.contentHtml;
+    }
+  };
+
+  const handleSaveDraft = async () => {
+    if (savingDraft) return;
+    setSavingDraft(true);
+    setDispatchError(null);
+    try {
+      const currentContent = editorRef.current ? editorRef.current.innerHTML : docHtml;
+      const targetDeptList =
+        isDirectorOrAdmin && dispatchScope === 'BROADCAST_ALL'
+          ? ['ALL']
+          : isDirectorOrAdmin
+            ? selectedDepts
+            : [lockedDeptId];
+
+      const res = await apiRequest<{
+        id: number;
+        reportCode: string;
+        status: 'DRAFT';
+        updatedAt: string;
+      }>('/api/v1/reports', {
+        method: 'POST',
+        csrfToken: user?.csrfToken,
+        body: {
+          action: 'save_draft',
+          draftId: activeDraftId,
+          title: docTitle,
+          summary: `Bản nháp lưu lúc ${new Date().toLocaleTimeString('vi-VN')}`,
+          contentHtml: currentContent,
+          targetDepartments: targetDeptList,
+          reportingPeriod: `${data.fromDate} → ${data.toDate}`,
+        },
+      });
+      setActiveDraftId(res.id);
+      const draftEntry: DispatchedReportItem = {
+        id: res.id,
+        reportCode: res.reportCode,
+        status: 'DRAFT',
+        title: docTitle,
+        summary: 'Bản nháp đang soạn thảo (Đã lưu an toàn trên máy chủ)',
+        contentHtml: currentContent,
+        authorName: user?.fullName || 'Điều hành',
+        authorRole: user?.roleName || '',
+        createdAt: res.updatedAt,
+      };
+      setArchivedReports((prev) => [
+        draftEntry,
+        ...prev.filter((r) => r.id !== res.id),
+      ]);
+      setDispatchToast(`Đã lưu bản nháp "${docTitle}" (${res.reportCode}) vào cơ sở dữ liệu.`);
+    } catch (err) {
+      setDispatchError(err instanceof Error ? err.message : 'Không thể lưu bản nháp báo cáo.');
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
+  const handleExportWordDoc = async () => {
+    const currentContent = editorRef.current ? editorRef.current.innerHTML : docHtml;
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    try {
+      const res = await fetch('/api/v1/reports/docx', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(user?.csrfToken ? { 'x-csrf-token': user.csrfToken } : {}),
+        },
+        body: JSON.stringify({
+          title: docTitle,
+          reportingPeriod: `${data.fromDate} → ${data.toDate}`,
+          contentHtml: currentContent,
+        }),
+      });
+      if (!res.ok) {
+        throw new Error('Không thể tạo tệp Word (.docx).');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `04_BaoCao_DieuHanh_ToanTrung_${dateStamp}.docx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setDispatchError(
+        err instanceof Error ? err.message : 'Không thể kết xuất tệp Word (.docx).'
+      );
+    }
+  };
 
   const applyCommand = (command: string, value?: string) => {
     if (!editorRef.current) return;
@@ -99,8 +253,9 @@ export function ReportDocComposer({ user, data }: ReportDocComposerProps) {
   };
 
   const insertKpiTableBlock = () => {
+    const f = data.overview;
     const tableHtml = `
-      <table style="width:100%; border-collapse:collapse; margin: 14px 0; font-size: 12px;">
+      <table style="width:100%; border-collapse:collapse; margin: 14px 0; font-size: 13px;">
         <thead>
           <tr style="background:#1E3A8A; color:#ffffff;">
             <th style="border:1px solid #cbd5e1; padding:8px; text-align:left;">Chỉ tiêu báo cáo</th>
@@ -111,18 +266,18 @@ export function ReportDocComposer({ user, data }: ReportDocComposerProps) {
         <tbody>
           <tr>
             <td style="border:1px solid #cbd5e1; padding:8px;">Tổng Lead thô (L1)</td>
-            <td style="border:1px solid #cbd5e1; padding:8px; text-align:right; font-weight:bold;">${data.overview.totalLeadsL1}</td>
+            <td style="border:1px solid #cbd5e1; padding:8px; text-align:right; font-weight:bold;">${f.totalLeadsL1}</td>
             <td style="border:1px solid #cbd5e1; padding:8px;">Toàn bộ Lead phát sinh</td>
           </tr>
           <tr style="background:#f8fafc;">
             <td style="border:1px solid #cbd5e1; padding:8px;">Lead hợp lệ (L2)</td>
-            <td style="border:1px solid #cbd5e1; padding:8px; text-align:right; font-weight:bold;">${data.overview.validLeadsL2}</td>
+            <td style="border:1px solid #cbd5e1; padding:8px; text-align:right; font-weight:bold;">${f.validLeadsL2}</td>
             <td style="border:1px solid #cbd5e1; padding:8px;">Đã trừ Spam xác nhận</td>
           </tr>
           <tr>
             <td style="border:1px solid #cbd5e1; padding:8px;">Lead hiệu quả (L3)</td>
-            <td style="border:1px solid #cbd5e1; padding:8px; text-align:right; font-weight:bold;">${data.overview.effectiveLeadsL3}</td>
-            <td style="border:1px solid #cbd5e1; padding:8px;">Đã gửi báo giá / Thành công</td>
+            <td style="border:1px solid #cbd5e1; padding:8px; text-align:right; font-weight:bold;">${f.effectiveLeadsL3}</td>
+            <td style="border:1px solid #cbd5e1; padding:8px;">Dùng tính CPL thực tế</td>
           </tr>
         </tbody>
       </table>
@@ -162,6 +317,7 @@ export function ReportDocComposer({ user, data }: ReportDocComposerProps) {
   const handleDispatchReport = async () => {
     if (dispatching) return;
     setDispatching(true);
+    setDispatchError(null);
     const targetNames =
       isDirectorOrAdmin && dispatchScope === 'BROADCAST_ALL'
         ? 'Toàn hệ thống'
@@ -172,39 +328,75 @@ export function ReportDocComposer({ user, data }: ReportDocComposerProps) {
             .join(', ') || 'Phòng ban';
 
     const toastMessage = `Báo cáo mới đã được gửi thành công đến [${targetNames}]`;
-    setDispatchToast(toastMessage);
-    setPreviewOpen(false);
-
-    // Optimistically increment top-bar bell badge counter immediately
-    setUnreadCountState(unreadCount + 1);
 
     try {
-      const res = await apiRequest<{ items: NotificationDto[]; unreadCount: number }>(
-        '/api/v1/notifications',
-        {
-          method: 'POST',
-          csrfToken: user?.csrfToken,
-          body: {
-            title: `Báo cáo mới: ${docTitle}`,
-            summary: `${toastMessage} · Người phát hành: ${user?.fullName || 'Điều hành'}.`,
-            category: 'Báo cáo & Điều hành',
-            actionLabel: 'Xem báo cáo',
-            actionUrl: '/reports',
-          },
+      const currentHtml = editorRef.current ? editorRef.current.innerHTML : docHtml;
+      const targetDeptList =
+        isDirectorOrAdmin && dispatchScope === 'BROADCAST_ALL'
+          ? ['ALL']
+          : isDirectorOrAdmin
+            ? selectedDepts
+            : [lockedDeptId];
+
+      const res = await apiRequest<{
+        items: NotificationDto[];
+        unreadCount: number;
+        savedReportId?: number | null;
+      }>('/api/v1/notifications', {
+        method: 'POST',
+        csrfToken: user?.csrfToken,
+        body: {
+          title: `Báo cáo mới: ${docTitle}`,
+          summary: `${toastMessage} · Người phát hành: ${user?.fullName || 'Điều hành'}.`,
+          category: 'Báo cáo & Điều hành',
+          actionLabel: 'Mở đọc toàn văn báo cáo',
+          actionUrl: '/reports',
+          contentHtml: currentHtml,
+          targetDepartments: targetDeptList,
         },
-      );
+      });
       if (typeof res.unreadCount === 'number') {
         setUnreadCountState(res.unreadCount);
+      } else {
+        setUnreadCountState(unreadCount + 1);
       }
-    } catch {
-      // Keep optimistic badge and toast even if offline
+      const newEntry: DispatchedReportItem = {
+        id: res.savedReportId || Date.now(),
+        reportCode: `TT-RPT-${res.savedReportId || Date.now()}`,
+        title: docTitle,
+        summary: toastMessage,
+        contentHtml: currentHtml,
+        authorName: user?.fullName || 'Điều hành',
+        authorRole: user?.roleName || '',
+        createdAt: new Date().toISOString(),
+      };
+      setArchivedReports((prev) => [newEntry, ...prev]);
+      setDispatchToast(toastMessage);
+      setPreviewOpen(false);
+    } catch (err) {
+      setDispatchError(
+        err instanceof Error ? err.message : 'Không thể phát hành báo cáo. Vui lòng thử lại.',
+      );
     } finally {
       setDispatching(false);
     }
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 text-sm">
+      {dispatchError && (
+        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-sm text-rose-700 flex items-center justify-between">
+          <span>{dispatchError}</span>
+          <button
+            type="button"
+            onClick={() => setDispatchError(null)}
+            className="font-bold hover:underline"
+          >
+            Đóng
+          </button>
+        </div>
+      )}
+
       {dispatchToast && (
         <div className="fixed bottom-6 right-6 z-50 max-w-md p-4 rounded-2xl bg-slate-900 text-white border border-slate-700 shadow-2xl flex items-start justify-between gap-3 animate-in fade-in slide-in-from-bottom-4 duration-200">
           <div className="flex items-start gap-3">
@@ -212,17 +404,17 @@ export function ReportDocComposer({ user, data }: ReportDocComposerProps) {
               <Bell className="w-4 h-4" />
             </div>
             <div>
-              <p className="text-xs font-bold text-white">{dispatchToast}</p>
-              <p className="text-[11px] text-slate-300 mt-0.5">
+              <p className="text-sm font-bold text-white">{dispatchToast}</p>
+              <p className="text-xs text-slate-300 mt-0.5">
                 Đã cập nhật chuông thông báo và ghi nhận vào Trung tâm Thông báo.
               </p>
               <div className="mt-2 flex items-center gap-3">
                 <Link
                   href="/notifications"
-                  className="text-[11px] font-bold text-blue-400 hover:text-blue-300 inline-flex items-center gap-1"
+                  className="text-xs font-bold text-blue-400 hover:text-blue-300 inline-flex items-center gap-1"
                 >
                   <span>Mở Trung tâm Thông báo</span>
-                  <ArrowUpRight className="w-3 h-3" />
+                  <ArrowUpRight className="w-3.5 h-3.5" />
                 </Link>
               </div>
             </div>
@@ -237,7 +429,7 @@ export function ReportDocComposer({ user, data }: ReportDocComposerProps) {
         </div>
       )}
 
-      {/* Granular RBAC Distribution Engine Card (Step 5.2) */}
+      {/* Granular RBAC Distribution Engine Card */}
       <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-card space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
@@ -245,8 +437,8 @@ export function ReportDocComposer({ user, data }: ReportDocComposerProps) {
               <ShieldCheck className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="font-display text-sm font-bold text-slate-900">
-                Cơ chế Phân phối Báo cáo theo Phân quyền (Granular RBAC Dispatch)
+              <h2 className="font-display text-base font-bold text-slate-900">
+                Cơ chế Phân phối Báo cáo theo Phân quyền
               </h2>
               <p className="text-xs text-slate-500">
                 Vai trò hiện tại: <strong>{user?.roleName}</strong> ({user?.roleCode})
@@ -254,28 +446,48 @@ export function ReportDocComposer({ user, data }: ReportDocComposerProps) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={savingDraft}
+              onClick={() => void handleSaveDraft()}
+              className="h-9 px-3.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-sm font-bold text-slate-800 inline-flex items-center gap-1.5 transition"
+              title="Lưu bản nháp báo cáo lên máy chủ để không mất dữ liệu khi tải lại trang"
+            >
+              <FileText className="w-4 h-4 text-[#1E3A8A]" />
+              <span>{savingDraft ? 'Đang lưu nháp...' : 'Lưu bản nháp'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleExportWordDoc()}
+              className="h-9 px-3.5 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-600 text-sm font-bold text-emerald-800 hover:text-white inline-flex items-center gap-1.5 transition"
+              title="Tải xuống toàn văn báo cáo định dạng Microsoft Word chuẩn OpenXML (.docx)"
+            >
+              <Download className="w-4 h-4" />
+              <span>Xuất Word (.docx)</span>
+            </button>
             <button
               type="button"
               onClick={() => setPreviewOpen(true)}
-              className="h-9 px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 inline-flex items-center gap-1.5"
+              className="h-9 px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm font-bold text-slate-700 inline-flex items-center gap-1.5"
             >
-              <Eye className="w-3.5 h-3.5 text-[#2563EB]" />
+              <Eye className="w-4 h-4 text-[#2563EB]" />
               <span>Xem trước bản in A4</span>
             </button>
             <button
               type="button"
+              disabled={dispatching}
               onClick={handleDispatchReport}
-              className="h-9 px-4 rounded-xl bg-[#1E3A8A] hover:bg-[#2563EB] text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-sm transition"
+              className="h-9 px-4 rounded-xl bg-[#1E3A8A] hover:bg-[#2563EB] text-white text-sm font-bold inline-flex items-center gap-1.5 shadow-sm transition"
             >
-              <Send className="w-3.5 h-3.5" />
-              <span>Phát hành Báo cáo</span>
+              <Send className="w-4 h-4" />
+              <span>{dispatching ? 'Đang gửi...' : 'Phát hành & Gửi thông báo'}</span>
             </button>
           </div>
         </div>
 
         {isDirectorOrAdmin ? (
-          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3 text-xs">
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3 text-sm">
             <div className="flex flex-wrap items-center gap-6 font-bold text-slate-800">
               <label className="inline-flex items-center gap-2 cursor-pointer">
                 <input
@@ -318,11 +530,11 @@ export function ReportDocComposer({ user, data }: ReportDocComposerProps) {
             )}
           </div>
         ) : (
-          <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-200 flex items-center justify-between gap-3 text-xs text-amber-900">
+          <div className="p-4 rounded-xl bg-amber-50/80 border border-amber-200 flex items-center justify-between gap-3 text-sm text-amber-900">
             <div className="flex items-center gap-2">
               <Lock className="w-4 h-4 text-amber-700 shrink-0" />
               <span>
-                <strong>Khóa phạm vi Phòng ban (RBAC Guard):</strong> Tài khoản Trưởng bộ phận / Nhân
+                <strong>Khóa phạm vi Phòng ban:</strong> Tài khoản Trưởng bộ phận / Nhân
                 viên chỉ được gửi báo cáo trong nội bộ{' '}
                 <strong>
                   {DEPARTMENTS.find((d) => d.id === lockedDeptId)?.label || 'Phòng ban của mình'}
@@ -333,6 +545,48 @@ export function ReportDocComposer({ user, data }: ReportDocComposerProps) {
           </div>
         )}
       </div>
+
+      {/* Kho Lưu Trữ Văn Bản Báo Cáo Điều Hành Đã Phát Hành */}
+      {archivedReports.length > 0 && (
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-card space-y-2.5 text-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-slate-900">
+              <History className="w-4 h-4 text-[#1E3A8A]" />
+              <span>Kho lưu trữ Văn bản Báo cáo Điều hành đã phát hành ({archivedReports.length})</span>
+            </div>
+            <span className="text-xs text-slate-500">
+              Bấm vào bất kỳ báo cáo nào để nạp lại toàn văn nội dung lên trang A4 bên dưới
+            </span>
+          </div>
+          <div className="flex gap-2.5 overflow-x-auto pb-1">
+            {archivedReports.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleLoadArchivedReport(item)}
+                className={`shrink-0 text-left p-3 rounded-xl border transition max-w-xs ${
+                  activeArchivedId === item.id
+                    ? 'bg-blue-50 border-[#2563EB] text-[#1E3A8A]'
+                    : 'bg-slate-50/80 border-slate-200 hover:border-slate-300 text-slate-700'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-xs font-bold text-[#2563EB]">
+                    {item.reportCode}
+                  </span>
+                  <span className="text-xs text-slate-400">
+                    {new Date(item.createdAt).toLocaleString('vi-VN')}
+                  </span>
+                </div>
+                <p className="font-bold text-sm text-slate-900 truncate mt-1">{item.title}</p>
+                <p className="text-xs text-slate-500 truncate mt-0.5">
+                  Người lập: {item.authorName}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Floating Format Toolbar */}
       <div className="sticky top-16 z-20 max-w-4xl mx-auto bg-white/95 backdrop-blur-md border border-slate-200 rounded-2xl px-3 py-2 shadow-md flex flex-wrap items-center justify-between gap-2 text-xs">

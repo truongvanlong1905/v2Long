@@ -55,12 +55,49 @@ export interface DetailedReportLeadRowDto {
   isAnonymized: boolean;
 }
 
+export interface ActionableTaskItemDto {
+  id:
+    | 'unaccepted_leads'
+    | 'overdue_quotes'
+    | 'pending_designs'
+    | 'seo_approvals'
+    | 'publication_failures'
+    | 'sync_failures';
+  title: string;
+  description: string;
+  count: number;
+  severity: 'critical' | 'warning' | 'info';
+  moduleLabel: string;
+  href: string;
+}
+
+export interface MarketingSourcePerformanceRowDto {
+  key: string;
+  sourceName: string;
+  campaignName: string;
+  spend: MonetaryAmountDto | null;
+  platformConversions: number;
+  crmLeadsL1: number;
+  crmValidL2: number;
+  crmEffectiveL3: number;
+  wonCount: number;
+}
+
+export interface LeadTrendPointDto {
+  date: string;
+  label: string;
+  totalL1: number;
+  validL2: number;
+  wonCount: number;
+}
+
 export interface ReportsDashboardDto {
   scopeRole: string;
   scopeDescription: string;
   preset: ReportPreset;
   fromDate: string;
   toDate: string;
+  generatedAt: string;
   isSmallSample: boolean;
   smallSampleNotice: string | null;
   todayPreliminaryNotice: string;
@@ -69,6 +106,8 @@ export interface ReportsDashboardDto {
     totalLeadsL1: number;
     validLeadsL2: number;
     effectiveLeadsL3: number;
+    activeLeadsCount: number;
+    unreceivedLeadsCount: number;
     newLeadCount: number;
     quotingCount: number;
     quoteSentCount: number;
@@ -78,6 +117,8 @@ export interface ReportsDashboardDto {
     overdue7DaysQuoteCount: number;
     winRateText: string;
   };
+  leadTrend: LeadTrendPointDto[];
+  actionableTasks: ActionableTaskItemDto[];
   byChannel: Array<{
     channel: string;
     label: string;
@@ -88,13 +129,30 @@ export interface ReportsDashboardDto {
   unansweredQuotes: UnansweredQuoteItemDto[];
   marketingSummary: {
     totalAdsSpend: MonetaryAmountDto | null;
+    platformReportedConversions: number;
     effectiveLeadsFromAds: number;
     cplEffective: MonetaryAmountDto | null;
     publishedSeoArticles: number;
+    draftSeoArticles: number;
+    scheduledSeoArticles: number;
+    failedPublishArticles: number;
     optimizationNeededArticles: number;
+    bySourceCampaign: MarketingSourcePerformanceRowDto[];
+  };
+  trackingOperationalSummary: {
+    liveIntegrationMode: boolean;
+    configuredConnectionsCount: number;
+    totalConnectionsCount: number;
+    openAlertsCount: number;
+    failingConnectionsCount: number;
+    gclidPendingRetryCount: number;
+    wordpressConfigured: boolean;
+    geminiConfigured: boolean;
   };
   designSummary: {
     totalRequests: number;
+    pendingCount: number;
+    inReviewCount: number;
     completed3dCount: number;
     completedBannerCount: number;
     avgProcessingSecText: string;

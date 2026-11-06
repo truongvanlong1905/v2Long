@@ -102,8 +102,8 @@ const ProductCheckboxGrid = memo(function ProductCheckboxGrid({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Layers className="w-4 h-4 text-[#2563EB]" />
-          <span className="font-bold text-slate-800 text-xs">
-            Danh mục 25 mặt hàng chuẩn BA (Đã chọn:{' '}
+          <span className="font-bold text-slate-800 text-sm">
+            Danh mục sản phẩm & dịch vụ (Đã chọn:{' '}
             <strong className="text-[#2563EB]">{selectedIds.length}</strong>) *
           </span>
         </div>
@@ -114,12 +114,12 @@ const ProductCheckboxGrid = memo(function ProductCheckboxGrid({
             value={filterInput}
             onChange={(e) => setFilterInput(e.target.value)}
             placeholder="Lọc nhanh P2.5, P3, Outdoor, BĐT..."
-            className="w-full h-8 pl-8 pr-3 rounded-lg border border-slate-200 bg-white text-xs"
+            className="w-full h-9 pl-8 pr-3 rounded-lg border border-slate-200 bg-white text-sm"
           />
         </div>
       </div>
 
-      {/* Responsive Category Accordions (Mobile collapsible, Desktop 3-column grid inside each group) */}
+      {/* Responsive Category Accordions */}
       <div className="space-y-2.5">
         {(['MAN_HINH_LED', 'BANG_DIEN_TU', 'KHAC'] as const).map((cat) => {
           const list = grouped[cat];
@@ -140,18 +140,18 @@ const ProductCheckboxGrid = memo(function ProductCheckboxGrid({
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span
-                    className={`px-2 py-0.5 rounded-md border text-[10px] font-bold shrink-0 ${meta.badgeClass}`}
+                    className={`px-2 py-0.5 rounded-md border text-xs font-bold shrink-0 ${meta.badgeClass}`}
                   >
                     {meta.badge}
                   </span>
-                  <span className="font-bold text-xs text-slate-800 truncate">{meta.title}</span>
+                  <span className="font-bold text-sm text-slate-800 truncate">{meta.title}</span>
                   {selectedInCat > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full bg-[#2563EB] text-white text-[10px] font-bold">
+                    <span className="px-2 py-0.5 rounded-full bg-[#2563EB] text-white text-xs font-bold">
                       {selectedInCat}
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-1 text-slate-400 text-[11px]">
+                <div className="flex items-center gap-1 text-slate-500 text-xs">
                   <span>{list.length} SP</span>
                   {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 </div>
@@ -165,7 +165,7 @@ const ProductCheckboxGrid = memo(function ProductCheckboxGrid({
                       <label
                         key={p.id}
                         onClick={() => onToggleProduct(p.id)}
-                        className={`flex items-start gap-2 p-2 rounded-lg border cursor-pointer select-none transition-colors min-h-[42px] ${
+                        className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer select-none transition-colors min-h-[42px] ${
                           checked
                             ? 'bg-blue-50/90 border-[#2563EB] text-[#1E3A8A] font-semibold shadow-2xs'
                             : 'bg-white border-slate-200/80 text-slate-700 hover:border-slate-300'
@@ -180,7 +180,7 @@ const ProductCheckboxGrid = memo(function ProductCheckboxGrid({
                         >
                           {checked && <Check className="w-3 h-3" />}
                         </span>
-                        <span className="text-[11px] leading-snug break-words">
+                        <span className="text-xs leading-snug break-words">
                           {p.productName}
                         </span>
                       </label>
@@ -312,11 +312,11 @@ export function ManualLeadModal({
               <FolderPlus className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <h2 className="font-display font-bold text-slate-900 text-sm sm:text-base truncate">
-                Tiếp nhận Lead Thủ công (Zero-Lag Intake)
+              <h2 className="font-display font-bold text-slate-900 text-base sm:text-lg truncate">
+                Tiếp nhận Hồ sơ Lead mới
               </h2>
-              <p className="text-[11px] text-slate-500 truncate">
-                Chuẩn hóa SĐT, đối chiếu trùng lặp E0 & cảnh báo dò giá E5 tức thì
+              <p className="text-xs text-slate-500 truncate">
+                Chuẩn hóa số điện thoại, kiểm tra trùng lặp và đối chiếu cảnh báo dò giá tự động
               </p>
             </div>
           </div>
@@ -333,12 +333,12 @@ export function ManualLeadModal({
           </div>
         </div>
 
-        {/* Scrollable Uncontrolled Form Body (Zero Excess White Space) */}
+        {/* Scrollable Uncontrolled Form Body */}
         <form
           id="manual-lead-intake-form"
           ref={formRef}
           onSubmit={(e) => void handleSubmit(e)}
-          className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4 text-xs"
+          className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4 text-sm"
         >
           {validationError && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-800 font-semibold">
@@ -397,7 +397,7 @@ export function ManualLeadModal({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
             <div>
               <label className="block font-bold text-slate-700 mb-1">
-                Đơn vị / Công ty (Đối chiếu dò giá E5)
+                Đơn vị / Công ty
               </label>
               <input
                 name="companyName"
@@ -447,7 +447,7 @@ export function ManualLeadModal({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-bold text-slate-800 inline-flex items-center gap-1.5">
                 <MapPin className="w-3.5 h-3.5 text-[#2563EB]" />
-                <span>Khu vực khảo sát & Lắp đặt (UC01)</span>
+                <span>Khu vực khảo sát & Lắp đặt</span>
               </span>
               <div className="inline-flex rounded-lg bg-white border border-slate-200 p-0.5">
                 <button

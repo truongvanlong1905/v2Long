@@ -33,7 +33,14 @@ export async function POST(
     }
 
     const attachmentTypeRaw = String(formData.get('attachmentType') || 'site_photo');
-    const attachmentType =
+    if (attachmentTypeRaw === 'quote_doc') {
+      return jsonError(
+        'PRICE_DOCUMENT_RESTRICTED',
+        'Hệ thống không lưu hồ sơ báo giá có giá. Chỉ tải ảnh khảo sát, bản vẽ kỹ thuật và tài liệu dự án.',
+        400,
+      );
+    }
+    const attachmentType: 'site_photo' | 'customer_drawing_doc' =
       attachmentTypeRaw === 'customer_drawing_doc' ? 'customer_drawing_doc' : 'site_photo';
     const folderPath = String(formData.get('folderPath') || '/ho-so-cong-trinh');
 

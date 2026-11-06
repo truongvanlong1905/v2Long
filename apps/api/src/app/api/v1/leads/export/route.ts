@@ -3,7 +3,7 @@ import { jsonError } from '../../../../../core/http';
 import { requirePermissionSession } from '../../../../../core/permissions';
 import { buildStandardXlsxBuffer } from '../../../../../core/export/xlsx-builder';
 import {
-  listLeadsForUser,
+  exportAllLeadsForUser,
   shouldAnonymizeLeadForRole,
 } from '../../../../../modules/01-leads/service';
 import {
@@ -22,18 +22,19 @@ export async function GET(request: Request) {
     const searchParam = url.searchParams.get('search') || undefined;
     const includeSpam = url.searchParams.get('includeSpam') === 'true';
     const overdueOnly = url.searchParams.get('overdueOnly') === 'true';
+    const unreceivedOnly =
+      url.searchParams.get('unreceived') === '1' ||
+      url.searchParams.get('unreceivedOnly') === 'true';
 
     const isAnonymized = shouldAnonymizeLeadForRole(auth.user.roleCode);
 
-    const { leads: scopedLeads } = await listLeadsForUser(auth.user, {
+    const { leads } = await exportAllLeadsForUser(auth.user, {
       status: statusParam as PipelineStatus | 'all' | undefined,
       search: searchParam,
       includeSpam,
+      overdueOnly,
+      unreceivedOnly,
     });
-
-    const leads = overdueOnly
-      ? scopedLeads.filter((l) => l.isQuoteOverdue7Days)
-      : scopedLeads;
 
     const dateStamp = new Date().toISOString().slice(0, 10);
 
@@ -46,15 +47,15 @@ export async function GET(request: Request) {
 
     const buffer = buildStandardXlsxBuffer([
       {
-        name: 'DanhSachLead',
-        title: `DANH SÁCH LEAD TOÀN TRUNG — ${auth.user.fullName} (${auth.user.roleName})`,
+        name: '01_Lead_Pipeline',
+        title: `DANH SÁCH LEAD & PIPELINE TOÀN TRUNG — ${auth.user.fullName} (${auth.user.roleName})`,
         metadata: [
           { label: 'Thời gian xuất file', value: new Date().toLocaleString('vi-VN') },
           { label: 'Tổng số bản ghi', value: String(leads.length) },
           { label: 'Quyền xem', value: isAnonymized ? 'Ẩn danh PII (UC01 / Q03)' : 'Xem theo phạm vi phân quyền' },
         ],
         kpiSummary: [
-          { label: 'Tổng Lead', value: leads.length },
+          { label: 'Tổng Lead (L1/L2)', value: leads.length },
           { label: 'Đang làm việc', value: workingCount },
           { label: 'Đã gửi báo giá', value: quoteSentCount },
           { label: 'Thành công (Won)', value: wonCount },
@@ -122,6 +123,24 @@ export async function GET(request: Request) {
             salesName: l.assignedSalesName || 'Chưa phân bổ',
           };
         }),
+        summaryRow: {
+          stt: '',
+          leadCode: 'TỔNG CỘNG',
+          customerName: `${leads.length} hồ sơ Lead`,
+          source: '—',
+          contactAndPhone: isAnonymized ? 'Đã ẩn danh PII' : 'Đầy đủ theo phân quyền',
+          createdAt: dateStamp,
+          region: 'Toàn quốc',
+          products: `Đang xử lý: ${workingCount} | Đã báo giá: ${quoteSentCount}`,
+          productTags: '—',
+          status: `Won: ${wonCount} | Lost: ${lostCount}`,
+          noteOrReason: `Win rate: ${leads.length > 0 ? ((wonCount / leads.length) * 100).toFixed(1) : '0.0'}%`,
+          salesName: '—',
+        },
+        footerNotes: [
+          'Ghi chú phân quyền: Vai trò Marketing/Content/Designer tự động nhận bản xuất ẩn danh SĐT và thông tin cá nhân khách hàng (UC01/Q03).',
+          'Định nghĩa tỷ lệ chốt: Win rate tính từ Tổng số Lead chốt thành công (Won) chia cho Tổng số Lead hợp lệ trong phạm vi lọc.',
+        ],
       },
     ]);
 

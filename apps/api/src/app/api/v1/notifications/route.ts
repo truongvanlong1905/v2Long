@@ -25,6 +25,8 @@ export async function POST(req: Request) {
     category?: string;
     actionLabel?: string;
     actionUrl?: string;
+    contentHtml?: string;
+    targetDepartments?: string[];
   };
 
   const result = await createDispatchNotification(auth.user.id, auth.user.roleCode, {
@@ -35,6 +37,10 @@ export async function POST(req: Request) {
     category: body.category || 'Báo cáo & Điều hành',
     actionLabel: body.actionLabel || 'Xem báo cáo',
     actionUrl: body.actionUrl || '/reports',
+    contentHtml: body.contentHtml,
+    targetDepartments: body.targetDepartments,
+    authorName: auth.user.fullName,
+    authorRole: auth.user.roleName,
   });
 
   return jsonSuccess(result, 201);

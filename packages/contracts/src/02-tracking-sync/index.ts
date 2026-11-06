@@ -62,8 +62,6 @@ export interface CampaignItemDto {
   cplEffective: MonetaryAmountDto | null;
   costPerQuote: MonetaryAmountDto | null;
   costPerWon: MonetaryAmountDto | null;
-  /** ROAS nội bộ = Giá trị chốt / Chi phí (chỉ hiển thị khi mẫu số > 0 và có dữ liệu; trả về null/'—' khi = 0) */
-  internalRoasText: string;
 }
 
 export interface AttributionSummaryRowDto {

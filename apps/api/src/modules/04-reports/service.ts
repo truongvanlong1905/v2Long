@@ -7,8 +7,11 @@ import {
   isL2Valid,
   isL3Effective,
   toMonetaryAmountDto,
+  type ActionableTaskItemDto,
   type ContactChannel,
   type DetailedReportLeadRowDto,
+  type LeadTrendPointDto,
+  type MarketingSourcePerformanceRowDto,
   type PipelineStatus,
   type ProductInsightRowDto,
   type ReportsDashboardDto,
@@ -132,80 +135,130 @@ export async function getScopedReportsDashboard(
     leadWhere.assignedSalesId = user.id;
   }
 
-  const [leads, salesUsers, allProducts, latestSync, metrics, seoArticles, designRequests, aiLogs] =
-    await Promise.all([
-      prisma.lead.findMany({
-        where: leadWhere,
-        include: {
-          assignedSales: true,
-          tracking: true,
-          leadProducts: {
-            include: {
-              product: true,
-            },
+  const [
+    leads,
+    salesUsers,
+    allProducts,
+    latestSync,
+    metrics,
+    seoArticles,
+    designRequests,
+    aiLogs,
+    recentSyncLogs,
+    openAlertsCount,
+    currentUnacceptedLeadsCount,
+    currentOverdueQuotesCount,
+  ] = await Promise.all([
+    prisma.lead.findMany({
+      where: leadWhere,
+      include: {
+        assignedSales: true,
+        tracking: true,
+        leadProducts: {
+          include: {
+            product: true,
           },
         },
-        orderBy: { createdAt: 'desc' },
-      }),
-      prisma.user.findMany({
-        where: {
-          isActive: true,
-          role: {
-            roleCode: { in: ['SALES', 'SALES_LEAD'] },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.user.findMany({
+      where: {
+        isActive: true,
+        role: {
+          roleCode: { in: ['SALES', 'SALES_LEAD'] },
+        },
+      },
+      include: { role: true },
+      orderBy: { id: 'asc' },
+    }),
+    prisma.product.findMany({
+      where: { isActive: true },
+      orderBy: { id: 'asc' },
+    }),
+    prisma.platformSyncLog.findFirst({
+      where: { status: 'success' },
+      orderBy: { completedAt: 'desc' },
+    }),
+    prisma.platformDailyMetric.findMany({
+      where: {
+        platform: { in: ['google_ads', 'facebook', 'facebook_ads'] },
+        grain: 'campaign',
+        metricDate: {
+          gte: fromDateStr,
+          lte: toDateStr,
+        },
+      },
+      include: {
+        campaign: {
+          select: {
+            campaignName: true,
+            campaignCode: true,
           },
         },
-        include: { role: true },
-        orderBy: { id: 'asc' },
-      }),
-      prisma.product.findMany({
-        where: { isActive: true },
-        orderBy: { id: 'asc' },
-      }),
-      prisma.platformSyncLog.findFirst({
-        where: { status: 'success' },
-        orderBy: { completedAt: 'desc' },
-      }),
-      prisma.platformDailyMetric.findMany({
-        where: {
-          platform: { in: ['google_ads', 'facebook', 'facebook_ads'] },
-          grain: 'campaign',
-          metricDate: {
-            gte: fromDateStr,
-            lte: toDateStr,
-          },
+      },
+    }),
+    prisma.seoArticle.findMany({
+      where: {
+        createdAt: {
+          gte: fromDate,
+          lte: toDate,
         },
-      }),
-      prisma.seoArticle.findMany({
-        where: {
-          createdAt: {
-            gte: fromDate,
-            lte: toDate,
-          },
+      },
+    }),
+    prisma.designRequest.findMany({
+      where: {
+        createdAt: {
+          gte: fromDate,
+          lte: toDate,
         },
-      }),
-      prisma.designRequest.findMany({
-        where: {
-          createdAt: {
-            gte: fromDate,
-            lte: toDate,
-          },
-          ...(user.roleCode === 'SALES'
-            ? { requestedBySalesId: user.id }
-            : user.roleCode === 'DESIGNER'
-              ? { assignedDesignerId: user.id }
-              : {}),
+        ...(user.roleCode === 'SALES'
+          ? { requestedBySalesId: user.id }
+          : user.roleCode === 'DESIGNER'
+            ? { assignedDesignerId: user.id }
+            : {}),
+      },
+    }),
+    prisma.aiUsageLog.findMany({
+      where: {
+        moduleCode: '05-ai-design',
+        createdAt: {
+          gte: fromDate,
+          lte: toDate,
         },
-      }),
-      prisma.aiUsageLog.findMany({
-        where: {
-          moduleCode: '05-ai-design',
-          createdAt: {
-            gte: fromDate,
-            lte: toDate,
-          },
+      },
+    }),
+    prisma.platformSyncLog.findMany({
+      orderBy: { startedAt: 'desc' },
+      take: 10,
+    }),
+    prisma.leadReconciliation.count({
+      where: { status: 'alert_open' },
+    }),
+    prisma.lead.count({
+      where: {
+        isSpam: false,
+        pipelineStatus: 'new_lead',
+        receivedAt: null,
+        ...(user.roleCode === 'SALES'
+          ? { OR: [{ assignedSalesId: user.id }, { createdByUserId: user.id }] }
+          : {}),
+      },
+    }),
+    prisma.lead.count({
+      where: {
+        isSpam: false,
+        pipelineStatus: 'quote_sent',
+        quoteRespondedAt: null,
+        firstQuoteSentAt: {
+          lte: new Date(Date.now() - 7 * 24 * 3600 * 1000),
         },
-      }),
-    ]);
+        ...(user.roleCode === 'SALES'
+          ? { OR: [{ assignedSalesId: user.id }, { createdByUserId: user.id }] }
+          : {}),
+      },
+    }),
+  ]);
 
   const totalLeadsL1 = leads.length;
   const validLeads = leads.filter(isL2Valid);
@@ -219,6 +272,38 @@ export async function getScopedReportsDashboard(
   const quoteSentCount = validLeads.filter((l) => l.pipelineStatus === 'quote_sent').length;
   const wonCount = validLeads.filter((l) => l.pipelineStatus === 'won').length;
   const lostCount = validLeads.filter((l) => l.pipelineStatus === 'lost').length;
+  const activeLeadsCount = newLeadCount + quotingCount + quoteSentCount;
+  const unreceivedLeadsCount = validLeads.filter(
+    (l) => l.pipelineStatus === 'new_lead' && !l.receivedAt
+  ).length;
+
+  // Build chronological Lead trend by date in period
+  const trendMap = new Map<
+    string,
+    { totalL1: number; validL2: number; wonCount: number }
+  >();
+  for (const lead of leads) {
+    const dayKey = lead.createdAt.toISOString().slice(0, 10);
+    const cur = trendMap.get(dayKey) ?? { totalL1: 0, validL2: 0, wonCount: 0 };
+    cur.totalL1 += 1;
+    if (isL2Valid(lead)) {
+      cur.validL2 += 1;
+      if (lead.pipelineStatus === 'won') {
+        cur.wonCount += 1;
+      }
+    }
+    trendMap.set(dayKey, cur);
+  }
+  const leadTrend: LeadTrendPointDto[] = Array.from(trendMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-14)
+    .map(([date, counts]) => ({
+      date,
+      label: date.slice(5).replace('-', '/'),
+      totalL1: counts.totalL1,
+      validL2: counts.validL2,
+      wonCount: counts.wonCount,
+    }));
 
   const nowMs = Date.now();
   const unansweredQuotes: UnansweredQuoteItemDto[] = [];
@@ -322,6 +407,9 @@ export async function getScopedReportsDashboard(
     (acc, m) => acc + (m.spendMicros ?? 0n),
     0n
   );
+  const platformReportedConversions = Math.round(
+    metrics.reduce((acc, m) => acc + Number((m.conversionsMicros ?? 0n) / 1_000_000n), 0)
+  );
   const effectiveLeadsFromAds = effectiveLeads.filter((l) =>
     ['Google Ads', 'Facebook Ads'].includes(l.tracking?.marketingSource ?? '')
   ).length;
@@ -330,9 +418,105 @@ export async function getScopedReportsDashboard(
       ? totalAdsSpendMicros / BigInt(effectiveLeadsFromAds)
       : null;
 
+  // Source / Campaign performance table (HOME-04)
+  const sourceCampaignMap = new Map<
+    string,
+    {
+      sourceName: string;
+      campaignName: string;
+      spendMicros: bigint;
+      platformConversions: number;
+      crmLeadsL1: number;
+      crmValidL2: number;
+      crmEffectiveL3: number;
+      wonCount: number;
+    }
+  >();
+
+  for (const m of metrics) {
+    const srcName =
+      m.platform === 'google_ads'
+        ? 'Google Ads'
+        : m.platform === 'facebook' || m.platform === 'facebook_ads'
+          ? 'Facebook Ads'
+          : m.platform;
+    const campName = m.campaign?.campaignName || 'Chiến dịch chung';
+    const key = `${srcName}::${campName}`;
+    const entry = sourceCampaignMap.get(key) ?? {
+      sourceName: srcName,
+      campaignName: campName,
+      spendMicros: 0n,
+      platformConversions: 0,
+      crmLeadsL1: 0,
+      crmValidL2: 0,
+      crmEffectiveL3: 0,
+      wonCount: 0,
+    };
+    entry.spendMicros += m.spendMicros ?? 0n;
+    entry.platformConversions += Math.round(Number((m.conversionsMicros ?? 0n) / 1_000_000n));
+    sourceCampaignMap.set(key, entry);
+  }
+
+  for (const lead of leads) {
+    const srcName =
+      lead.tracking?.marketingSource || lead.selfReportedSource || 'Trực tiếp / Nhập tay';
+    const campName =
+      lead.tracking?.campaignName ||
+      (srcName === 'Google Ads' || srcName === 'Facebook Ads'
+        ? 'Chiến dịch chung'
+        : 'Nguồn tự nhiên / Trực tiếp');
+    const key = `${srcName}::${campName}`;
+    const entry = sourceCampaignMap.get(key) ?? {
+      sourceName: srcName,
+      campaignName: campName,
+      spendMicros: 0n,
+      platformConversions: 0,
+      crmLeadsL1: 0,
+      crmValidL2: 0,
+      crmEffectiveL3: 0,
+      wonCount: 0,
+    };
+    entry.crmLeadsL1 += 1;
+    if (isL2Valid(lead)) {
+      entry.crmValidL2 += 1;
+      if (lead.pipelineStatus === 'won') {
+        entry.wonCount += 1;
+      }
+    }
+    if (isL3Effective(lead)) {
+      entry.crmEffectiveL3 += 1;
+    }
+    sourceCampaignMap.set(key, entry);
+  }
+
+  const bySourceCampaign: MarketingSourcePerformanceRowDto[] = Array.from(
+    sourceCampaignMap.entries()
+  )
+    .map(([key, item]) => ({
+      key,
+      sourceName: item.sourceName,
+      campaignName: item.campaignName,
+      spend:
+        item.spendMicros > 0n
+          ? toMonetaryAmountDto(item.spendMicros, 'VND', 'micros')
+          : null,
+      platformConversions: item.platformConversions,
+      crmLeadsL1: item.crmLeadsL1,
+      crmValidL2: item.crmValidL2,
+      crmEffectiveL3: item.crmEffectiveL3,
+      wonCount: item.wonCount,
+    }))
+    .sort((a, b) => b.crmLeadsL1 - a.crmLeadsL1 || b.platformConversions - a.platformConversions)
+    .slice(0, 8);
+
   const publishedSeoArticles = seoArticles.filter((a) => a.status === 'published').length;
+  const draftSeoArticles = seoArticles.filter((a) => a.status === 'draft').length;
+  const scheduledSeoArticles = seoArticles.filter((a) => a.status === 'scheduled').length;
+  const failedPublishArticles = seoArticles.filter((a) => Boolean(a.lastPublishError)).length;
   const optimizationNeededArticles = seoArticles.filter((a) => a.needsOptimization).length;
 
+  const pendingDesignCount = designRequests.filter((d) => d.designStatus !== 'completed').length;
+  const inReviewDesignCount = designRequests.filter((d) => d.designStatus === 'in_review').length;
   const completed3dCount = designRequests.filter(
     (d) => d.requestType === '3d_perspective' && d.designStatus === 'completed'
   ).length;
@@ -351,6 +535,100 @@ export async function getScopedReportsDashboard(
     (sum, l) => sum + (l.costMicros ?? 0n),
     0n
   );
+
+  // Operational & integration readiness (HOME-05)
+  const liveIntegrationMode = process.env.TOANTRUNG_LIVE_INTEGRATION === 'true';
+  const distinctPlatforms = new Set(recentSyncLogs.map((c) => c.platform));
+  const configuredConnectionsCount = liveIntegrationMode ? Math.max(distinctPlatforms.size, 3) : 0;
+  const failingConnectionsCount = recentSyncLogs.filter((c) => c.consecutiveFailures >= 3).length;
+  const gclidPendingRetryCount = leads.filter(
+    (l) => Boolean(l.tracking?.gclid && l.tracking?.isUnknownCampaign),
+  ).length;
+  const wordpressConfigured = Boolean(
+    process.env.WORDPRESS_SITE_URL &&
+      process.env.WORDPRESS_USERNAME &&
+      process.env.WORDPRESS_APP_PASSWORD
+  );
+  const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
+
+  // Prioritized Actionable Tasks scoped by user role (HOME-03)
+  const actionableTasks: ActionableTaskItemDto[] = [];
+  const canWorkLeads = ['ADMIN', 'BOD', 'SALES_LEAD', 'SALES'].includes(user.roleCode);
+  const canWorkDesigns = ['ADMIN', 'BOD', 'DESIGNER', 'MKT_LEAD', 'SALES_LEAD', 'SALES'].includes(
+    user.roleCode
+  );
+  const canWorkSeo = ['ADMIN', 'BOD', 'MKT_LEAD', 'MKT_STAFF', 'ADS'].includes(user.roleCode);
+  const canWorkTracking = ['ADMIN', 'BOD', 'MKT_LEAD', 'ADS'].includes(user.roleCode);
+
+  if (canWorkLeads) {
+    actionableTasks.push({
+      id: 'unaccepted_leads',
+      title: 'Lead mới chưa xác nhận tiếp nhận',
+      description: 'Hồ sơ trạng thái Vừa nhận thông tin cần Sales bấm Tiếp nhận để bắt đầu tư vấn.',
+      count: currentUnacceptedLeadsCount,
+      severity: currentUnacceptedLeadsCount > 0 ? 'critical' : 'info',
+      moduleLabel: 'Leads & Giao dịch',
+      href: '/leads?status=new_lead&unreceived=1',
+    });
+    actionableTasks.push({
+      id: 'overdue_quotes',
+      title: 'Báo giá quá 7 ngày chưa phản hồi',
+      description: 'Hồ sơ Đã gửi báo giá quá hạn 7 ngày cần liên hệ chăm sóc hoặc cập nhật kết quả.',
+      count: currentOverdueQuotesCount,
+      severity: currentOverdueQuotesCount > 0 ? 'warning' : 'info',
+      moduleLabel: 'Leads & Giao dịch',
+      href: '/leads?status=quote_sent&overdueOnly=true',
+    });
+  }
+
+  if (canWorkDesigns) {
+    actionableTasks.push({
+      id: 'pending_designs',
+      title: 'Yêu cầu phối cảnh 3D / Banner đang chờ hoàn tất',
+      description: 'Hồ sơ thiết kế đang ở trạng thái chờ xử lý, AI phác thảo hoặc chờ duyệt.',
+      count: pendingDesignCount,
+      severity: pendingDesignCount > 0 ? 'warning' : 'info',
+      moduleLabel: 'Thiết kế & Phối cảnh',
+      href: '/design',
+    });
+  }
+
+  if (canWorkSeo) {
+    const seoActionCount = draftSeoArticles + optimizationNeededArticles;
+    actionableTasks.push({
+      id: 'seo_approvals',
+      title: 'Bài viết SEO chờ duyệt hoặc cần tối ưu lại',
+      description: `${draftSeoArticles} bản nháp chờ duyệt lịch đăng, ${optimizationNeededArticles} bài cần tối ưu sau 30 ngày.`,
+      count: seoActionCount,
+      severity: seoActionCount > 0 ? 'warning' : 'info',
+      moduleLabel: 'Từ khóa & SEO',
+      href: '/ads?tab=articles',
+    });
+    if (failedPublishArticles > 0 || user.roleCode === 'ADMIN' || user.roleCode === 'MKT_LEAD') {
+      actionableTasks.push({
+        id: 'publication_failures',
+        title: 'Bài viết lỗi xuất bản WordPress',
+        description: 'Bài viết gặp lỗi kết nối khi đẩy lên Website cần kiểm tra và đăng lại.',
+        count: failedPublishArticles,
+        severity: failedPublishArticles > 0 ? 'critical' : 'info',
+        moduleLabel: 'Từ khóa & SEO',
+        href: '/ads?tab=articles',
+      });
+    }
+  }
+
+  if (canWorkTracking) {
+    const syncIssueCount = openAlertsCount + failingConnectionsCount;
+    actionableTasks.push({
+      id: 'sync_failures',
+      title: 'Cảnh báo lệch đối soát & lỗi đồng bộ nền tảng',
+      description: `${openAlertsCount} cảnh báo chênh lệch số liệu đang mở, ${failingConnectionsCount} kết nối lỗi liên tiếp.`,
+      count: syncIssueCount,
+      severity: syncIssueCount > 0 ? 'critical' : 'info',
+      moduleLabel: 'Chiến dịch & Đồng bộ',
+      href: '/tracking',
+    });
+  }
 
   const detailedLeads: DetailedReportLeadRowDto[] = leads.map((lead, idx) => {
     const rawCompanyOrContact =
@@ -388,9 +666,10 @@ export async function getScopedReportsDashboard(
     preset: query.preset,
     fromDate: fromDate.toISOString(),
     toDate: toDate.toISOString(),
+    generatedAt: new Date().toISOString(),
     isSmallSample,
     smallSampleNotice: isSmallSample
-      ? 'Lưu ý mẫu dữ liệu nhỏ (< 30 Lead trong kỳ lọc theo UC04): Tỷ lệ chốt (Win Rate) và CPL chỉ mang tính tham khảo.'
+      ? 'Lưu ý mẫu dữ liệu nhỏ (< 30 Lead trong kỳ lọc): Tỷ lệ chốt (Win Rate) và CPL chỉ mang tính tham khảo.'
       : null,
     todayPreliminaryNotice:
       'Số liệu phát sinh trong ngày hôm nay là số liệu sơ bộ (Realtime/Light Sync 11:00 & 17:00), được chốt đối soát chính thức sau phiên đồng bộ 02:00 sáng hôm sau.',
@@ -399,6 +678,8 @@ export async function getScopedReportsDashboard(
       totalLeadsL1,
       validLeadsL2,
       effectiveLeadsL3,
+      activeLeadsCount,
+      unreceivedLeadsCount,
       newLeadCount,
       quotingCount,
       quoteSentCount,
@@ -408,22 +689,41 @@ export async function getScopedReportsDashboard(
       overdue7DaysQuoteCount,
       winRateText,
     },
+    leadTrend,
+    actionableTasks,
     byChannel,
     salesPerformance,
     productInsights,
     unansweredQuotes,
     marketingSummary: {
       totalAdsSpend: toMonetaryAmountDto(totalAdsSpendMicros, 'VND', 'micros'),
+      platformReportedConversions,
       effectiveLeadsFromAds,
       cplEffective:
         cplEffectiveMicros != null
           ? toMonetaryAmountDto(cplEffectiveMicros, 'VND', 'micros')
           : null,
       publishedSeoArticles,
+      draftSeoArticles,
+      scheduledSeoArticles,
+      failedPublishArticles,
       optimizationNeededArticles,
+      bySourceCampaign,
+    },
+    trackingOperationalSummary: {
+      liveIntegrationMode,
+      configuredConnectionsCount,
+      totalConnectionsCount: Math.max(distinctPlatforms.size, 3),
+      openAlertsCount,
+      failingConnectionsCount,
+      gclidPendingRetryCount,
+      wordpressConfigured,
+      geminiConfigured,
     },
     designSummary: {
       totalRequests: designRequests.length,
+      pendingCount: pendingDesignCount,
+      inReviewCount: inReviewDesignCount,
       completed3dCount,
       completedBannerCount,
       avgProcessingSecText: `${avgProcessingSec.toFixed(1)} giây`,

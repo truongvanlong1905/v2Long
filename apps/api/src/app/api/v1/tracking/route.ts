@@ -13,6 +13,12 @@ import {
   resolveLeadReconciliationAlert,
   triggerPlatformSyncExecution,
 } from '../../../../modules/02-tracking-sync/service';
+import {
+  executeWorkerJobByCode,
+  getAdapterReadinessMatrix,
+  getWorkerJobsHistory,
+  type WorkerJobCode,
+} from '../../../../workers';
 
 export async function GET(req: Request) {
   const auth = await requirePermissionSession(req, 'TRACKING_ADS_OPTIMIZE');
@@ -21,10 +27,17 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const periodDays = Number(url.searchParams.get('periodDays') || 30);
-    const data = await getTrackingDashboardData(
-      Number.isFinite(periodDays) && periodDays > 0 ? periodDays : 30,
-    );
-    return jsonSuccess(data);
+    const [data, workerHistory] = await Promise.all([
+      getTrackingDashboardData(
+        Number.isFinite(periodDays) && periodDays > 0 ? periodDays : 30,
+      ),
+      getWorkerJobsHistory(12),
+    ]);
+    return jsonSuccess({
+      ...data,
+      adapterMatrix: getAdapterReadinessMatrix(),
+      workerHistory,
+    });
   } catch (err) {
     return jsonError(
       'TRACKING_DASHBOARD_FAILED',
@@ -72,6 +85,23 @@ export async function POST(req: Request) {
       }
       const res = await resolveLeadReconciliationAlert(auth.user, parsed.data);
       return jsonSuccess({ id: res.id, status: res.status });
+    }
+
+    if (action === 'run_worker_job') {
+      const validCodes: WorkerJobCode[] = [
+        'D3_SYNC_FULL',
+        'GCLID_HOURLY_RETRY',
+        'GOOGLE_LEAD_RECONCILE',
+        'SEO_SCHEDULED_PUBLISH',
+        'OVERDUE_QUOTE_REMINDER',
+        'ALL_JOBS',
+      ];
+      const requestedCode = String(raw.jobCode || 'ALL_JOBS') as WorkerJobCode;
+      const safeCode: WorkerJobCode = validCodes.includes(requestedCode)
+        ? requestedCode
+        : 'ALL_JOBS';
+      const jobRes = await executeWorkerJobByCode(safeCode, auth.user.id);
+      return jsonSuccess(jobRes);
     }
 
     if (action === 'simulate_webhook') {

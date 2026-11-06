@@ -43,6 +43,7 @@ export interface ProjectPhotoItemDto {
   storageObjectKey?: string;
   selected: boolean;
   uploadedAt: string;
+  sourceLeadAttachmentId?: number;
 }
 
 export interface DesignChatMessageDto {
@@ -128,6 +129,8 @@ export interface DesignRequestItemDto {
   bannerWidthPx: number | null;
   bannerHeightPx: number | null;
   aspectRatio: string | null;
+  aspectLocked?: boolean;
+  isArchived?: boolean;
   sitePhotoDownloadUrl: string | null;
   photos: ProjectPhotoItemDto[];
   chatMessages: DesignChatMessageDto[];
@@ -229,10 +232,30 @@ export type CreateDesignRequestDto = z.infer<typeof CreateDesignRequestSchema>;
 
 export const UpdateDesignProjectSchema = z.object({
   projectName: z.string().trim().min(2).max(150).optional(),
+  designType: z.enum(DESIGN_TYPES).optional(),
   contactName: z.string().trim().max(120).optional().nullable(),
   installationInfo: z.string().trim().max(500).optional().nullable(),
   notes: z.string().trim().max(1000).optional().nullable(),
   leadId: z.number().int().positive().optional().nullable(),
+  productId: z.number().int().positive().optional().nullable(),
+  ledModuleSpec: z.string().trim().max(120).optional().nullable(),
+  pixelPitch: z.string().trim().max(30).optional().nullable(),
+  screenStyle: z.enum(['flat', 'curved', 'corner_90']).optional(),
+  screenWidthM: z.number().positive().max(200).optional().nullable(),
+  screenHeightM: z.number().positive().max(100).optional().nullable(),
+  bannerWidthPx: z.number().int().min(128).max(15360).optional().nullable(),
+  bannerHeightPx: z.number().int().min(64).max(8640).optional().nullable(),
+  aspectRatio: z.string().trim().max(30).optional().nullable(),
+  aspectLocked: z.boolean().optional(),
+  placementQuad: QuadCoordinatesSchema.optional().nullable(),
+  selectedPhotoId: z.string().trim().optional(),
+  renamePhotoId: z.string().trim().optional(),
+  renamePhotoName: z.string().trim().min(1).max(120).optional(),
+  renameVersionId: z.number().int().positive().optional(),
+  renameVersionLabel: z.string().trim().min(1).max(200).optional(),
+  isArchived: z.boolean().optional(),
+  importLeadAttachments: z.boolean().optional(),
+  expectedVersion: z.number().int().positive().optional(),
 });
 
 export type UpdateDesignProjectDto = z.infer<typeof UpdateDesignProjectSchema>;

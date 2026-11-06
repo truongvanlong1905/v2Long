@@ -648,6 +648,55 @@ export async function withdrawSeoArticleApproval(
   }
 }
 
+export async function publishArticleViaWordPressAdapter(article: {
+  id: number;
+  title: string;
+  slug: string | null;
+  metaDescription: string | null;
+  contentHtml: string | null;
+  targetWebsite: string;
+}): Promise<{ publishedUrl: string; mode: 'LIVE_CMS' | 'SIMULATED_CMS' }> {
+  const slugSafe = article.slug || `bai-viet-${article.id}`;
+  const wpUser = process.env.WP_APP_USER?.trim();
+  const wpPassword = process.env.WP_APP_PASSWORD?.trim();
+
+  if (wpUser && wpPassword) {
+    const endpoint = `https://${article.targetWebsite}/wp-json/wp/v2/posts`;
+    const basicToken = Buffer.from(`${wpUser}:${wpPassword}`).toString('base64');
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Basic ${basicToken}`,
+      },
+      body: JSON.stringify({
+        title: article.title,
+        slug: slugSafe,
+        excerpt: article.metaDescription || '',
+        content: article.contentHtml || '',
+        status: 'publish',
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `WordPress REST API (${article.targetWebsite}) trả về HTTP ${response.status}. Vui lòng kiểm tra Application Password.`,
+      );
+    }
+
+    const json = (await response.json()) as { link?: string };
+    return {
+      publishedUrl: json.link || `https://${article.targetWebsite}/tin-tuc/${slugSafe}`,
+      mode: 'LIVE_CMS',
+    };
+  }
+
+  return {
+    publishedUrl: `https://${article.targetWebsite}/tin-tuc/${slugSafe}`,
+    mode: 'SIMULATED_CMS',
+  };
+}
+
 export async function publishSeoArticleToTargetWebsite(
   actor: SessionUserDto,
   articleId: number,
@@ -675,7 +724,24 @@ export async function publishSeoArticleToTargetWebsite(
     throw new Error(errorMsg);
   }
 
-  const publishedUrl = `https://${existing.targetWebsite}/tin-tuc/${existing.slug || `bai-viet-${existing.id}`}`;
+  let publishedUrl = `https://${existing.targetWebsite}/tin-tuc/${existing.slug || `bai-viet-${existing.id}`}`;
+  try {
+    const cmsRes = await publishArticleViaWordPressAdapter(existing);
+    publishedUrl = cmsRes.publishedUrl;
+  } catch (err) {
+    const errorMsg =
+      err instanceof Error ? err.message : `Lỗi kết nối CMS ${existing.targetWebsite}`;
+    await prisma.seoArticle.updateMany({
+      where: { id: articleId, version: input.expectedVersion },
+      data: {
+        publishAttemptCount: { increment: 1 },
+        lastPublishError: errorMsg,
+        version: { increment: 1 },
+      },
+    });
+    throw new Error(errorMsg);
+  }
+
   const updated = await prisma.seoArticle.updateMany({
     where: { id: articleId, version: input.expectedVersion },
     data: {

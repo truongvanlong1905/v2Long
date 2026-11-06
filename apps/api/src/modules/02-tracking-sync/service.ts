@@ -546,7 +546,6 @@ export async function getTrackingDashboardData(periodDays = 30): Promise<Trackin
         isSpam: true,
         spamAdsExclusionStatus: true,
         pipelineStatus: true,
-        dealValueVnd: true,
         createdAt: true,
         tracking: {
           select: {
@@ -578,7 +577,6 @@ export async function getTrackingDashboardData(periodDays = 30): Promise<Trackin
                 isSpam: true,
                 spamAdsExclusionStatus: true,
                 pipelineStatus: true,
-                dealValueVnd: true,
               },
             },
           },
@@ -698,23 +696,11 @@ export async function getTrackingDashboardData(periodDays = 30): Promise<Trackin
       .filter((m) => m.grain === 'campaign')
       .reduce((acc, m) => acc + m.spendMicros, 0n);
 
-    const totalDealVnd = campLeads
-      .filter((l) => isL3Effective(l) && l.pipelineStatus === 'won' && l.dealValueVnd)
-      .reduce((acc, l) => acc + (l.dealValueVnd || 0n), 0n);
-
     const cplMicros = l3 > 0 && totalSpendMicros > 0n ? totalSpendMicros / BigInt(l3) : null;
     const costPerQuoteMicros =
       quoted > 0 && totalSpendMicros > 0n ? totalSpendMicros / BigInt(quoted) : null;
     const costPerWonMicros =
       won > 0 && totalSpendMicros > 0n ? totalSpendMicros / BigInt(won) : null;
-
-    let internalRoasText = '—';
-    if (totalSpendMicros > 0n && totalDealVnd > 0n) {
-      const spendVnd = Number(totalSpendMicros / 1_000_000n);
-      if (spendVnd > 0) {
-        internalRoasText = `${(Number(totalDealVnd) / spendVnd).toFixed(2)}x`;
-      }
-    }
 
     return {
       id: c.id,
@@ -737,7 +723,6 @@ export async function getTrackingDashboardData(periodDays = 30): Promise<Trackin
       cplEffective: toMonetaryAmountDto(cplMicros, 'VND', 'micros'),
       costPerQuote: toMonetaryAmountDto(costPerQuoteMicros, 'VND', 'micros'),
       costPerWon: toMonetaryAmountDto(costPerWonMicros, 'VND', 'micros'),
-      internalRoasText,
     };
   });
 

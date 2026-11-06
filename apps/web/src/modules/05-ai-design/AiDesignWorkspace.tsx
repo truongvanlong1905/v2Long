@@ -1,20 +1,17 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import Image from 'next/image';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  DESIGN_STATUS_LABELS,
+  DESIGN_TYPE_LABELS,
   hasBaPermission,
-  type AddProjectPhotoDto,
   type CreateDesignRequestDto,
-  type DesignAssetVersionItemDto,
-  type DesignChatMessageDto,
   type DesignRequestItemDto,
-  type DesignStatus,
-  type LedProductSpecDto,
-  type ProjectPhotoItemDto,
+  type DesignType,
   type QuadCoordinatesDto,
 } from '@toantrung/contracts';
 import {
+  Archive,
   Check,
   CheckCircle2,
   Clock,
@@ -22,27 +19,28 @@ import {
   Download,
   Edit2,
   Expand,
-  ExternalLink,
   Eye,
-  FileCheck,
-  FolderPlus,
+  FileArchive,
+  FileSpreadsheet,
+  FolderOpen,
   Image as ImageIcon,
   Info,
   Layers,
-  LayoutGrid,
-  Maximize2,
+  Lock,
   Minus,
   Monitor,
   MoreHorizontal,
   Plus,
   RefreshCw,
   Send,
+  Settings2,
   ShieldAlert,
   Sparkles,
   Trash2,
+  Unlock,
   Upload,
-  ZoomIn,
-  ZoomOut,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { apiRequest } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
@@ -71,9 +69,35 @@ interface ProviderStatusInfo {
   notes: string;
 }
 
-/**
- * Resolves any storage key or public path to a valid browser-loadable image URL
- */
+interface ProjectParameterFormState {
+  projectName: string;
+  designType: DesignType;
+  leadId: string;
+  contactName: string;
+  installationInfo: string;
+  notes: string;
+  productId: number;
+  pixelPitch: string;
+  screenStyle: 'flat' | 'curved' | 'corner_90';
+  screenWidthM: number;
+  screenHeightM: number;
+  aspectRatio: string;
+  aspectLocked: boolean;
+  bannerWidthPx: number;
+  bannerHeightPx: number;
+}
+
+const STORAGE_SELECTED_PROJECT_KEY = 'tt_studio_selected_project_id';
+
+function parseAspectRatioValue(ratioStr: string): number | null {
+  const m = ratioStr.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+  if (!m) return null;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  if (!w || !h || h <= 0) return null;
+  return w / h;
+}
+
 function resolveAssetUrl(urlOrKey: string | null | undefined): string {
   if (!urlOrKey) return '/brand/showroom-toan-trung.webp';
   if (urlOrKey.startsWith('/') || urlOrKey.startsWith('http://') || urlOrKey.startsWith('https://')) {
@@ -85,6 +109,7 @@ function resolveAssetUrl(urlOrKey: string | null | undefined): string {
 export function AiDesignWorkspace() {
   const { user } = useSession();
   const canUseAiDesign = Boolean(user && hasBaPermission(user.roleCode, 'AI_DESIGN'));
+  const canExport = Boolean(user && hasBaPermission(user.roleCode, 'EXPORT_DATA'));
 
   // Data states
   const [requests, setRequests] = useState<DesignRequestItemDto[]>([]);
@@ -97,37 +122,55 @@ export function AiDesignWorkspace() {
   // UI state
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [savingParams, setSavingParams] = useState(false);
   const [savingFinal, setSavingFinal] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadingFinalFile, setUploadingFinalFile] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successToast, setSuccessToast] = useState<string | null>(null);
 
-  // Center Tab: 'perspective' | 'banner' | 'library'
-  const [centerTab, setCenterTab] = useState<'perspective' | 'banner' | 'library'>('perspective');
+  // Three Prominent Workspace Areas: 'perspective' (Phối cảnh) | 'assistant' (Trợ lý AI) | 'specs' (Thông số)
+  const [activeWorkspaceArea, setActiveWorkspaceArea] = useState<'perspective' | 'assistant' | 'specs'>('perspective');
+  // Side dock tab when viewing Phối cảnh on wide desktop
+  const [sideDockTab, setSideDockTab] = useState<'assistant' | 'specs'>('assistant');
 
-  // View Mode: 'original' | 'perspective' | 'compare'
-  const [viewMode, setViewMode] = useState<'original' | 'perspective' | 'compare'>('perspective');
+  // Canvas View Mode: 'original' (Ảnh gốc) | 'result' (Kết quả) | 'compare' (So sánh)
+  const [viewMode, setViewMode] = useState<'original' | 'result' | 'compare'>('result');
 
-  // Right Tab: 'request' | 'specs'
-  const [rightTab, setRightTab] = useState<'request' | 'specs'>('request');
-
-  // Responsive Pane Switcher for Mobile (<768px) & Tablet Drawer (768px-1279px) (Step 3)
-  const [mobilePane, setMobilePane] = useState<'projects' | 'canvas' | 'assistant'>('canvas');
-  const [tabletAssistantOpen, setTabletAssistantOpen] = useState(false);
-
-  // Search Project
+  // Left Sidebar: Project Search, Archive toggle, Secondary menu (`...`), and Kho ảnh dự án folder
   const [searchProject, setSearchProject] = useState('');
+  const [showArchivedProjects, setShowArchivedProjects] = useState(false);
+  const [openMenuProjectId, setOpenMenuProjectId] = useState<number | null>(null);
+  const [assetFolder, setAssetFolder] = useState<'technical' | 'designs'>('technical');
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
 
-  // Zoom & Tools
+  // Responsive Mobile Switcher
+  const [mobilePane, setMobilePane] = useState<'projects' | 'canvas' | 'assistant'>('canvas');
+  // Mở rộng ảnh: ẩn cột Dự án & Trợ lý để vùng Phối cảnh chiếm toàn bộ chiều ngang
+  const [focusCanvas, setFocusCanvas] = useState<boolean>(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setFocusCanvas(window.localStorage.getItem('m05.focusCanvas') === '1');
+  }, []);
+  const toggleFocusCanvas = () => {
+    setFocusCanvas((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') window.localStorage.setItem('m05.focusCanvas', next ? '1' : '0');
+      return next;
+    });
+  };
+
+  // Zoom & Canvas Tools
   const [zoomLevel, setZoomLevel] = useState<number>(100);
   const [showHandles, setShowHandles] = useState(true);
   const [compareSplit, setCompareSplit] = useState<number>(50);
 
-  // Composer
+  // AI Assistant Composer
   const [chatPrompt, setChatPrompt] = useState('');
   const [chatQuality, setChatQuality] = useState<'draft' | 'high_quality'>('draft');
   const [piiAlert, setPiiAlert] = useState<string | null>(null);
 
-  // Interactive 4-Corner Placement Handles (percentage of natural image)
+  // Interactive 4-Corner Placement Handles
   const [quad, setQuad] = useState<QuadCoordinatesDto>({
     topLeft: { x: 64.2, y: 44.5 },
     topRight: { x: 93.8, y: 45.2 },
@@ -138,6 +181,26 @@ export function AiDesignWorkspace() {
   const [draggingCompare, setDraggingCompare] = useState(false);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
 
+  // Controlled Form State for "Thông số" (isolated per project so switching/reloading never mixes state)
+  const [paramForm, setParamForm] = useState<ProjectParameterFormState>({
+    projectName: 'Showroom LED',
+    designType: 'perspective_3d',
+    leadId: '',
+    contactName: '',
+    installationInfo: 'Tường bên phải showroom, cách sàn 1.2m',
+    notes: '',
+    productId: 1,
+    pixelPitch: 'P2.5',
+    screenStyle: 'flat',
+    screenWidthM: 4.8,
+    screenHeightM: 2.7,
+    aspectRatio: '16:9',
+    aspectLocked: true,
+    bannerWidthPx: 1920,
+    bannerHeightPx: 1080,
+  });
+  const [paramValidationError, setParamValidationError] = useState<string | null>(null);
+
   // Modal: Create New Project
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState('Showroom LED');
@@ -145,59 +208,100 @@ export function AiDesignWorkspace() {
   const [newLeadId, setNewLeadId] = useState<string>('');
   const [newContactName, setNewContactName] = useState('');
   const [newNotes, setNewNotes] = useState('');
-  const [newPrompt, setNewPrompt] = useState('Đặt màn hình ở tường bên phải, hiển thị sóng biển xanh và giữ nguyên nội thất.');
+  const [newPrompt, setNewPrompt] = useState(
+    'Đặt màn hình ở tường bên phải, hiển thị sóng biển xanh và giữ nguyên nội thất.'
+  );
 
-  // Modal / Inline Rename & Aspect Ratio Edit State (Enhancement 6)
+  // Modal: Rename Project
   const [editingName, setEditingName] = useState(false);
+  const [renameTargetId, setRenameTargetId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState('');
-  const [inlineEditProjId, setInlineEditProjId] = useState<number | null>(null);
-  const [inlineNameDraft, setInlineNameDraft] = useState('');
-  const [inlineAspectDraft, setInlineAspectDraft] = useState('16:9');
+
+  const syncProjectSelection = useCallback((project: DesignRequestItemDto) => {
+    setSelectedId(project.id);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(STORAGE_SELECTED_PROJECT_KEY, String(project.id));
+      const url = new URL(window.location.href);
+      url.searchParams.set('projectId', String(project.id));
+      window.history.replaceState({}, '', url.toString());
+    }
+    if (project.placementQuad) {
+      setQuad(project.placementQuad);
+    }
+    if (project.assetVersions.length > 0) {
+      const approved = project.assetVersions.find((v) => v.isApprovedFinal);
+      const latest = project.assetVersions[project.assetVersions.length - 1];
+      setSelectedVersionId((approved || latest).id);
+    } else {
+      setSelectedVersionId(null);
+    }
+    setSelectedAssetIds([]);
+    setParamValidationError(null);
+    setParamForm({
+      projectName: project.projectName || 'Dự án LED',
+      designType: project.designType || 'perspective_3d',
+      leadId: project.leadId ? String(project.leadId) : '',
+      contactName: project.contactName && project.contactName !== 'Chưa cập nhật' ? project.contactName : '',
+      installationInfo: project.installationInfo || 'Tường bên phải showroom, cách sàn 1.2m',
+      notes: project.notes || '',
+      productId: project.productId || project.productSpec?.productId || 1,
+      pixelPitch: project.productSpec?.pixelPitch || 'P2.5',
+      screenStyle: project.productSpec?.screenStyle || 'flat',
+      screenWidthM: project.screenWidthM || 4.8,
+      screenHeightM: project.screenHeightM || 2.7,
+      aspectRatio: project.aspectRatio || '16:9',
+      aspectLocked: project.aspectLocked ?? true,
+      bannerWidthPx: project.bannerWidthPx || project.productSpec?.resolutionWidthPx || 1920,
+      bannerHeightPx: project.bannerHeightPx || project.productSpec?.resolutionHeightPx || 1080,
+    });
+  }, []);
 
   // Load Data from API
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await apiRequest<{
-        requests: DesignRequestItemDto[];
-        leadOptions: LeadOpt[];
-        productOptions: ProductOpt[];
-        providerStatus: ProviderStatusInfo;
-      }>('/api/v1/design');
-      const list: DesignRequestItemDto[] = data.requests || [];
-      setRequests(list);
-      setLeadOptions(data.leadOptions || []);
-      setProductOptions(data.productOptions || []);
-      setProviderStatus(data.providerStatus || null);
+  const loadData = useCallback(
+    async (preferredProjectId?: number) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await apiRequest<{
+          requests: DesignRequestItemDto[];
+          leadOptions: LeadOpt[];
+          productOptions: ProductOpt[];
+          providerStatus: ProviderStatusInfo;
+        }>('/api/v1/design');
+        const list: DesignRequestItemDto[] = data.requests || [];
+        setRequests(list);
+        setLeadOptions(data.leadOptions || []);
+        setProductOptions(data.productOptions || []);
+        setProviderStatus(data.providerStatus || null);
 
-      if (list.length > 0) {
-        const currentReq = selectedId ? list.find((r) => r.id === selectedId) || list[0] : list[0];
-        setSelectedId(currentReq.id);
-        if (currentReq.placementQuad) {
-          setQuad(currentReq.placementQuad);
+        if (list.length > 0) {
+          let targetId = preferredProjectId ?? selectedId;
+          if (!targetId && typeof window !== 'undefined') {
+            const urlParams = new URLSearchParams(window.location.search);
+            const fromUrl = Number(urlParams.get('projectId'));
+            const fromStorage = Number(window.localStorage.getItem(STORAGE_SELECTED_PROJECT_KEY));
+            if (Number.isInteger(fromUrl) && fromUrl > 0) {
+              targetId = fromUrl;
+            } else if (Number.isInteger(fromStorage) && fromStorage > 0) {
+              targetId = fromStorage;
+            }
+          }
+          const currentReq = (targetId ? list.find((r) => r.id === targetId) : null) || list[0];
+          syncProjectSelection(currentReq);
         }
-        if (currentReq.assetVersions.length > 0) {
-          const latest = currentReq.assetVersions[currentReq.assetVersions.length - 1];
-          setSelectedVersionId(latest.id);
-        }
-        // Sync center tab with project type
-        if (currentReq.designType === 'banner') {
-          setCenterTab('banner');
-        } else {
-          setCenterTab('perspective');
-        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Không thể tải dữ liệu Studio thiết kế.');
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Lỗi nạp dữ liệu M05');
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedId]);
+    },
+    [selectedId, syncProjectSelection]
+  );
 
   useEffect(() => {
     void loadData();
-  }, [loadData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-select or prefill project when navigated with ?leadId=<id> from LeadsWorkspace
   useEffect(() => {
@@ -207,7 +311,7 @@ export function AiDesignWorkspace() {
     if (Number.isInteger(leadIdParam) && leadIdParam > 0) {
       const existingReq = requests.find((r) => r.leadId === leadIdParam);
       if (existingReq) {
-        setSelectedId(existingReq.id);
+        syncProjectSelection(existingReq);
       } else {
         const opt = leadOptions.find((l) => l.id === leadIdParam);
         setNewLeadId(String(leadIdParam));
@@ -217,31 +321,59 @@ export function AiDesignWorkspace() {
         setShowCreateModal(true);
       }
     }
-  }, [loading, requests, leadOptions]);
+  }, [loading, requests, leadOptions, syncProjectSelection]);
 
-  // Current selected project & version
-  const currentProject = requests.find((r) => r.id === selectedId) || requests[0] || null;
-  const currentVersion = currentProject?.assetVersions.find((v) => v.id === selectedVersionId) ||
-    currentProject?.assetVersions[currentProject.assetVersions.length - 1] || null;
-
-  // Immutable state updater for current project (Mục 2.4)
-  const updateCurrentProjectImmutable = useCallback(
-    (updater: (proj: DesignRequestItemDto) => DesignRequestItemDto) => {
-      if (!currentProject) return;
-      const targetId = currentProject.id;
-      setRequests((prev) => prev.map((r) => (r.id === targetId ? updater({ ...r }) : r)));
-    },
-    [currentProject],
+  const currentProject = useMemo(
+    () => requests.find((r) => r.id === selectedId) || requests[0] || null,
+    [requests, selectedId]
   );
 
-  // Selected Photo
-  const selectedPhoto = currentProject?.photos.find((p) => p.selected) || currentProject?.photos[0] || null;
+  const currentVersion = useMemo(
+    () =>
+      currentProject?.assetVersions.find((v) => v.id === selectedVersionId) ||
+      currentProject?.assetVersions[currentProject.assetVersions.length - 1] ||
+      null,
+    [currentProject, selectedVersionId]
+  );
 
-  // Resolve valid image URLs for the canvas
+  const selectedPhoto = useMemo(
+    () => currentProject?.photos.find((p) => p.selected) || currentProject?.photos[0] || null,
+    [currentProject]
+  );
+
+  // Resolve distinct URLs for Original input photo vs Output design version
   const sitePhotoUrl = resolveAssetUrl(selectedPhoto?.url || currentProject?.sitePhotoDownloadUrl);
-  const versionImageUrl = resolveAssetUrl(currentVersion?.downloadUrl || currentProject?.aiDraftDownloadUrl);
+  const versionImageUrl = currentVersion
+    ? `/api/v1/design/asset/${currentVersion.id}`
+    : resolveAssetUrl(currentProject?.aiDraftDownloadUrl || sitePhotoUrl);
 
-  // Dragging logic for 4-corner placement
+  // Live computed LED hardware specs from paramForm
+  const computedLiveSpecs = useMemo(() => {
+    const w = Math.max(0.2, Number(paramForm.screenWidthM) || 4.8);
+    const h = Math.max(0.2, Number(paramForm.screenHeightM) || 2.7);
+    const areaM2 = Number((w * h).toFixed(2));
+    const pitchMm = Number(paramForm.pixelPitch.replace(/[^0-9.]/g, '')) || 2.5;
+    const resW = Math.round((w * 1000) / pitchMm);
+    const resH = Math.round((h * 1000) / pitchMm);
+    const cabinetCols = Math.max(1, Math.round((w * 1000) / 640));
+    const cabinetRows = Math.max(1, Math.round((h * 1000) / 480));
+    const cabinetCount = cabinetCols * cabinetRows;
+    const moduleCount = cabinetCount * 6;
+    const avgKw = Number(((areaM2 * 250) / 1000).toFixed(2));
+    const maxKw = Number(((areaM2 * 600) / 1000).toFixed(2));
+    return {
+      areaM2,
+      pitchMm,
+      resW,
+      resH,
+      cabinetCount,
+      moduleCount,
+      avgKw,
+      maxKw,
+    };
+  }, [paramForm.screenWidthM, paramForm.screenHeightM, paramForm.pixelPitch]);
+
+  // Dragging logic for 4-corner placement & split comparison
   const handleMouseDownHandle = (corner: keyof QuadCoordinatesDto) => (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -280,13 +412,79 @@ export function AiDesignWorkspace() {
     const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
     const vnPhoneRegex = /(?:\+84|0)(?:3|5|7|8|9)(?:[\s.-]*\d){8}\b/;
     if (emailRegex.test(val) || vnPhoneRegex.test(val)) {
-      setPiiAlert('Phát hiện SĐT/Email trong nội dung. Theo quy định BA (UC06), không gửi thông tin liên hệ khách hàng sang AI.');
+      setPiiAlert(
+        'Phát hiện SĐT/Email trong nội dung. Theo quy định bảo mật dữ liệu (UC06), tuyệt đối không gửi thông tin liên hệ khách hàng sang AI.'
+      );
     } else {
       setPiiAlert(null);
     }
   };
 
-  // Chat Edit Submit
+  // Save Parameters ("Thông số") to Backend
+  const handleSaveParameters = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!currentProject || savingParams) return;
+
+    if (!paramForm.projectName.trim() || paramForm.projectName.trim().length < 2) {
+      setParamValidationError('Tên dự án phải có tối thiểu 2 ký tự.');
+      return;
+    }
+    if (paramForm.designType === 'perspective_3d') {
+      if (paramForm.screenWidthM <= 0 || paramForm.screenHeightM <= 0) {
+        setParamValidationError('Chiều ngang và chiều cao màn hình LED (m) phải lớn hơn 0.');
+        return;
+      }
+    } else {
+      if (paramForm.bannerWidthPx < 128 || paramForm.bannerHeightPx < 64) {
+        setParamValidationError('Độ phân giải đầu ra tối thiểu là 128×64 px.');
+        return;
+      }
+    }
+
+    setParamValidationError(null);
+    setSavingParams(true);
+    setError(null);
+    try {
+      const selectedProduct = productOptions.find((p) => p.id === paramForm.productId);
+      const ledModuleSpec = selectedProduct
+        ? `${selectedProduct.name} (${paramForm.pixelPitch})`
+        : `Màn hình LED ${paramForm.pixelPitch}`;
+
+      await apiRequest(`/api/v1/design/${currentProject.id}`, {
+        method: 'PATCH',
+        csrfToken: user?.csrfToken,
+        body: {
+          action: 'update_project',
+          projectName: paramForm.projectName.trim(),
+          designType: paramForm.designType,
+          leadId: paramForm.leadId ? Number(paramForm.leadId) : null,
+          contactName: paramForm.contactName.trim() || null,
+          installationInfo: paramForm.installationInfo.trim() || null,
+          notes: paramForm.notes.trim() || null,
+          productId: paramForm.productId,
+          ledModuleSpec,
+          pixelPitch: paramForm.pixelPitch,
+          screenStyle: paramForm.screenStyle,
+          screenWidthM: Number(paramForm.screenWidthM),
+          screenHeightM: Number(paramForm.screenHeightM),
+          bannerWidthPx: Math.round(Number(paramForm.bannerWidthPx)),
+          bannerHeightPx: Math.round(Number(paramForm.bannerHeightPx)),
+          aspectRatio: paramForm.aspectRatio,
+          aspectLocked: paramForm.aspectLocked,
+          placementQuad: quad,
+        },
+      });
+
+      setSuccessToast(`Đã lưu thông số dự án "${paramForm.projectName.trim()}" vào cơ sở dữ liệu.`);
+      await loadData(currentProject.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không thể lưu thông số dự án.');
+    } finally {
+      setSavingParams(false);
+    }
+  };
+
+  // Chat Edit Submit (creates new version vN without overwriting original)
   const handleSendChatEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentProject || !chatPrompt.trim() || submitting || piiAlert) return;
@@ -300,11 +498,12 @@ export function AiDesignWorkspace() {
         prompt: chatPrompt.trim(),
         quality: chatQuality,
         placementQuad: quad,
-        screenWidthM: currentProject.screenWidthM,
-        screenHeightM: currentProject.screenHeightM,
-        bannerWidthPx: currentProject.bannerWidthPx,
-        bannerHeightPx: currentProject.bannerHeightPx,
-        aspectRatio: currentProject.aspectRatio,
+        productId: paramForm.productId,
+        screenWidthM: paramForm.screenWidthM,
+        screenHeightM: paramForm.screenHeightM,
+        bannerWidthPx: paramForm.bannerWidthPx,
+        bannerHeightPx: paramForm.bannerHeightPx,
+        aspectRatio: paramForm.aspectRatio,
         selectedPhotoUrl: sitePhotoUrl,
         idempotencyKey: `chat-design-${currentProject.id}-v${currentProject.assetVersions.length + 1}-${Date.now()}`,
       };
@@ -315,23 +514,24 @@ export function AiDesignWorkspace() {
           method: 'PATCH',
           csrfToken: user?.csrfToken,
           body: payload,
-        },
+        }
       );
 
       setChatPrompt('');
-      setSuccessToast(`Bản nháp mới (v${data.versionNumber}) đã được thêm vào thư viện.`);
-      await loadData();
+      setViewMode('result');
+      setSuccessToast(`Đã tạo phiên bản thiết kế mới (v${data.versionNumber}) trong Bản thiết kế.`);
+      await loadData(currentProject.id);
       if (data.versionId) {
         setSelectedVersionId(data.versionId);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Lỗi gửi yêu cầu AI.');
+      setError(err instanceof Error ? err.message : 'Lỗi gửi yêu cầu dựng thiết kế AI.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  // Save Finished Version
+  // Approve & Save Finished Version
   const handleSaveFinished = async () => {
     if (!currentProject || !currentVersion || savingFinal) return;
     setSavingFinal(true);
@@ -344,24 +544,122 @@ export function AiDesignWorkspace() {
           action: 'save_finished',
           expectedVersion: currentProject.version,
           versionId: currentVersion.id,
-          note: 'Phê duyệt bản thiết kế hoàn thiện từ Studio AI',
+          note: `Phê duyệt bản thiết kế v${currentVersion.versionNumber} bàn giao chính thức`,
         },
       });
 
-      setSuccessToast('Đã lưu bản thiết kế hoàn thiện và thông báo cho NVKD.');
-      await loadData();
+      setSuccessToast(
+        `Đã chốt duyệt phiên bản v${currentVersion.versionNumber} và đồng bộ sang hồ sơ Lead / NVKD.`
+      );
+      await loadData(currentProject.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Lỗi lưu bản hoàn thiện.');
+      setError(err instanceof Error ? err.message : 'Lỗi phê duyệt bản hoàn thiện.');
     } finally {
       setSavingFinal(false);
     }
   };
 
-  // Authorized Download
-  const handleDownloadFile = () => {
-    if (!currentVersion) return;
-    const downloadUrl = `/api/v1/design/asset/${currentVersion.id}`;
-    window.open(downloadUrl, '_blank');
+  // Multi-file Upload for "Ảnh kỹ thuật"
+  const handleUploadTechnicalPhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0 || !currentProject) return;
+
+    setUploadingPhoto(true);
+    setError(null);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const b64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve((reader.result as string).split(',')[1] || '');
+          reader.onerror = () => reject(new Error('Không thể đọc tệp ảnh.'));
+          reader.readAsDataURL(file);
+        });
+        await apiRequest(`/api/v1/design/${currentProject.id}`, {
+          method: 'POST',
+          csrfToken: user?.csrfToken,
+          body: {
+            action: 'add_photo',
+            photoName: file.name,
+            fileName: file.name,
+            mimeType: file.type || 'image/jpeg',
+            base64Data: b64,
+          },
+        });
+      }
+      setSuccessToast(`Đã tải ${files.length} ảnh kỹ thuật vào Kho ảnh dự án.`);
+      await loadData(currentProject.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lỗi tải ảnh kỹ thuật.');
+    } finally {
+      setUploadingPhoto(false);
+      e.target.value = '';
+    }
+  };
+
+  // Upload Designer Final Output into "Bản thiết kế"
+  const handleUploadDesignerFinal = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !currentProject) return;
+
+    setUploadingFinalFile(true);
+    setError(null);
+    try {
+      const b64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(',')[1] || '');
+        reader.onerror = () => reject(new Error('Không thể đọc tệp thiết kế.'));
+        reader.readAsDataURL(file);
+      });
+      await apiRequest(`/api/v1/design/${currentProject.id}`, {
+        method: 'POST',
+        csrfToken: user?.csrfToken,
+        body: {
+          action: 'upload_final',
+          fileName: file.name,
+          mimeType: file.type || 'image/png',
+          base64Data: b64,
+          note: `Bản thiết kế hoàn thiện tải lên: ${file.name}`,
+        },
+      });
+      setSuccessToast(`Đã tải bản thiết kế hoàn thiện "${file.name}" vào thư mục Bản thiết kế.`);
+      await loadData(currentProject.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lỗi tải bản thiết kế hoàn thiện.');
+    } finally {
+      setUploadingFinalFile(false);
+      e.target.value = '';
+    }
+  };
+
+  // Import attachments from linked Lead into "Ảnh kỹ thuật"
+  const handleImportLeadPhotos = async () => {
+    if (!currentProject || !currentProject.leadId) return;
+    try {
+      await apiRequest(`/api/v1/design/${currentProject.id}`, {
+        method: 'PATCH',
+        csrfToken: user?.csrfToken,
+        body: {
+          action: 'update_project',
+          importLeadAttachments: true,
+        },
+      });
+      setSuccessToast('Đã đồng bộ ảnh hiện trạng từ hồ sơ Lead vào thư mục Ảnh kỹ thuật.');
+      await loadData(currentProject.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không thể nhập ảnh từ Lead.');
+    }
+  };
+
+  // Download ZIP of selected or all items in Kho ảnh dự án
+  const handleDownloadProjectZip = (folderScope: 'all' | 'technical' | 'designs' = 'all') => {
+    if (!currentProject) return;
+    const params = new URLSearchParams();
+    params.set('folder', folderScope);
+    if (selectedAssetIds.length > 0) {
+      params.set('ids', selectedAssetIds.join(','));
+    }
+    window.open(`/api/v1/design/${currentProject.id}/download-zip?${params.toString()}`, '_blank');
   };
 
   // Create New Project Submit
@@ -406,11 +704,8 @@ export function AiDesignWorkspace() {
       });
 
       setShowCreateModal(false);
-      setSuccessToast(`Đã tạo dự án #${data.id} thành công.`);
-      await loadData();
-      if (data.id) {
-        setSelectedId(data.id);
-      }
+      setSuccessToast(`Đã tạo dự án "${newProjectName.trim()}" (#${data.id}) thành công.`);
+      await loadData(data.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Lỗi tạo dự án mới.');
     } finally {
@@ -418,11 +713,12 @@ export function AiDesignWorkspace() {
     }
   };
 
-  // Rename Project
+  // Rename Project Submit
   const handleRenameProject = async () => {
-    if (!currentProject || !renameValue.trim()) return;
+    const targetId = renameTargetId || currentProject?.id;
+    if (!targetId || !renameValue.trim()) return;
     try {
-      await apiRequest(`/api/v1/design/${currentProject.id}`, {
+      await apiRequest(`/api/v1/design/${targetId}`, {
         method: 'PATCH',
         csrfToken: user?.csrfToken,
         body: {
@@ -431,163 +727,698 @@ export function AiDesignWorkspace() {
         },
       });
       setEditingName(false);
-      await loadData();
+      setRenameTargetId(null);
+      setSuccessToast(`Đã đổi tên dự án thành "${renameValue.trim()}".`);
+      await loadData(targetId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Lỗi đổi tên dự án.');
     }
   };
 
-  // Add Photo
-  const handleUploadPhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !currentProject) return;
-
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const b64 = (reader.result as string).split(',')[1];
-      try {
-        await apiRequest(`/api/v1/design/${currentProject.id}`, {
-          method: 'POST',
-          csrfToken: user?.csrfToken,
-          body: {
-            action: 'add_photo',
-            photoName: file.name,
-            fileName: file.name,
-            mimeType: file.type || 'image/jpeg',
-            base64Data: b64,
-          },
-        });
-        setSuccessToast('Đã tải ảnh hiện trạng mới lên dự án.');
-        await loadData();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Lỗi tải ảnh lên.');
-      }
-    };
-    reader.readAsDataURL(file);
+  // Toggle Archive Project
+  const handleToggleArchiveProject = async (proj: DesignRequestItemDto) => {
+    try {
+      const nextArchived = !proj.isArchived;
+      await apiRequest(`/api/v1/design/${proj.id}`, {
+        method: 'PATCH',
+        csrfToken: user?.csrfToken,
+        body: {
+          action: 'update_project',
+          isArchived: nextArchived,
+        },
+      });
+      setOpenMenuProjectId(null);
+      setSuccessToast(
+        nextArchived
+          ? `Đã lưu trữ dự án "${proj.projectName}".`
+          : `Đã khôi phục dự án "${proj.projectName}".`
+      );
+      await loadData(proj.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không thể lưu trữ dự án.');
+    }
   };
 
-  // Filter projects by search term
-  const filteredProjects = requests.filter(
-    (r) =>
-      r.projectName.toLowerCase().includes(searchProject.toLowerCase()) ||
-      (r.leadProjectLabel && r.leadProjectLabel.toLowerCase().includes(searchProject.toLowerCase()))
-  );
+  // Filter projects by search term & archive toggle
+  const filteredProjects = useMemo(() => {
+    return requests.filter((r) => {
+      if (!showArchivedProjects && r.isArchived) return false;
+      const q = searchProject.trim().toLowerCase();
+      if (!q) return true;
+      return (
+        r.projectName.toLowerCase().includes(q) ||
+        (r.leadCode && r.leadCode.toLowerCase().includes(q)) ||
+        (r.leadProjectLabel && r.leadProjectLabel.toLowerCase().includes(q))
+      );
+    });
+  }, [requests, searchProject, showArchivedProjects]);
 
   const isBannerProject = currentProject?.designType === 'banner';
 
-  return (
-    <div className="flex h-full w-full flex-col bg-slate-50 font-sans text-slate-800 antialiased overflow-hidden select-none">
-      {/* 1. STUDIO HEADER SUB-BAR */}
-      <div className="flex h-12 w-full shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 shadow-xs">
-        {/* Left: Project title & status */}
-        <div className="flex items-center space-x-3 min-w-0">
-          <span className="text-sm font-bold text-slate-900 truncate">
-            {currentProject ? currentProject.projectName : 'Phối cảnh showroom'}
-          </span>
-          <span className="text-xs text-slate-300">|</span>
-          <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs text-blue-700 font-semibold border border-blue-200 shrink-0">
-            {currentProject?.status === 'completed' ? 'Bản hoàn thiện' : 'Nháp AI'}
-          </span>
-          {currentProject?.leadCode && (
-            <span className="text-xs text-slate-400 hidden md:inline truncate">
-              Lead: {currentProject.leadCode}
-            </span>
-          )}
-        </div>
+  const toggleAssetSelection = (assetKey: string) => {
+    setSelectedAssetIds((prev) =>
+      prev.includes(assetKey) ? prev.filter((k) => k !== assetKey) : [...prev, assetKey]
+    );
+  };
 
-        {/* Center: Workflow Tabs */}
-        <div className="flex items-center space-x-6 text-xs font-semibold">
-          <button
-            onClick={() => setCenterTab('perspective')}
-            className={`py-3.5 transition border-b-2 ${
-              centerTab === 'perspective'
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Phối cảnh AI
-          </button>
-          <button
-            onClick={() => setCenterTab('banner')}
-            className={`py-3.5 transition border-b-2 ${
-              centerTab === 'banner'
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Ảnh & Banner
-          </button>
-          <button
-            onClick={() => setCenterTab('library')}
-            className={`py-3.5 transition border-b-2 ${
-              centerTab === 'library'
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Thư viện ấn phẩm
-          </button>
-        </div>
+  // Helper to update aspect ratio and auto-calculate dimensions when aspectLocked is true
+  const handleAspectRatioChange = (nextRatio: string) => {
+    const ratioNum = parseAspectRatioValue(nextRatio);
+    setParamForm((prev) => {
+      let nextW = prev.screenWidthM;
+      let nextH = prev.screenHeightM;
+      let nextPxW = prev.bannerWidthPx;
+      let nextPxH = prev.bannerHeightPx;
+      if (ratioNum && prev.aspectLocked) {
+        nextH = Number((nextW / ratioNum).toFixed(2));
+        nextPxH = Math.max(64, Math.round(nextPxW / ratioNum));
+      }
+      return {
+        ...prev,
+        aspectRatio: nextRatio,
+        screenHeightM: nextH,
+        bannerHeightPx: nextPxH,
+      };
+    });
+  };
 
-        {/* Right: Actions */}
-        <div className="flex items-center space-x-3 shrink-0">
-          {/* AI readiness */}
-          <div className="hidden sm:flex items-center space-x-1.5 text-xs text-emerald-600 font-semibold">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>AI sẵn sàng</span>
+  const renderParametersFormContent = (compact = false) => (
+    <form
+      onSubmit={handleSaveParameters}
+      className={compact ? 'space-y-4 text-sm' : 'grid grid-cols-1 lg:grid-cols-3 gap-5 text-sm'}
+    >
+      {/* SECTION 1: THÔNG TIN DỰ ÁN */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs space-y-3.5">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+          <div>
+            <h3 className="text-base font-bold text-slate-900">1. Thông tin dự án</h3>
+            <p className="text-xs text-slate-500">Định danh dự án, loại thiết kế & liên kết hồ sơ Lead</p>
           </div>
+          <span className="rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-bold text-[#1E3A8A] border border-blue-200">
+            DA-{String(currentProject?.id || 1).padStart(4, '0')}
+          </span>
+        </div>
 
-          <div className="h-4 w-[1px] bg-slate-200 hidden sm:block" />
+        <div>
+          <label className="block text-sm font-semibold text-slate-700 mb-1">
+            Tên dự án <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            required
+            data-testid="param-project-name"
+            value={paramForm.projectName}
+            onChange={(e) => setParamForm((p) => ({ ...p, projectName: e.target.value }))}
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
+          />
+        </div>
 
-          {/* Download Button */}
-          <button
-            onClick={handleDownloadFile}
-            disabled={!currentVersion}
-            className="flex items-center space-x-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-xs transition hover:bg-slate-50 disabled:opacity-50"
-            title="Tải tệp thiết kế độ phân giải cao"
+        <div>
+          <label className="block text-sm font-semibold text-slate-700 mb-1">Loại dự án thiết kế</label>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setParamForm((p) => ({ ...p, designType: 'perspective_3d' }))}
+              className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                paramForm.designType === 'perspective_3d'
+                  ? 'border-[#1E3A8A] bg-blue-50 text-[#1E3A8A]'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              Phối cảnh 3D LED
+            </button>
+            <button
+              type="button"
+              onClick={() => setParamForm((p) => ({ ...p, designType: 'banner' }))}
+              className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                paramForm.designType === 'banner'
+                  ? 'border-[#1E3A8A] bg-blue-50 text-[#1E3A8A]'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              Banner khung LED
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-slate-700 mb-1">
+            Hồ sơ Lead / Khách hàng liên kết
+          </label>
+          <select
+            data-testid="param-lead-select"
+            value={paramForm.leadId}
+            onChange={(e) => setParamForm((p) => ({ ...p, leadId: e.target.value }))}
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
           >
-            <Download className="h-3.5 w-3.5 text-slate-500" />
-            <span>Tải file</span>
-          </button>
+            <option value="">-- Thiết kế độc lập (Không gắn Lead) --</option>
+            {leadOptions.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
-          {/* Save Finished Version Button */}
-          <button
-            onClick={handleSaveFinished}
-            disabled={!currentProject || savingFinal}
-            className="flex items-center space-x-1.5 rounded-lg bg-[#1E3A8A] px-3 sm:px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#2563EB] disabled:opacity-50"
-            title="Lưu bản thiết kế này làm phiên bản hoàn thiện chính thức"
-          >
-            <Check className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{savingFinal ? 'Đang lưu...' : 'Lưu bản hoàn thiện'}</span>
-          </button>
+        <div>
+          <label className="block text-sm font-semibold text-slate-700 mb-1">Người liên hệ / Đại diện</label>
+          <input
+            type="text"
+            value={paramForm.contactName}
+            onChange={(e) => setParamForm((p) => ({ ...p, contactName: e.target.value }))}
+            placeholder="VD: Anh Minh — Ban Quản lý Tòa nhà"
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
+          />
+        </div>
 
-          {/* Tablet Slide-out Assistant Trigger (768px - 1279px) */}
-          <button
-            type="button"
-            onClick={() => setTabletAssistantOpen((v) => !v)}
-            className="hidden md:inline-flex xl:hidden items-center space-x-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-[#1E3A8A] hover:bg-blue-100 transition"
-          >
-            <Sparkles className="h-3.5 w-3.5 text-[#2563EB]" />
-            <span>Trợ lý AI</span>
-          </button>
+        <div>
+          <label className="block text-sm font-semibold text-slate-700 mb-1">
+            Vị trí & bối cảnh lắp đặt
+          </label>
+          <input
+            type="text"
+            data-testid="param-installation-info"
+            value={paramForm.installationInfo}
+            onChange={(e) => setParamForm((p) => ({ ...p, installationInfo: e.target.value }))}
+            placeholder="VD: Vách sảnh chính tầng trệt, cách sàn 1.2m"
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-slate-700 mb-1">Ghi chú kỹ thuật</label>
+          <textarea
+            rows={2}
+            value={paramForm.notes}
+            onChange={(e) => setParamForm((p) => ({ ...p, notes: e.target.value }))}
+            placeholder="Ghi chú kết cấu khung, nguồn điện, yêu cầu thẩm mỹ..."
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
+          />
         </div>
       </div>
 
-      {/* Mobile Segmented 3-Tab Switcher (< 768px): [Dự án] | [Phối cảnh Canvas] | [Trợ lý AI] */}
+      {/* SECTION 2: THÔNG SỐ KỸ THUẬT LED */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs space-y-3.5">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+          <div>
+            <h3 className="text-base font-bold text-slate-900">2. Thông số kỹ thuật LED</h3>
+            <p className="text-xs text-slate-500">Sản phẩm phê duyệt, bước điểm ảnh (mm) & kích thước (m)</p>
+          </div>
+          <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-mono font-bold text-slate-700">
+            {paramForm.pixelPitch} · {computedLiveSpecs.areaM2} m²
+          </span>
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-slate-700 mb-1">
+            Dòng sản phẩm Toàn Trung phê duyệt
+          </label>
+          <select
+            data-testid="param-product-select"
+            value={paramForm.productId}
+            onChange={(e) => setParamForm((p) => ({ ...p, productId: Number(e.target.value) || 1 }))}
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
+          >
+            {productOptions.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.code} — {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1">
+              Bước điểm ảnh (mm)
+            </label>
+            <select
+              data-testid="param-pixel-pitch"
+              value={paramForm.pixelPitch}
+              onChange={(e) => setParamForm((p) => ({ ...p, pixelPitch: e.target.value }))}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
+            >
+              <option value="P1.25">P1.25 (1.25 mm)</option>
+              <option value="P1.53">P1.53 (1.53 mm)</option>
+              <option value="P1.86">P1.86 (1.86 mm)</option>
+              <option value="P2.0">P2.0 (2.00 mm)</option>
+              <option value="P2.5">P2.5 (2.50 mm)</option>
+              <option value="P3.0">P3.0 (3.00 mm)</option>
+              <option value="P4.0">P4.0 (4.00 mm)</option>
+              <option value="P5.0">P5.0 (5.00 mm)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1">Kiểu màn hình</label>
+            <select
+              value={paramForm.screenStyle}
+              onChange={(e) =>
+                setParamForm((p) => ({
+                  ...p,
+                  screenStyle: e.target.value as 'flat' | 'curved' | 'corner_90',
+                }))
+              }
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
+            >
+              <option value="flat">Màn hình phẳng</option>
+              <option value="curved">Màn hình cong</option>
+              <option value="corner_90">Vuông góc 90° (3D)</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1">
+              Chiều ngang LED (m)
+            </label>
+            <input
+              type="number"
+              step="0.1"
+              min="0.3"
+              max="200"
+              data-testid="param-screen-width-m"
+              value={paramForm.screenWidthM}
+              onChange={(e) => {
+                const nextW = Number(e.target.value) || 0.5;
+                const ratioNum = parseAspectRatioValue(paramForm.aspectRatio);
+                setParamForm((prev) => ({
+                  ...prev,
+                  screenWidthM: nextW,
+                  screenHeightM:
+                    prev.aspectLocked && ratioNum
+                      ? Number((nextW / ratioNum).toFixed(2))
+                      : prev.screenHeightM,
+                }));
+              }}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1">
+              Chiều cao LED (m)
+            </label>
+            <input
+              type="number"
+              step="0.1"
+              min="0.3"
+              max="100"
+              data-testid="param-screen-height-m"
+              value={paramForm.screenHeightM}
+              onChange={(e) => {
+                const nextH = Number(e.target.value) || 0.5;
+                const ratioNum = parseAspectRatioValue(paramForm.aspectRatio);
+                setParamForm((prev) => ({
+                  ...prev,
+                  screenHeightM: nextH,
+                  screenWidthM:
+                    prev.aspectLocked && ratioNum
+                      ? Number((nextH * ratioNum).toFixed(2))
+                      : prev.screenWidthM,
+                }));
+              }}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
+            />
+          </div>
+        </div>
+
+        {/* Computed LED Engineering Summary */}
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2 text-xs">
+          <div className="flex justify-between">
+            <span className="text-slate-500">Diện tích hiển thị thực tế:</span>
+            <span className="font-bold text-slate-900">{computedLiveSpecs.areaM2} m²</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-500">Độ phân giải điểm ảnh thực:</span>
+            <span className="font-mono font-bold text-[#1E3A8A]">
+              {computedLiveSpecs.resW} × {computedLiveSpecs.resH} px
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-500">Cấu hình Cabinet (640×480mm):</span>
+            <span className="font-semibold text-slate-800">
+              {computedLiveSpecs.cabinetCount} Cabinet ({computedLiveSpecs.moduleCount} Module 320×160mm)
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-500">Bộ xử lý & Nguồn cấp:</span>
+            <span className="font-semibold text-slate-800">Novastar VX600 · Meanwell 5V-40A</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-500">Công suất tiêu thụ (TB / Cực đại):</span>
+            <span className="font-semibold text-slate-800">
+              {computedLiveSpecs.avgKw} kW / {computedLiveSpecs.maxKw} kW
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION 3: CÀI ĐẶT ĐẦU RA */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs flex flex-col justify-between space-y-3.5">
+        <div className="space-y-3.5">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+            <div>
+              <h3 className="text-base font-bold text-slate-900">3. Cài đặt đầu ra</h3>
+              <p className="text-xs text-slate-500">
+                Tỷ lệ khung hình, khóa tỷ lệ & độ phân giải xuất file (px)
+              </p>
+            </div>
+            <button
+              type="button"
+              data-testid="param-aspect-lock-btn"
+              onClick={() => setParamForm((p) => ({ ...p, aspectLocked: !p.aspectLocked }))}
+              className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
+                paramForm.aspectLocked
+                  ? 'border-blue-200 bg-blue-50 text-[#1E3A8A]'
+                  : 'border-slate-200 bg-white text-slate-600'
+              }`}
+              title="Khóa hoặc mở khóa tỷ lệ khung hình khi nhập kích thước"
+            >
+              {paramForm.aspectLocked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
+              <span>{paramForm.aspectLocked ? 'Đã khóa tỷ lệ' : 'Tỷ lệ tự do'}</span>
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1">
+              Tỷ lệ khung hình chuẩn
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {['16:9', '9:16', '4:3', '21:9', '1:1', '32:9'].map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => handleAspectRatioChange(r)}
+                  className={`rounded-xl border py-1.5 text-xs font-bold transition ${
+                    paramForm.aspectRatio === r
+                      ? 'border-[#1E3A8A] bg-[#1E3A8A] text-white'
+                      : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">
+                Chiều rộng ảnh xuất (px)
+              </label>
+              <input
+                type="number"
+                min="128"
+                max="15360"
+                data-testid="param-banner-width-px"
+                value={paramForm.bannerWidthPx}
+                onChange={(e) => {
+                  const nextPxW = Number(e.target.value) || 1920;
+                  const ratioNum = parseAspectRatioValue(paramForm.aspectRatio);
+                  setParamForm((prev) => ({
+                    ...prev,
+                    bannerWidthPx: nextPxW,
+                    bannerHeightPx:
+                      prev.aspectLocked && ratioNum
+                        ? Math.max(64, Math.round(nextPxW / ratioNum))
+                        : prev.bannerHeightPx,
+                  }));
+                }}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">
+                Chiều cao ảnh xuất (px)
+              </label>
+              <input
+                type="number"
+                min="64"
+                max="8640"
+                data-testid="param-banner-height-px"
+                value={paramForm.bannerHeightPx}
+                onChange={(e) => {
+                  const nextPxH = Number(e.target.value) || 1080;
+                  const ratioNum = parseAspectRatioValue(paramForm.aspectRatio);
+                  setParamForm((prev) => ({
+                    ...prev,
+                    bannerHeightPx: nextPxH,
+                    bannerWidthPx:
+                      prev.aspectLocked && ratioNum
+                        ? Math.max(128, Math.round(nextPxH * ratioNum))
+                        : prev.bannerWidthPx,
+                  }));
+                }}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
+              />
+            </div>
+          </div>
+
+          {paramForm.designType === 'perspective_3d' ? (
+            <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3 text-xs text-slate-700 space-y-1">
+              <div className="font-bold text-[#1E3A8A]">Tọa độ khung neo phối cảnh 4 góc (%)</div>
+              <div className="font-mono text-[11px] text-slate-600">
+                TL({quad.topLeft.x}%, {quad.topLeft.y}%) · TR({quad.topRight.x}%, {quad.topRight.y}%) · BR(
+                {quad.bottomRight.x}%, {quad.bottomRight.y}%) · BL({quad.bottomLeft.x}%, {quad.bottomLeft.y}%)
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setQuad({
+                    topLeft: { x: 64.2, y: 44.5 },
+                    topRight: { x: 93.8, y: 45.2 },
+                    bottomRight: { x: 94.5, y: 72.8 },
+                    bottomLeft: { x: 64.5, y: 70.1 },
+                  })
+                }
+                className="text-xs font-semibold text-[#2563EB] hover:underline pt-0.5"
+              >
+                Đặt lại vị trí neo mặc định
+              </button>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3 text-xs text-slate-700">
+              <div className="font-bold text-[#1E3A8A]">Chế độ thiết kế Banner truyền thông LED</div>
+              <p className="mt-0.5 text-slate-600">
+                Xuất file đồ họa chuẩn pixel theo đúng tỷ lệ module cabin LED để nạp trực tiếp vào bộ xử lý Novastar.
+              </p>
+            </div>
+          )}
+
+          {paramValidationError && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-2.5 text-xs font-semibold text-red-700">
+              {paramValidationError}
+            </div>
+          )}
+        </div>
+
+        <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2">
+          <button
+            type="submit"
+            data-testid="save-project-params-btn"
+            disabled={savingParams || !canUseAiDesign}
+            className="w-full rounded-xl bg-[#1E3A8A] px-4 py-2.5 text-sm font-bold text-white shadow-xs transition hover:bg-[#2563EB] disabled:opacity-50"
+          >
+            {savingParams ? 'Đang lưu thông số...' : 'Lưu thông số dự án'}
+          </button>
+        </div>
+      </div>
+    </form>
+  );
+
+  return (
+    <div className="flex h-full w-full flex-col bg-slate-50 font-sans text-slate-800 antialiased overflow-hidden select-none">
+      {/* 1. COMPACT STUDIO TOOLBAR WITH 3 PROMINENT WORKSPACE AREAS */}
+      <div className="flex min-h-14 w-full shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-2 shadow-2xs">
+        {/* Left: Active Project Title, Type Badge & Lead Reference */}
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="text-base font-bold text-slate-900 truncate max-w-[240px]">
+            {currentProject ? currentProject.projectName : 'Dự án thiết kế'}
+          </span>
+          <span className="rounded-lg bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700 shrink-0">
+            {currentProject ? DESIGN_TYPE_LABELS[currentProject.designType] : 'Phối cảnh 3D'}
+          </span>
+          <span
+            className={`rounded-full px-2.5 py-0.5 text-xs font-semibold border shrink-0 ${
+              currentProject?.status === 'completed'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : 'bg-blue-50 text-[#1E3A8A] border-blue-200'
+            }`}
+          >
+            {currentProject ? DESIGN_STATUS_LABELS[currentProject.status] : 'Nháp AI'}
+          </span>
+          {currentProject?.leadCode && (
+            <a
+              href={`/leads?search=${encodeURIComponent(currentProject.leadCode)}`}
+              className="hidden lg:inline-flex items-center gap-1 rounded-lg bg-blue-50/70 px-2 py-0.5 text-xs font-mono font-semibold text-[#1E3A8A] hover:bg-blue-100 transition"
+              title="Mở hồ sơ Lead liên kết"
+            >
+              <span>Lead: {currentProject.leadCode}</span>
+            </a>
+          )}
+        </div>
+
+        {/* Center: THREE PROMINENT WORKSPACE AREAS ("Phối cảnh", "Trợ lý AI", "Thông số") */}
+        <div
+          role="tablist"
+          aria-label="Khu vực làm việc Studio"
+          className="flex items-center gap-1.5 rounded-xl bg-slate-100 p-1 border border-slate-200"
+        >
+          <button
+            type="button"
+            role="tab"
+            data-testid="workspace-tab-perspective"
+            aria-selected={activeWorkspaceArea === 'perspective'}
+            onClick={() => {
+              setActiveWorkspaceArea('perspective');
+              setMobilePane('canvas');
+            }}
+            className={`flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-bold transition ${
+              activeWorkspaceArea === 'perspective'
+                ? 'bg-[#1E3A8A] text-white shadow-xs'
+                : 'text-slate-600 hover:bg-white hover:text-slate-900'
+            }`}
+          >
+            <Monitor className="h-4 w-4" />
+            <span>Phối cảnh</span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            data-testid="workspace-tab-assistant"
+            aria-selected={activeWorkspaceArea === 'assistant'}
+            onClick={() => {
+              setActiveWorkspaceArea('assistant');
+              setSideDockTab('assistant');
+              setMobilePane('assistant');
+            }}
+            className={`flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-bold transition ${
+              activeWorkspaceArea === 'assistant'
+                ? 'bg-[#1E3A8A] text-white shadow-xs'
+                : 'text-slate-600 hover:bg-white hover:text-slate-900'
+            }`}
+          >
+            <Sparkles className="h-4 w-4" />
+            <span>Trợ lý AI</span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            data-testid="workspace-tab-specs"
+            aria-selected={activeWorkspaceArea === 'specs'}
+            onClick={() => {
+              setActiveWorkspaceArea('specs');
+              setSideDockTab('specs');
+            }}
+            className={`flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-bold transition ${
+              activeWorkspaceArea === 'specs'
+                ? 'bg-[#1E3A8A] text-white shadow-xs'
+                : 'text-slate-600 hover:bg-white hover:text-slate-900'
+            }`}
+          >
+            <Settings2 className="h-4 w-4" />
+            <span>Thông số</span>
+          </button>
+        </div>
+
+        {/* Right: Provider Status, Excel Export, ZIP Download & Approve Final */}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={toggleFocusCanvas}
+            aria-pressed={focusCanvas}
+            title={focusCanvas ? 'Hiện lại cột Dự án và Trợ lý AI' : 'Ẩn hai cột bên để xem ảnh to hơn'}
+            className={`hidden md:inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold border transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A] ${
+              focusCanvas
+                ? 'bg-[#1E3A8A] text-white border-[#1E3A8A]'
+                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            {focusCanvas ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            <span>{focusCanvas ? 'Thu nhỏ ảnh' : 'Mở rộng ảnh'}</span>
+          </button>
+          <div
+            className={`hidden xl:flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold border ${
+              providerStatus?.isConfigured
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : 'bg-amber-50 text-amber-800 border-amber-200'
+            }`}
+            title={providerStatus?.notes || providerStatus?.statusLabel}
+          >
+            <span
+              className={`h-2 w-2 rounded-full ${
+                providerStatus?.isConfigured ? 'bg-emerald-500' : 'bg-amber-500'
+              }`}
+            />
+            <span>{providerStatus?.isConfigured ? 'AI Live sẵn sàng' : 'AI Mô phỏng cục bộ'}</span>
+          </div>
+
+          {canExport && (
+            <a
+              href="/api/v1/design/export"
+              className="hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-2xs transition hover:bg-slate-50"
+              title="Xuất báo cáo Excel Dự án & Kho ảnh (05_DuAn_AI_KhoAnh.xlsx)"
+            >
+              <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+              <span>Xuất Excel</span>
+            </a>
+          )}
+
+          <button
+            type="button"
+            onClick={() => handleDownloadProjectZip('all')}
+            disabled={!currentProject}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-2xs transition hover:bg-slate-50 disabled:opacity-50"
+            title="Tải gói ZIP Kho ảnh dự án (Ảnh kỹ thuật + Bản thiết kế)"
+          >
+            <FileArchive className="h-4 w-4 text-[#1E3A8A]" />
+            <span className="hidden sm:inline">Tải ZIP</span>
+          </button>
+
+          {canUseAiDesign && (
+            <button
+              type="button"
+              onClick={handleSaveFinished}
+              disabled={!currentProject || !currentVersion || savingFinal}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#1E3A8A] px-3.5 py-1.5 text-sm font-semibold text-white shadow-2xs transition hover:bg-[#2563EB] disabled:opacity-50"
+              title="Phê duyệt phiên bản đang chọn làm bản thiết kế chính thức bàn giao cho Lead / Sales"
+            >
+              <Check className="h-4 w-4" />
+              <span>{savingFinal ? 'Đang duyệt...' : 'Duyệt bản chốt'}</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Error / Toast Banner */}
+      {error && (
+        <div className="flex items-center justify-between bg-red-50 border-b border-red-200 px-4 py-2 text-sm text-red-700">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="text-xs font-bold underline ml-4"
+          >
+            Đóng
+          </button>
+        </div>
+      )}
+
+      {/* Mobile Switcher (<768px) */}
       <div className="md:hidden grid grid-cols-3 gap-1 bg-white border-b border-slate-200 px-3 py-1.5 shrink-0 text-xs font-bold">
         {[
-          { id: 'projects' as const, label: 'Dự án & Ảnh' },
-          { id: 'canvas' as const, label: 'Phối cảnh Canvas' },
-          { id: 'assistant' as const, label: 'Trợ lý AI' },
+          { id: 'projects' as const, label: 'Dự án & Kho ảnh' },
+          { id: 'canvas' as const, label: 'Phối cảnh' },
+          { id: 'assistant' as const, label: 'Trợ lý & Thông số' },
         ].map((tab) => (
           <button
             key={tab.id}
             type="button"
             onClick={() => setMobilePane(tab.id)}
             className={`py-1.5 rounded-lg text-center transition ${
-              mobilePane === tab.id
-                ? 'bg-[#1E3A8A] text-white shadow-2xs'
-                : 'text-slate-600 hover:bg-slate-100'
+              mobilePane === tab.id ? 'bg-[#1E3A8A] text-white' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
             {tab.label}
@@ -595,201 +1426,143 @@ export function AiDesignWorkspace() {
         ))}
       </div>
 
-      {/* 2. MAIN 3-PANEL STUDIO LAYOUT (Zero Dead-Space & Responsive 3-Tier) */}
+      {/* 2. MAIN STUDIO BODY */}
       <div className="relative flex flex-1 min-h-0 overflow-hidden">
-        {/* ================= LEFT PANEL: Col-Span-3 / 288px (Zero Bottom Blank Space) ================= */}
-        <div
+        {/* ================= LEFT SIDEBAR: "Dự án" & "Kho ảnh dự án" (NO PARAMETER INPUTS HERE) ================= */}
+        <aside
           className={`${
             mobilePane === 'projects' ? 'flex w-full' : 'hidden'
-          } md:flex md:w-72 xl:w-80 shrink-0 flex-col h-full min-h-0 border-r border-slate-200 bg-white p-3.5 overflow-hidden`}
+          } ${focusCanvas ? 'md:hidden' : 'md:flex'} md:w-64 xl:w-72 shrink-0 flex-col h-full min-h-0 border-r border-slate-200 bg-white overflow-hidden`}
         >
-          {/* Top Fixed Search & Create Project */}
-          <div className="shrink-0">
-            <div className="mb-2.5 flex items-center justify-between">
-              <h2 className="text-sm font-bold text-slate-900">Dự án thiết kế ({filteredProjects.length})</h2>
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="flex h-7 px-2.5 items-center gap-1 rounded-lg bg-[#1E3A8A] text-white text-[11px] font-bold transition hover:bg-[#2563EB] shadow-2xs"
-                title="Tạo dự án mới"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>Mới</span>
-              </button>
+          {/* SECTION A: "Dự án" (Compact Searchable List) */}
+          <div className="flex flex-col min-h-0 basis-1/2 border-b border-slate-200 p-3.5">
+            <div className="mb-2.5 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-slate-900">Dự án</h2>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">
+                  {filteredProjects.length}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowArchivedProjects((v) => !v)}
+                  className={`rounded-lg px-2 py-1 text-xs font-semibold transition ${
+                    showArchivedProjects
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'text-slate-500 hover:bg-slate-100'
+                  }`}
+                  title="Hiện/ẩn dự án đã lưu trữ"
+                >
+                  Lưu trữ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(true)}
+                  className="inline-flex items-center gap-1 rounded-lg bg-[#1E3A8A] px-2.5 py-1 text-xs font-bold text-white shadow-2xs transition hover:bg-[#2563EB]"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Dự án mới</span>
+                </button>
+              </div>
             </div>
 
-            <div className="mb-3">
+            <div className="mb-2.5 shrink-0">
               <input
                 type="text"
-                placeholder="Tìm kiếm dự án, mã Lead..."
+                placeholder="Tìm tên dự án, mã Lead..."
                 value={searchProject}
                 onChange={(e) => setSearchProject(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:border-[#2563EB] focus:bg-white focus:outline-none"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-800 placeholder-slate-400 focus:border-[#2563EB] focus:bg-white focus:outline-none"
               />
             </div>
-          </div>
 
-          {/* Middle Flexible Scrollable Region (flex-1 min-h-0 overflow-y-auto) */}
-          <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1">
-            {/* Compact Project List with Full CRUD (Create / Inline Edit / Hover Delete — Enhancement 6) */}
-            <div className="space-y-1.5">
+            {/* Scrollable Project List */}
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-0.5 pr-1">
               {filteredProjects.map((proj) => {
-                const isSelected = proj.id === selectedId;
-                const isInlineEditing = inlineEditProjId === proj.id;
+                const isSelected = proj.id === currentProject?.id;
                 const photoThumb = resolveAssetUrl(proj.photos[0]?.url || proj.sitePhotoDownloadUrl);
-                const createdDateStr = proj.createdAt
-                  ? new Date(proj.createdAt).toLocaleDateString('vi-VN', {
-                      day: '2-digit',
-                      month: '2-digit',
-                    })
-                  : 'Hôm nay';
+                const menuOpen = openMenuProjectId === proj.id;
 
                 return (
                   <div
                     key={proj.id}
+                    data-testid={`project-item-${proj.id}`}
+                    title={[proj.projectName, proj.leadCode ? `Lead ${proj.leadCode}` : null, proj.isArchived ? 'Đã lưu trữ' : null].filter(Boolean).join(' · ')}
                     onClick={() => {
-                      if (isInlineEditing) return;
-                      setSelectedId(proj.id);
-                      if (proj.placementQuad) setQuad(proj.placementQuad);
-                      if (proj.assetVersions.length > 0) {
-                        setSelectedVersionId(proj.assetVersions[proj.assetVersions.length - 1].id);
-                      }
-                      if (proj.designType === 'banner') {
-                        setCenterTab('banner');
-                      } else {
-                        setCenterTab('perspective');
-                      }
+                      syncProjectSelection(proj);
+                      setOpenMenuProjectId(null);
                       setMobilePane('canvas');
                     }}
-                    className={`group relative flex w-full items-center justify-between rounded-xl border p-2.5 text-left transition cursor-pointer ${
+                    className={`group relative flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left transition cursor-pointer ${
                       isSelected
-                        ? 'border-[#2563EB] bg-blue-50/70 shadow-2xs ring-1 ring-[#2563EB]/25'
-                        : 'border-slate-200/90 bg-white hover:bg-slate-50'
+                        ? 'bg-blue-50 ring-1 ring-[#2563EB]/30'
+                        : 'hover:bg-slate-50'
                     }`}
                   >
-                    {isInlineEditing ? (
-                      <div
-                        className="w-full space-y-2 text-xs"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <input
-                          type="text"
-                          value={inlineNameDraft}
-                          onChange={(e) => setInlineNameDraft(e.target.value)}
-                          placeholder="Tên dự án..."
-                          className="w-full h-7 px-2 rounded border border-blue-300 bg-white text-xs font-bold text-slate-900 focus:outline-none"
-                          autoFocus
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-lg bg-slate-100 border border-slate-200">
+                        <img
+                          src={photoThumb}
+                          alt=""
+                          aria-hidden="true"
+                          className="h-full w-full object-cover"
                         />
-                        <div className="flex items-center justify-between gap-1.5">
-                          <select
-                            value={inlineAspectDraft}
-                            onChange={(e) => setInlineAspectDraft(e.target.value)}
-                            className="h-7 px-1.5 rounded border border-slate-200 bg-white text-[11px] font-semibold text-slate-700"
-                          >
-                            <option value="16:9">Tỷ lệ 16:9</option>
-                            <option value="4:3">Tỷ lệ 4:3</option>
-                            <option value="21:9">Tỷ lệ 21:9</option>
-                            <option value="1:1">Tỷ lệ 1:1</option>
-                          </select>
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => setInlineEditProjId(null)}
-                              className="h-6 px-2 rounded border border-slate-200 bg-white text-[10px] font-semibold text-slate-600"
-                            >
-                              Hủy
-                            </button>
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                const trimmed = inlineNameDraft.trim();
-                                if (!trimmed) return;
-                                try {
-                                  await apiRequest(`/api/v1/design/${proj.id}`, {
-                                    method: 'PATCH',
-                                    csrfToken: user?.csrfToken,
-                                    body: {
-                                      action: 'update_project',
-                                      projectName: trimmed,
-                                    },
-                                  });
-                                  setRequests((prev) =>
-                                    prev.map((r) =>
-                                      r.id === proj.id
-                                        ? {
-                                            ...r,
-                                            projectName: trimmed,
-                                            aspectRatio: inlineAspectDraft,
-                                          }
-                                        : r,
-                                    ),
-                                  );
-                                  setInlineEditProjId(null);
-                                  setSuccessToast(`Đã cập nhật dự án "${trimmed}" (${inlineAspectDraft}).`);
-                                } catch (err) {
-                                  setError(
-                                    err instanceof Error ? err.message : 'Lỗi cập nhật dự án.',
-                                  );
-                                }
-                              }}
-                              className="h-6 px-2.5 rounded bg-[#1E3A8A] text-white text-[10px] font-bold"
-                            >
-                              Lưu
-                            </button>
-                          </div>
-                        </div>
                       </div>
-                    ) : (
-                      <>
-                        <div className="flex items-center space-x-2.5 min-w-0 flex-1">
-                          {/* Neat 48x48px Thumbnail */}
-                          <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-800 border border-slate-200">
-                            <img
-                              src={photoThumb}
-                              alt={proj.projectName}
-                              className="h-full w-full object-cover"
-                            />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-xs font-bold text-slate-900">
-                              {proj.projectName}
-                            </div>
-                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
-                              <span className="px-1.5 py-0.2 rounded bg-blue-50 border border-blue-200 text-[#1E3A8A] font-mono font-bold">
-                                {proj.leadCode || (proj.designType === 'banner' ? 'BANNER' : `PRJ-${proj.id}`)}
-                              </span>
-                              <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-semibold">
-                                {proj.aspectRatio || '16:9'}
-                              </span>
-                              <span className="text-slate-400">{createdDateStr}</span>
-                            </div>
-                          </div>
-                        </div>
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900">
+                        {proj.projectName}
+                      </span>
+                      <span
+                        aria-label={proj.status === 'completed' ? 'Đã hoàn thành' : 'Đang thực hiện'}
+                        className={`h-2 w-2 shrink-0 rounded-full ${
+                          proj.isArchived
+                            ? 'bg-slate-300'
+                            : proj.status === 'completed'
+                              ? 'bg-emerald-500'
+                              : 'bg-blue-500'
+                        }`}
+                      />
+                    </div>
 
-                        {/* Hover CRUD Actions: Inline Edit + Quick Trash Confirmation */}
-                        <div
-                          className="flex items-center gap-1 shrink-0 ml-1"
-                          onClick={(e) => e.stopPropagation()}
-                        >
+                    {/* Secondary Actions in `...` Menu */}
+                    <div className="relative shrink-0 ml-1" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        aria-label="Thao tác dự án"
+                        onClick={() => setOpenMenuProjectId(menuOpen ? null : proj.id)}
+                        className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+                      >
+                        <MoreHorizontal className="h-4 w-4" />
+                      </button>
+
+                      {menuOpen && (
+                        <div className="absolute right-0 top-8 z-30 w-40 rounded-xl border border-slate-200 bg-white py-1 shadow-lg text-xs font-semibold text-slate-700">
                           <button
                             type="button"
                             onClick={() => {
-                              setInlineEditProjId(proj.id);
-                              setInlineNameDraft(proj.projectName);
-                              setInlineAspectDraft(proj.aspectRatio || '16:9');
+                              setRenameTargetId(proj.id);
+                              setRenameValue(proj.projectName);
+                              setEditingName(true);
+                              setOpenMenuProjectId(null);
                             }}
-                            title="Đổi tên dự án & tỷ lệ khung hình"
-                            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-slate-400 hover:text-[#2563EB] hover:bg-blue-50 transition"
+                            className="flex w-full items-center gap-2 px-3 py-2 hover:bg-slate-50 text-left"
                           >
-                            <Edit2 className="h-3.5 w-3.5" />
+                            <Edit2 className="h-3.5 w-3.5 text-slate-500" />
+                            <span>Đổi tên dự án</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleArchiveProject(proj)}
+                            className="flex w-full items-center gap-2 px-3 py-2 hover:bg-slate-50 text-left"
+                          >
+                            <Archive className="h-3.5 w-3.5 text-slate-500" />
+                            <span>{proj.isArchived ? 'Bỏ lưu trữ' : 'Lưu trữ dự án'}</span>
                           </button>
                           <button
                             type="button"
                             onClick={async () => {
-                              if (
-                                !confirm(
-                                  `Bạn có chắc chắn muốn xóa dự án "${proj.projectName}"?`,
-                                )
-                              ) {
+                              setOpenMenuProjectId(null);
+                              if (!confirm(`Bạn có chắc chắn muốn xóa dự án "${proj.projectName}"?`)) {
                                 return;
                               }
                               try {
@@ -797,436 +1570,536 @@ export function AiDesignWorkspace() {
                                   method: 'DELETE',
                                   csrfToken: user?.csrfToken,
                                 });
-                                setRequests((prev) => prev.filter((r) => r.id !== proj.id));
                                 setSuccessToast(`Đã xóa dự án "${proj.projectName}".`);
                                 await loadData();
                               } catch (err) {
-                                setError(
-                                  err instanceof Error ? err.message : 'Không thể xóa dự án.',
-                                );
+                                setError(err instanceof Error ? err.message : 'Không thể xóa dự án.');
                               }
                             }}
-                            title="Xóa dự án"
-                            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-red-600 hover:bg-red-50 text-left"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
+                            <span>Xóa dự án</span>
                           </button>
-                          {isSelected && (
-                            <Check className="h-4 w-4 shrink-0 text-[#2563EB] group-hover:hidden" />
-                          )}
                         </div>
-                      </>
-                    )}
+                      )}
+                    </div>
                   </div>
                 );
               })}
             </div>
+          </div>
 
-            {/* Source Photos Section for 3D Perspective */}
-            {!isBannerProject && (
-              <div className="pt-2 border-t border-slate-100">
-                <div className="mb-1 flex items-center justify-between">
-                  <div className="text-xs font-bold text-slate-900">
-                    Ảnh hiện trạng mặt bằng <span className="text-red-500">*</span>
-                  </div>
-                </div>
-                <div className="mb-2 text-[11px] text-slate-400">Chọn hoặc tải thêm góc chụp công trình</div>
+          {/* SECTION B: "Kho ảnh dự án" (Two Project-Scoped Folders: "Ảnh kỹ thuật" & "Bản thiết kế") */}
+          <div className="flex flex-col flex-1 min-h-0 p-3.5 bg-slate-50/50">
+            <div className="mb-2 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-1.5">
+                <FolderOpen className="h-4 w-4 text-[#1E3A8A]" />
+                <h3 className="text-sm font-bold text-slate-900">Kho ảnh dự án</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  handleDownloadProjectZip(assetFolder === 'technical' ? 'technical' : 'designs')
+                }
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-[#1E3A8A] hover:bg-blue-50 transition"
+                title="Tải xuống thư mục đang chọn dưới dạng ZIP"
+              >
+                <Download className="h-3 w-3" />
+                <span>
+                  {selectedAssetIds.length > 0 ? `Tải ZIP (${selectedAssetIds.length})` : 'Tải ZIP'}
+                </span>
+              </button>
+            </div>
 
-                <div className="grid grid-cols-2 gap-2 mb-2.5">
-                  {currentProject?.photos.map((photo) => {
-                    const resolvedSrc = resolveAssetUrl(photo.url);
-                    return (
-                      <div
-                        key={photo.id}
-                        onClick={() => {
-                          updateCurrentProjectImmutable((proj) => ({
-                            ...proj,
-                            photos: proj.photos.map((p) => ({ ...p, selected: p.id === photo.id })),
-                          }));
-                        }}
-                        className={`group relative cursor-pointer overflow-hidden rounded-lg border transition ${
-                          photo.selected
-                            ? 'border-[#2563EB] ring-2 ring-blue-500/20'
-                            : 'border-slate-200 hover:border-slate-300'
-                        }`}
-                      >
-                        <div className="relative aspect-video w-full bg-slate-800">
-                          <img src={resolvedSrc} alt={photo.name} className="h-full w-full object-cover" />
-                          {photo.selected && (
-                            <div className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#2563EB] text-white shadow">
-                              <Check className="h-2.5 w-2.5" />
-                            </div>
-                          )}
-                        </div>
-                        <div className="p-1.5 bg-white text-[10px]">
-                          <div className="truncate font-medium text-slate-700">{photo.name}</div>
-                          <div className="mt-1 flex items-center justify-between text-[9px] text-slate-400">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const newName = prompt('Đổi tên ảnh hiện trạng:', photo.name);
-                                if (newName) {
-                                  updateCurrentProjectImmutable((proj) => ({
-                                    ...proj,
-                                    photos: proj.photos.map((p) =>
-                                      p.id === photo.id ? { ...p, name: newName } : p,
-                                    ),
-                                  }));
-                                }
-                              }}
-                              className="hover:text-[#2563EB]"
+            {/* Folder Tabs: "Ảnh kỹ thuật" vs "Bản thiết kế" */}
+            <div className="mb-2.5 grid grid-cols-2 gap-1 rounded-xl bg-slate-200/70 p-1 text-xs font-bold shrink-0">
+              <button
+                type="button"
+                data-testid="folder-tab-technical"
+                onClick={() => setAssetFolder('technical')}
+                className={`rounded-lg py-1.5 transition ${
+                  assetFolder === 'technical'
+                    ? 'bg-white text-[#1E3A8A] shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Ảnh kỹ thuật ({currentProject?.photos.length || 0})
+              </button>
+              <button
+                type="button"
+                data-testid="folder-tab-designs"
+                onClick={() => setAssetFolder('designs')}
+                className={`rounded-lg py-1.5 transition ${
+                  assetFolder === 'designs'
+                    ? 'bg-white text-[#1E3A8A] shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Bản thiết kế ({currentProject?.assetVersions.length || 0})
+              </button>
+            </div>
+
+            {/* Folder Content List */}
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
+              {assetFolder === 'technical' ? (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    {currentProject?.photos.map((photo) => {
+                      const resolvedSrc = resolveAssetUrl(photo.url);
+                      const isChecked = selectedAssetIds.includes(photo.id);
+                      return (
+                        <div
+                          key={photo.id}
+                          onClick={async () => {
+                            if (!currentProject) return;
+                            setViewMode('original');
+                            await apiRequest(`/api/v1/design/${currentProject.id}`, {
+                              method: 'PATCH',
+                              csrfToken: user?.csrfToken,
+                              body: {
+                                action: 'update_project',
+                                selectedPhotoId: photo.id,
+                              },
+                            });
+                            await loadData(currentProject.id);
+                          }}
+                          className={`group relative cursor-pointer overflow-hidden rounded-xl border bg-white transition ${
+                            photo.selected
+                              ? 'border-[#2563EB] ring-2 ring-blue-500/20'
+                              : 'border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="relative aspect-video w-full bg-slate-900">
+                            <img
+                              src={resolvedSrc}
+                              alt={photo.name}
+                              className="h-full w-full object-cover"
+                            />
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={() => toggleAssetSelection(photo.id)}
+                              className="absolute left-1.5 top-1.5 h-3.5 w-3.5 rounded border-white"
+                              title="Chọn ảnh để tải gói ZIP"
+                            />
+                            {photo.selected && (
+                              <span className="absolute right-1.5 top-1.5 rounded bg-[#1E3A8A] px-1.5 py-0.5 text-[10px] font-bold text-white shadow">
+                                Đang dùng
+                              </span>
+                            )}
+                          </div>
+                          <div className="p-1.5 text-xs">
+                            <div className="truncate font-semibold text-slate-800">{photo.name}</div>
+                            <div
+                              className="mt-1 flex items-center justify-between text-[11px] text-slate-500"
+                              onClick={(e) => e.stopPropagation()}
                             >
-                              Đổi tên
-                            </button>
-                            <button
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                if (!currentProject) return;
-                                if (confirm(`Bạn có chắc muốn xóa "${photo.name}"?`)) {
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (!currentProject) return;
+                                  const nextName = prompt('Đổi tên ảnh kỹ thuật:', photo.name);
+                                  if (nextName && nextName.trim()) {
+                                    await apiRequest(`/api/v1/design/${currentProject.id}`, {
+                                      method: 'PATCH',
+                                      csrfToken: user?.csrfToken,
+                                      body: {
+                                        action: 'update_project',
+                                        renamePhotoId: photo.id,
+                                        renamePhotoName: nextName.trim(),
+                                      },
+                                    });
+                                    await loadData(currentProject.id);
+                                  }
+                                }}
+                                className="hover:text-[#2563EB]"
+                              >
+                                Đổi tên
+                              </button>
+                              <a
+                                href={resolvedSrc}
+                                download={photo.name}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="hover:text-[#1E3A8A]"
+                              >
+                                Tải
+                              </a>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (!currentProject) return;
+                                  if (!confirm(`Xóa ảnh kỹ thuật "${photo.name}"?`)) return;
                                   try {
                                     await apiRequest(
-                                      `/api/v1/design/${currentProject.id}?photoId=${photo.id}`,
+                                      `/api/v1/design/${currentProject.id}?photoId=${encodeURIComponent(photo.id)}`,
                                       {
                                         method: 'DELETE',
                                         csrfToken: user?.csrfToken,
-                                      },
+                                      }
                                     );
-                                    await loadData();
-                                  } catch {
-                                    alert('Không thể xóa ảnh.');
+                                    await loadData(currentProject.id);
+                                  } catch (err) {
+                                    setError(err instanceof Error ? err.message : 'Không thể xóa ảnh.');
                                   }
-                                }
-                              }}
-                              className="hover:text-red-600"
-                            >
-                              Xóa
-                            </button>
+                                }}
+                                className="hover:text-red-600"
+                              >
+                                Xóa
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
 
-                <label className="flex cursor-pointer items-center justify-center space-x-1.5 rounded-lg border border-dashed border-slate-300 bg-slate-50 py-2 text-xs font-semibold text-slate-600 transition hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700">
-                  <Plus className="h-3.5 w-3.5" />
-                  <span>Thêm ảnh hiện trạng</span>
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    className="hidden"
-                    onChange={handleUploadPhoto}
-                  />
-                </label>
-              </div>
-            )}
+                  {/* Upload Multiple Technical Photos & Import from Lead */}
+                  <div className="pt-1 space-y-1.5">
+                    <label className="flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-300 bg-white py-2 text-xs font-semibold text-slate-700 transition hover:border-[#2563EB] hover:bg-blue-50/40 hover:text-[#1E3A8A]">
+                      <Upload className="h-3.5 w-3.5" />
+                      <span>{uploadingPhoto ? 'Đang tải ảnh...' : 'Tải ảnh kỹ thuật (Nhiều tệp)'}</span>
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/png,image/jpeg,image/webp"
+                        className="hidden"
+                        onChange={handleUploadTechnicalPhotos}
+                      />
+                    </label>
+
+                    {currentProject?.leadId && (
+                      <button
+                        type="button"
+                        onClick={handleImportLeadPhotos}
+                        className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50/60 py-1.5 text-xs font-semibold text-[#1E3A8A] hover:bg-blue-100 transition"
+                      >
+                        <ImageIcon className="h-3.5 w-3.5" />
+                        <span>Nhập ảnh khảo sát từ hồ sơ Lead</span>
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    {currentProject?.assetVersions.map((ver) => {
+                      const thumbUrl = `/api/v1/design/asset/${ver.id}`;
+                      const isSelectedVer = ver.id === currentVersion?.id;
+                      const isChecked = selectedAssetIds.includes(`ver-${ver.id}`);
+                      return (
+                        <div
+                          key={ver.id}
+                          onClick={() => {
+                            setSelectedVersionId(ver.id);
+                            setViewMode('result');
+                            setActiveWorkspaceArea('perspective');
+                          }}
+                          className={`group relative cursor-pointer overflow-hidden rounded-xl border bg-white transition ${
+                            isSelectedVer
+                              ? 'border-[#2563EB] ring-2 ring-blue-500/20'
+                              : 'border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="relative aspect-video w-full bg-slate-900">
+                            <img
+                              src={thumbUrl}
+                              alt={`Phiên bản v${ver.versionNumber}`}
+                              className="h-full w-full object-cover"
+                            />
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={() => toggleAssetSelection(`ver-${ver.id}`)}
+                              className="absolute left-1.5 top-1.5 h-3.5 w-3.5 rounded border-white"
+                              title="Chọn bản thiết kế để tải ZIP"
+                            />
+                            {ver.isApprovedFinal && (
+                              <span className="absolute right-1.5 top-1.5 rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold text-white shadow">
+                                Bản chốt
+                              </span>
+                            )}
+                          </div>
+                          <div className="p-1.5 text-xs">
+                            <div className="truncate font-bold text-slate-800">
+                              v{ver.versionNumber} ·{' '}
+                              {ver.sourceType === 'DESIGNER_FINAL_UPLOAD' ? 'Bản Designer' : 'Bản AI'}
+                            </div>
+                            <div className="truncate text-[11px] text-slate-500">
+                              {ver.promptUsed || `Phiên bản v${ver.versionNumber}`}
+                            </div>
+                            <div
+                              className="mt-1 flex items-center justify-between text-[11px] text-slate-500"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (!currentProject) return;
+                                  const nextLabel = prompt(
+                                    `Đổi tên/ghi chú phiên bản v${ver.versionNumber}:`,
+                                    ver.promptUsed || `Bản thiết kế v${ver.versionNumber}`
+                                  );
+                                  if (nextLabel && nextLabel.trim()) {
+                                    await apiRequest(`/api/v1/design/${currentProject.id}`, {
+                                      method: 'PATCH',
+                                      csrfToken: user?.csrfToken,
+                                      body: {
+                                        action: 'update_project',
+                                        renameVersionId: ver.id,
+                                        renameVersionLabel: nextLabel.trim(),
+                                      },
+                                    });
+                                    await loadData(currentProject.id);
+                                  }
+                                }}
+                                className="hover:text-[#2563EB]"
+                              >
+                                Đổi tên
+                              </button>
+                              <a
+                                href={thumbUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="font-semibold text-[#1E3A8A] hover:underline"
+                              >
+                                Tải ảnh
+                              </a>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Upload Final Render by Designer */}
+                  {canUseAiDesign && (
+                    <label className="mt-1 flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-dashed border-blue-300 bg-white py-2 text-xs font-semibold text-[#1E3A8A] transition hover:bg-blue-50">
+                      <Upload className="h-3.5 w-3.5" />
+                      <span>
+                        {uploadingFinalFile ? 'Đang tải bản chốt...' : 'Tải bản thiết kế hoàn thiện'}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="hidden"
+                        onChange={handleUploadDesignerFinal}
+                      />
+                    </label>
+                  )}
+                </>
+              )}
+            </div>
           </div>
+        </aside>
 
-          {/* Bottom Pinned Card (Zero Dead-Space): Project Summary & LED Aspect Ratio / Dimensions */}
-          {currentProject && (
-            <div className="mt-auto pt-3 border-t border-slate-200 shrink-0 space-y-2.5 text-xs">
-              <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-2.5 space-y-1.5">
-                <div className="flex items-center justify-between font-bold text-slate-800">
-                  <span className="truncate">{currentProject.projectName}</span>
+        {/* ================= MAIN WORKSPACE AREA ================= */}
+        {activeWorkspaceArea === 'specs' ? (
+          /* FULL-WIDTH "THÔNG SỐ" WORKSPACE AREA */
+          <div className="flex-1 overflow-y-auto p-5 bg-slate-100">
+            <div className="mx-auto max-w-6xl space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-3.5 shadow-2xs">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900">
+                    Thông số dự án & Cấu hình kỹ thuật LED
+                  </h2>
+                  <p className="text-sm text-slate-500">
+                    Mọi thay đổi được lưu trực tiếp vào hồ sơ dự án và giữ nguyên khi chuyển dự án hoặc tải lại trang.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
                   <button
-                    onClick={() => {
-                      setRenameValue(currentProject.projectName);
-                      setEditingName(true);
-                    }}
-                    className="text-slate-400 hover:text-[#2563EB] flex items-center space-x-1 shrink-0"
-                    title="Đổi tên dự án"
+                    type="button"
+                    onClick={() => setActiveWorkspaceArea('perspective')}
+                    className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                   >
-                    <Edit2 className="h-3 w-3" />
-                    <span className="text-[10px]">Đổi tên</span>
+                    Quay lại Phối cảnh
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveParameters()}
+                    disabled={savingParams || !canUseAiDesign}
+                    className="rounded-xl bg-[#1E3A8A] px-4 py-2 text-sm font-bold text-white shadow-xs hover:bg-[#2563EB] disabled:opacity-50"
+                  >
+                    {savingParams ? 'Đang lưu...' : 'Lưu thông số dự án'}
                   </button>
                 </div>
-                <div className="text-[11px] text-slate-500 flex items-center justify-between">
-                  <span>Khách: {currentProject.contactName || 'Nội bộ'}</span>
-                  <span className="font-mono font-semibold text-[#1E3A8A]">
-                    {currentProject.productSpec?.pixelPitch || 'P2.5'}
-                  </span>
-                </div>
               </div>
 
-              {/* Pinned LED Aspect Ratio & Dimension Quick Controls */}
-              <div className="rounded-xl border border-blue-200/80 bg-blue-50/40 p-2.5 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-[#1E3A8A] text-[11px]">
-                    {isBannerProject ? 'Tỷ lệ & Kích thước Banner' : 'Tỷ lệ & Khung Màn hình LED'}
-                  </span>
-                  <select
-                    value={currentProject.aspectRatio || '16:9'}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      updateCurrentProjectImmutable((proj) => ({ ...proj, aspectRatio: val }));
-                    }}
-                    className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] font-semibold text-slate-800"
-                  >
-                    <option value="16:9">16:9</option>
-                    <option value="9:16">9:16</option>
-                    <option value="1:1">1:1</option>
-                    <option value="21:9">21:9</option>
-                  </select>
-                </div>
-
-                {isBannerProject ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[10px] text-slate-500">Rộng (px)</label>
-                      <input
-                        type="number"
-                        value={currentProject.bannerWidthPx || 1920}
-                        onChange={(e) => {
-                          const val = Number(e.target.value) || 1920;
-                          updateCurrentProjectImmutable((proj) => ({ ...proj, bannerWidthPx: val }));
-                        }}
-                        className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-slate-500">Cao (px)</label>
-                      <input
-                        type="number"
-                        value={currentProject.bannerHeightPx || 1080}
-                        onChange={(e) => {
-                          const val = Number(e.target.value) || 1080;
-                          updateCurrentProjectImmutable((proj) => ({ ...proj, bannerHeightPx: val }));
-                        }}
-                        className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs font-mono"
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[10px] text-slate-500">Ngang (m)</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={currentProject.screenWidthM || 4.8}
-                        onChange={(e) => {
-                          const nextW = Number(e.target.value) || 4.8;
-                          updateCurrentProjectImmutable((proj) => ({
-                            ...proj,
-                            screenWidthM: nextW,
-                            productSpec: proj.productSpec
-                              ? {
-                                  ...proj.productSpec,
-                                  areaM2: Number((nextW * (proj.screenHeightM || 2.7)).toFixed(2)),
-                                }
-                              : proj.productSpec,
-                          }));
-                        }}
-                        className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-slate-500">Cao (m)</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={currentProject.screenHeightM || 2.7}
-                        onChange={(e) => {
-                          const nextH = Number(e.target.value) || 2.7;
-                          updateCurrentProjectImmutable((proj) => ({
-                            ...proj,
-                            screenHeightM: nextH,
-                            productSpec: proj.productSpec
-                              ? {
-                                  ...proj.productSpec,
-                                  areaM2: Number(((proj.screenWidthM || 4.8) * nextH).toFixed(2)),
-                                }
-                              : proj.productSpec,
-                          }));
-                        }}
-                        className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs font-mono"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ================= CENTER PANEL: FLEXIBLE CANVAS ================= */}
-        <div
-          className={`${
-            mobilePane === 'canvas' ? 'flex' : 'hidden md:flex'
-          } flex-1 flex-col overflow-hidden bg-slate-100`}
-        >
-          {/* Sub-bar: Status Toast + View Mode Toggle */}
-          <div className="flex h-10 shrink-0 items-center justify-between bg-white px-4 border-b border-slate-200">
-            {/* Status notice */}
-            <div className="flex items-center space-x-1.5 text-xs text-emerald-600 font-medium">
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              <span>{successToast || 'Bản nháp đã lưu vào thư viện'}</span>
-            </div>
-
-            {/* View Mode Switcher: 'original' | 'perspective' | 'compare' */}
-            <div className="flex items-center rounded-lg border border-slate-200 p-0.5 bg-slate-50 text-xs">
-              <button
-                onClick={() => setViewMode('original')}
-                className={`rounded px-3 py-1 font-medium transition ${
-                  viewMode === 'original' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Ảnh gốc
-              </button>
-              <button
-                onClick={() => setViewMode('perspective')}
-                className={`rounded px-3 py-1 font-medium transition ${
-                  viewMode === 'perspective' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Phối cảnh
-              </button>
-              <button
-                onClick={() => setViewMode('compare')}
-                className={`rounded px-3 py-1 font-medium transition ${
-                  viewMode === 'compare' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                So sánh
-              </button>
+              {renderParametersFormContent(false)}
             </div>
           </div>
-
-          {/* MAIN CANVAS / PREVIEW AREA */}
-          <div className="relative flex-1 overflow-hidden p-4 flex items-center justify-center">
-            {/* Gallery View if Library tab is active */}
-            {centerTab === 'library' ? (
-              <div className="h-full w-full overflow-y-auto bg-white rounded-2xl p-5 shadow-xs border border-slate-200">
-                <div className="mb-4 flex items-center justify-between">
-                  <h3 className="font-bold text-slate-900 text-sm">Thư viện ấn phẩm & Lịch sử phiên bản</h3>
-                  <span className="text-xs text-slate-400">
-                    {currentProject?.assetVersions.length || 0} phiên bản đã lưu
+        ) : (
+          /* "PHỐI CẢNH" CANVAS + RIGHT DOCK ("TRỢ LÝ AI" / "THÔNG SỐ") */
+          <>
+            <div
+              className={`${
+                mobilePane === 'canvas' ? 'flex' : 'hidden md:flex'
+              } flex-1 flex-col overflow-hidden bg-slate-100`}
+            >
+              {/* Sub-bar: Status Toast + Working Original / Result / Compare Switcher */}
+              <div className="flex h-11 shrink-0 items-center justify-between bg-white px-4 border-b border-slate-200">
+                <div className="flex items-center gap-2 text-sm text-emerald-700 font-medium truncate">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <span className="truncate">
+                    {successToast ||
+                      (currentVersion
+                        ? `Đang hiển thị Phiên bản v${currentVersion.versionNumber} (${currentProject?.aspectRatio || '16:9'})`
+                        : 'Sẵn sàng dựng phối cảnh')}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                  {currentProject?.assetVersions.map((v) => {
-                    const thumb = resolveAssetUrl(v.downloadUrl);
-                    return (
-                      <div
-                        key={v.id}
-                        className="group relative overflow-hidden rounded-xl border border-slate-200 bg-slate-900 shadow-xs hover:shadow-md transition"
-                      >
-                        <div className="aspect-video w-full relative">
-                          <img src={thumb} alt={v.promptUsed || 'Version'} className="h-full w-full object-cover" />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center space-x-2">
-                            <button
-                              onClick={() => {
-                                setSelectedVersionId(v.id);
-                                setCenterTab('perspective');
-                              }}
-                              className="p-1.5 rounded-lg bg-white/90 text-slate-800 hover:bg-white text-xs font-semibold"
-                              title="Xem phối cảnh"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
-                            <a
-                              href={`/api/v1/design/asset/${v.id}`}
-                              target="_blank"
-                              className="p-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-xs font-semibold"
-                              title="Tải ảnh gốc"
-                            >
-                              <Download className="w-4 h-4" />
-                            </a>
-                          </div>
-                        </div>
-                        <div className="p-2.5 bg-white text-xs">
-                          <div className="font-bold text-slate-800">
-                            {v.isApprovedFinal ? 'Phiên bản hoàn thiện' : `Bản nháp v${v.versionNumber}`}
-                          </div>
-                          <div className="text-[11px] text-slate-400 truncate">{v.promptUsed}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
+
+                {/* Working Original / Result / Compare Controls */}
+                <div
+                  role="group"
+                  aria-label="Chế độ xem ảnh trên Canvas"
+                  className="flex items-center rounded-xl border border-slate-200 p-0.5 bg-slate-100 text-xs font-bold shrink-0"
+                >
+                  <button
+                    type="button"
+                    data-testid="view-mode-original"
+                    onClick={() => setViewMode('original')}
+                    className={`rounded-lg px-3 py-1 transition ${
+                      viewMode === 'original'
+                        ? 'bg-[#1E3A8A] text-white shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Ảnh gốc
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="view-mode-result"
+                    onClick={() => setViewMode('result')}
+                    className={`rounded-lg px-3 py-1 transition ${
+                      viewMode === 'result'
+                        ? 'bg-[#1E3A8A] text-white shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Kết quả
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="view-mode-compare"
+                    onClick={() => setViewMode('compare')}
+                    className={`rounded-lg px-3 py-1 transition ${
+                      viewMode === 'compare'
+                        ? 'bg-[#1E3A8A] text-white shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    So sánh
+                  </button>
                 </div>
               </div>
-            ) : (
-              /* Canvas Viewport */
-              <div
-                ref={canvasContainerRef}
-                onMouseMove={handleMouseMoveCanvas}
-                onMouseUp={handleMouseUpCanvas}
-                onMouseLeave={handleMouseUpCanvas}
-                style={{
-                  transform: `scale(${zoomLevel / 100})`,
-                  transformOrigin: 'center center',
-                  transition: draggingHandle ? 'none' : 'transform 0.15s ease-out',
-                }}
-                className="relative aspect-video max-h-full max-w-full select-none overflow-hidden rounded-2xl bg-slate-900 shadow-2xl border border-slate-800"
-              >
-                {/* Background Site Photo */}
-                <img
-                  src={sitePhotoUrl}
-                  alt="Site photo"
-                  className="h-full w-full object-cover"
-                />
 
-                {/* OVERLAY: Perspective LED Display inside 4-corner Quad */}
-                {viewMode !== 'original' && !isBannerProject && (
-                  <div className="absolute inset-0 pointer-events-none">
-                    <svg className="absolute inset-0 h-full w-full pointer-events-none">
-                      <defs>
-                        <linearGradient id="ledGlow" x1="0%" y1="0%" x2="100%" y2="100%">
-                          <stop offset="0%" stopColor="#0284c7" stopOpacity="0.95" />
-                          <stop offset="50%" stopColor="#2563eb" stopOpacity="0.95" />
-                          <stop offset="100%" stopColor="#1d4ed8" stopOpacity="0.95" />
-                        </linearGradient>
-                      </defs>
+              {/* MAIN CENTERED CANVAS */}
+              <div className="relative flex-1 overflow-hidden p-4 flex items-center justify-center">
+                <div
+                  ref={canvasContainerRef}
+                  onMouseMove={handleMouseMoveCanvas}
+                  onMouseUp={handleMouseUpCanvas}
+                  onMouseLeave={handleMouseUpCanvas}
+                  style={{
+                    transform: `scale(${zoomLevel / 100})`,
+                    transformOrigin: 'center center',
+                    transition:
+                      draggingHandle || draggingCompare ? 'none' : 'transform 0.15s ease-out',
+                  }}
+                  className="relative aspect-video max-h-full max-w-full select-none overflow-hidden rounded-2xl bg-slate-900 shadow-xl border border-slate-800"
+                >
+                  {/* 1. MODE: ORIGINAL ("Ảnh gốc") -> Renders Input Photo from Ảnh kỹ thuật */}
+                  {viewMode === 'original' && (
+                    <img
+                      data-testid="canvas-original-image"
+                      src={sitePhotoUrl}
+                      alt={selectedPhoto?.name || 'Ảnh kỹ thuật gốc'}
+                      className="h-full w-full object-cover"
+                    />
+                  )}
 
-                      {/* LED Display Box Polygon with Ocean Wave Gradient / Content */}
-                      <polygon
-                        points={`${quad.topLeft.x}%,${quad.topLeft.y}% ${quad.topRight.x}%,${quad.topRight.y}% ${quad.bottomRight.x}%,${quad.bottomRight.y}% ${quad.bottomLeft.x}%,${quad.bottomLeft.y}%`}
-                        fill="url(#ledGlow)"
-                        stroke="#93c5fd"
-                        strokeWidth="2"
-                        className="filter drop-shadow-md"
+                  {/* 2. MODE: RESULT ("Kết quả") -> Renders Selected Output Version from Bản thiết kế */}
+                  {viewMode === 'result' && (
+                    <img
+                      data-testid="canvas-result-image"
+                      src={versionImageUrl}
+                      alt={
+                        currentVersion
+                          ? `Bản thiết kế v${currentVersion.versionNumber}`
+                          : 'Bản thiết kế AI'
+                      }
+                      className="h-full w-full object-cover"
+                    />
+                  )}
+
+                  {/* 3. MODE: COMPARE ("So sánh") -> Renders TWO ACTUAL DISTINCT IMAGES (Original left, Result right) */}
+                  {viewMode === 'compare' && (
+                    <div className="relative h-full w-full">
+                      {/* Left / Base Layer: Original Input Photo */}
+                      <img
+                        data-testid="compare-original-image"
+                        src={sitePhotoUrl}
+                        alt="Ảnh kỹ thuật gốc (Trước)"
+                        className="h-full w-full object-cover"
                       />
-                    </svg>
-
-                    {/* Render high-contrast ocean wave content clipped to the polygon */}
-                    <div
-                      style={{
-                        clipPath: `polygon(${quad.topLeft.x}% ${quad.topLeft.y}%, ${quad.topRight.x}% ${quad.topRight.y}%, ${quad.bottomRight.x}% ${quad.bottomRight.y}%, ${quad.bottomLeft.x}% ${quad.bottomLeft.y}%)`,
-                      }}
-                      className="absolute inset-0 flex items-center justify-center overflow-hidden"
-                    >
-                      <div className="relative h-full w-full bg-gradient-to-tr from-sky-600 via-blue-600 to-indigo-800 flex items-center justify-center">
-                        <div className="text-center text-white drop-shadow-md px-2">
-                          <div className="text-sm font-black tracking-wider uppercase">MÀN HÌNH LED TOÀN TRUNG</div>
-                          <div className="text-xs text-sky-200 font-semibold mt-0.5">
-                            {currentProject?.screenWidthM
-                              ? `${currentProject.screenWidthM} x ${currentProject.screenHeightM} m`
-                              : '4,80 x 2,70 m'} · P2.5 Indoor
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Floating Dimension Pill over top edge */}
-                    <div
-                      style={{
-                        left: `${(quad.topLeft.x + quad.topRight.x) / 2}%`,
-                        top: `${Math.min(quad.topLeft.y, quad.topRight.y) - 6}%`,
-                        transform: 'translate(-50%, -50%)',
-                      }}
-                      className="pointer-events-auto absolute flex items-center rounded-full bg-slate-900/90 px-3 py-1 text-xs font-bold text-white shadow-lg backdrop-blur-xs border border-white/20"
-                    >
-                      <span>
-                        {currentProject?.screenWidthM
-                          ? `${currentProject.screenWidthM.toFixed(2).replace('.', ',')} x ${currentProject.screenHeightM?.toFixed(2).replace('.', ',')} m`
-                          : '4,80 x 2,70 m'}
+                      {/* Right / Clipped Layer: Selected Output Version Image */}
+                      <img
+                        data-testid="compare-result-image"
+                        src={versionImageUrl}
+                        alt={
+                          currentVersion
+                            ? `Bản thiết kế v${currentVersion.versionNumber} (Sau)`
+                            : 'Bản thiết kế (Sau)'
+                        }
+                        style={{
+                          clipPath: `inset(0 0 0 ${compareSplit}%)`,
+                        }}
+                        className="absolute inset-0 h-full w-full object-cover"
+                      />
+                      <span className="absolute left-3 bottom-12 rounded-lg bg-slate-900/80 px-2.5 py-1 text-xs font-bold text-white">
+                        Ảnh gốc: {selectedPhoto?.name || 'Hiện trạng'}
+                      </span>
+                      <span className="absolute right-3 bottom-12 rounded-lg bg-[#1E3A8A]/90 px-2.5 py-1 text-xs font-bold text-white">
+                        Kết quả: v{currentVersion?.versionNumber || 1}
                       </span>
                     </div>
+                  )}
 
-                    {/* Interactive 4-Corner Handles */}
-                    {showHandles && (
-                      <>
-                        {(['topLeft', 'topRight', 'bottomRight', 'bottomLeft'] as const).map((corner) => (
+                  {/* Interactive 4-Corner Placement Quad Overlay for 3D Perspective */}
+                  {!isBannerProject && showHandles && (
+                    <div className="absolute inset-0 pointer-events-none">
+                      <svg className="absolute inset-0 h-full w-full pointer-events-none">
+                        <polygon
+                          points={`${quad.topLeft.x}%,${quad.topLeft.y}% ${quad.topRight.x}%,${quad.topRight.y}% ${quad.bottomRight.x}%,${quad.bottomRight.y}% ${quad.bottomLeft.x}%,${quad.bottomLeft.y}%`}
+                          fill="rgba(37, 99, 235, 0.14)"
+                          stroke="#60a5fa"
+                          strokeWidth="2"
+                          strokeDasharray="6 4"
+                        />
+                      </svg>
+
+                      {/* Floating Dimension Badge */}
+                      <div
+                        style={{
+                          left: `${(quad.topLeft.x + quad.topRight.x) / 2}%`,
+                          top: `${Math.max(6, Math.min(quad.topLeft.y, quad.topRight.y) - 5)}%`,
+                          transform: 'translate(-50%, -50%)',
+                        }}
+                        className="pointer-events-auto absolute flex items-center rounded-full bg-slate-900/90 px-3 py-1 text-xs font-bold text-white shadow-lg border border-white/20"
+                      >
+                        <span>
+                          {paramForm.screenWidthM.toFixed(2).replace('.', ',')} ×{' '}
+                          {paramForm.screenHeightM.toFixed(2).replace('.', ',')} m ·{' '}
+                          {paramForm.pixelPitch}
+                        </span>
+                      </div>
+
+                      {(['topLeft', 'topRight', 'bottomRight', 'bottomLeft'] as const).map(
+                        (corner) => (
                           <div
                             key={corner}
                             onMouseDown={handleMouseDownHandle(corner)}
@@ -1235,509 +2108,444 @@ export function AiDesignWorkspace() {
                               top: `${quad[corner].y}%`,
                               transform: 'translate(-50%, -50%)',
                             }}
-                            className={`pointer-events-auto absolute h-4 w-4 cursor-crosshair rounded-full border-2 border-white bg-blue-600 shadow-lg transition-transform hover:scale-125 ${
+                            className={`pointer-events-auto absolute h-4 w-4 cursor-crosshair rounded-full border-2 border-white bg-[#2563EB] shadow-lg transition-transform hover:scale-125 ${
                               draggingHandle === corner ? 'ring-4 ring-blue-400' : ''
                             }`}
                             title={`Kéo góc neo ${corner}`}
                           />
-                        ))}
-                      </>
-                    )}
-                  </div>
-                )}
-
-                {/* Compare Mode Split Slider */}
-                {viewMode === 'compare' && (
-                  <div
-                    style={{ left: `${compareSplit}%` }}
-                    className="pointer-events-none absolute inset-y-0 w-0.5 bg-white shadow-2xl"
-                  >
-                    <div
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setDraggingCompare(true);
-                      }}
-                      className="pointer-events-auto absolute top-1/2 -ml-3.5 -mt-3.5 flex h-7 w-7 cursor-ew-resize items-center justify-center rounded-full bg-white shadow-lg text-xs font-bold text-slate-700 hover:scale-110 transition-transform"
-                      title="Kéo để so sánh trước/sau"
-                    >
-                      ↔
-                    </div>
-                  </div>
-                )}
-
-                {/* Overlay Tools: Top Right */}
-                <div className="absolute right-3 top-3 flex items-center space-x-1.5 rounded-xl bg-slate-900/80 p-1 backdrop-blur-xs text-white text-xs">
-                  <button
-                    onClick={() => setShowHandles(!showHandles)}
-                    className={`flex items-center space-x-1 rounded-lg px-2.5 py-1 font-semibold transition ${
-                      showHandles ? 'bg-white/20' : 'hover:bg-white/10'
-                    }`}
-                    title="Hiện/Ẩn góc neo LED"
-                  >
-                    <Edit2 className="h-3 w-3" />
-                    <span>Chỉnh sửa</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!document.fullscreenElement) {
-                        canvasContainerRef.current?.requestFullscreen?.();
-                      } else {
-                        document.exitFullscreen?.();
-                      }
-                    }}
-                    className="rounded-lg p-1.5 hover:bg-white/10"
-                    title="Toàn màn hình"
-                  >
-                    <Expand className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-
-                {/* Overlay Zoom Controls: Bottom Right */}
-                <div className="absolute bottom-3 right-3 flex items-center space-x-1.5 rounded-xl bg-slate-900/80 px-2.5 py-1 backdrop-blur-xs text-white text-xs font-semibold">
-                  <button
-                    onClick={() => setZoomLevel((z) => Math.max(50, z - 10))}
-                    className="p-1 hover:text-blue-400"
-                    title="Thu nhỏ"
-                  >
-                    <Minus className="h-3.5 w-3.5" />
-                  </button>
-                  <span className="w-10 text-center">{zoomLevel}%</span>
-                  <button
-                    onClick={() => setZoomLevel((z) => Math.min(200, z + 10))}
-                    className="p-1 hover:text-blue-400"
-                    title="Phóng to"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    onClick={() => setZoomLevel(100)}
-                    className="ml-1 px-1.5 py-0.5 rounded bg-white/20 hover:bg-white/30 text-[10px]"
-                    title="Vừa khung hình"
-                  >
-                    Fit
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* BOTTOM: Versions Strip */}
-          <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-2.5">
-            <div className="mb-2 flex items-center justify-between text-xs">
-              <div className="flex items-center space-x-2">
-                <span className="font-bold text-slate-800">Phiên bản thiết kế</span>
-                <span className="text-[11px] text-slate-400 flex items-center space-x-1">
-                  <Info className="h-3 w-3" />
-                  <span>Giữ lại bản AI gốc khi lưu phiên bản mới</span>
-                </span>
-              </div>
-              <span className="text-[11px] text-slate-400">
-                {currentProject?.assetVersions.length || 0} phiên bản
-              </span>
-            </div>
-
-            {/* Version Thumbnails Carousel */}
-            <div className="flex items-center space-x-3 overflow-x-auto pb-1">
-              {currentProject?.assetVersions.map((ver, idx) => {
-                const isSelected = ver.id === selectedVersionId;
-                const isFinal = ver.isApprovedFinal || ver.sourceType === 'DESIGNER_FINAL_UPLOAD';
-                const label = idx === 0 ? 'Bản AI gốc' : isFinal ? 'Phiên bản hoàn thiện' : `Phiên bản v${ver.versionNumber}`;
-                const thumb = resolveAssetUrl(ver.downloadUrl);
-
-                return (
-                  <button
-                    key={ver.id}
-                    onClick={() => setSelectedVersionId(ver.id)}
-                    className={`group relative flex shrink-0 flex-col items-center overflow-hidden rounded-xl border p-1 text-left transition ${
-                      isSelected ? 'border-blue-600 bg-blue-50/70 ring-2 ring-blue-500/20' : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="relative h-14 w-24 overflow-hidden rounded-lg bg-slate-900 border border-slate-100">
-                      <img src={thumb} alt={label} className="h-full w-full object-cover" />
-                      {isFinal && (
-                        <div className="absolute left-1 top-1 rounded bg-emerald-600 px-1 py-0.2 text-[8px] font-bold text-white uppercase">
-                          Chính thức
-                        </div>
+                        )
                       )}
                     </div>
-                    <span className="mt-1 text-[11px] font-bold text-slate-700">{label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+                  )}
 
-          {/* FOOTER BAR: Measured Metrics */}
-          <div className="flex h-9 shrink-0 items-center justify-between border-t border-slate-200 bg-slate-50 px-4 text-xs text-slate-500">
-            <div className="flex items-center space-x-4">
-              <span className="flex items-center space-x-1">
-                <Clock className="h-3 w-3 text-slate-400" />
-                <span>Thời gian: {currentProject?.processingDurationSec ? `${currentProject.processingDurationSec}s` : '—'}</span>
-              </span>
-              <span>|</span>
-              <span className="flex items-center space-x-1">
-                <Layers className="h-3 w-3 text-slate-400" />
-                <span>Token: {currentProject?.tokenCost ? currentProject.tokenCost.toLocaleString() : '—'}</span>
-              </span>
-              <span>|</span>
-              <span className="flex items-center space-x-1">
-                <Coins className="h-3 w-3 text-slate-400" />
-                <span>
-                  Chi phí:{' '}
-                  {currentProject?.totalCost
-                    ? `${currentProject.totalCost.currency === 'USD' ? '$' : ''}${currentProject.totalCost.formattedDecimal}${
-                        currentProject.totalCost.currency === 'VND' ? ' ₫' : ''
-                      }`
-                    : '—'}
-                </span>
-              </span>
-            </div>
-
-            <div className="text-[11px] text-slate-400">
-              {providerStatus?.isConfigured
-                ? `● ${providerStatus.providerName}`
-                : 'Thiết kế minh họa · Chưa kết nối AI'}
-            </div>
-          </div>
-        </div>
-
-        {/* ================= RIGHT PANEL: Desktop Col-3 / Tablet Slide-over Drawer / Mobile Tab ================= */}
-        {tabletAssistantOpen && (
-          <button
-            type="button"
-            aria-label="Đóng trợ lý"
-            onClick={() => setTabletAssistantOpen(false)}
-            className="hidden md:block xl:hidden fixed inset-0 z-30 bg-slate-900/30 backdrop-blur-2xs"
-          />
-        )}
-        <div
-          className={`${
-            mobilePane === 'assistant' ? 'flex w-full' : 'hidden'
-          } ${
-            tabletAssistantOpen
-              ? 'md:flex md:fixed md:inset-y-16 md:right-0 md:z-40 md:w-84 md:shadow-2xl'
-              : 'xl:flex'
-          } xl:static xl:w-84 shrink-0 flex-col border-l border-slate-200 bg-white`}
-        >
-          {/* Header with Tabs */}
-          <div className="flex h-11 shrink-0 items-center justify-between border-b border-slate-200 px-4">
-            <div className="flex items-center space-x-1.5 text-sm font-bold text-slate-900">
-              <Sparkles className="h-4 w-4 text-blue-600" />
-              <span>Trợ lý thiết kế</span>
-            </div>
-
-            {/* Tabs: 'request' | 'specs' */}
-            <div className="flex items-center space-x-3 text-xs font-semibold">
-              <button
-                onClick={() => setRightTab('request')}
-                className={`py-3 transition border-b-2 ${
-                  rightTab === 'request'
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-slate-400 hover:text-slate-700'
-                }`}
-              >
-                Yêu cầu
-              </button>
-              <button
-                onClick={() => setRightTab('specs')}
-                className={`py-3 transition border-b-2 ${
-                  rightTab === 'specs'
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-slate-400 hover:text-slate-700'
-                }`}
-              >
-                Thông số
-              </button>
-            </div>
-          </div>
-
-          {/* TAB 1: YÊU CẦU (Conversational Editing Assistant) */}
-          {rightTab === 'request' && (
-            <div className="flex flex-1 flex-col overflow-hidden p-3.5">
-              {/* Product Spec Summary Chip */}
-              <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50/80 p-2.5 text-xs">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start space-x-2">
-                    <Monitor className="h-4 w-4 shrink-0 text-blue-600 mt-0.5" />
-                    <div>
-                      <div className="font-bold text-slate-800">
-                        {currentProject?.productSpec?.productName || 'LED trong nhà · P2.5'}
-                      </div>
-                      <div className="text-[11px] text-slate-500 font-medium">
-                        Phẳng | {currentProject?.screenWidthM ? `${currentProject.screenWidthM} x ${currentProject.screenHeightM} m` : '4,80 x 2,70 m'}
+                  {/* Compare Mode Draggable Split Handle */}
+                  {viewMode === 'compare' && (
+                    <div
+                      style={{ left: `${compareSplit}%` }}
+                      className="pointer-events-none absolute inset-y-0 w-0.5 bg-white shadow-2xl"
+                    >
+                      <div
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setDraggingCompare(true);
+                        }}
+                        className="pointer-events-auto absolute top-1/2 -ml-4 -mt-4 flex h-8 w-8 cursor-ew-resize items-center justify-center rounded-full bg-white shadow-lg text-xs font-bold text-slate-800 hover:scale-110 transition-transform"
+                        title="Kéo để so sánh Ảnh gốc và Bản thiết kế"
+                      >
+                        ↔
                       </div>
                     </div>
+                  )}
+
+                  {/* Top-Right Canvas Controls (Placement Handles & Fullscreen) */}
+                  <div className="absolute right-3 top-3 flex items-center gap-1.5 rounded-xl bg-slate-900/80 p-1 backdrop-blur-xs text-white text-xs">
+                    {!isBannerProject && (
+                      <button
+                        type="button"
+                        onClick={() => setShowHandles(!showHandles)}
+                        className={`flex items-center gap-1 rounded-lg px-2.5 py-1 font-semibold transition ${
+                          showHandles ? 'bg-white/20' : 'hover:bg-white/10'
+                        }`}
+                        title="Hiện/Ẩn khung neo màn hình LED"
+                      >
+                        <Edit2 className="h-3 w-3" />
+                        <span>Khung neo LED</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!document.fullscreenElement) {
+                          canvasContainerRef.current?.requestFullscreen?.();
+                        } else {
+                          document.exitFullscreen?.();
+                        }
+                      }}
+                      className="rounded-lg p-1.5 hover:bg-white/10"
+                      title="Toàn màn hình"
+                    >
+                      <Expand className="h-3.5 w-3.5" />
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setRightTab('specs')}
-                    className="text-[11px] font-semibold text-blue-600 hover:underline shrink-0"
-                  >
-                    Thông số mặt hàng
-                  </button>
+
+                  {/* Bottom-Right Zoom & Fit Controls */}
+                  <div className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-xl bg-slate-900/80 px-2.5 py-1 backdrop-blur-xs text-white text-xs font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => setZoomLevel((z) => Math.max(50, z - 10))}
+                      className="p-1 hover:text-blue-300"
+                      title="Thu nhỏ"
+                    >
+                      <Minus className="h-3.5 w-3.5" />
+                    </button>
+                    <span className="w-11 text-center">{zoomLevel}%</span>
+                    <button
+                      type="button"
+                      onClick={() => setZoomLevel((z) => Math.min(200, z + 10))}
+                      className="p-1 hover:text-blue-300"
+                      title="Phóng to"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setZoomLevel(100)}
+                      className="ml-1 px-2 py-0.5 rounded bg-white/20 hover:bg-white/30 text-xs"
+                      title="Vừa khung hình"
+                    >
+                      Vừa khung
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              {/* Chat Message History */}
-              <div className="flex-1 space-y-3 overflow-y-auto pr-1 text-xs">
-                {currentProject?.chatMessages.map((msg) => {
-                  const isUser = msg.role === 'user';
-                  return (
-                    <div key={msg.id} className="space-y-1">
-                      <div className="text-[10px] font-bold text-slate-400">
-                        {isUser ? 'Mô tả yêu cầu *' : 'Phản hồi từ AI Studio'}
-                      </div>
-                      <div
-                        className={`rounded-xl p-3 leading-relaxed shadow-xs text-[12.5px] ${
-                          isUser
-                            ? 'bg-slate-100 text-slate-800'
-                            : 'border border-blue-100 bg-blue-50/60 text-slate-800 font-medium'
+              {/* BOTTOM VERSION STRIP */}
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-2.5">
+                <div className="mb-2 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-slate-900">
+                      Lịch sử phiên bản (Bản thiết kế)
+                    </span>
+                    <span className="text-xs text-slate-500 flex items-center gap-1">
+                      <Info className="h-3.5 w-3.5 text-slate-400" />
+                      <span>Mỗi lần tạo sinh phiên bản mới, bảo toàn nguyên vẹn ảnh gốc</span>
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {currentVersion && (
+                      <a
+                        href={`/api/v1/design/asset/${currentVersion.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 font-semibold text-[#1E3A8A] hover:underline"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        <span>Tải v{currentVersion.versionNumber}</span>
+                      </a>
+                    )}
+                    <span className="text-slate-500 font-semibold">
+                      {currentProject?.assetVersions.length || 0} phiên bản
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 overflow-x-auto pb-1">
+                  {currentProject?.assetVersions.map((ver) => {
+                    const isSelected = ver.id === currentVersion?.id;
+                    const isFinal =
+                      ver.isApprovedFinal || ver.sourceType === 'DESIGNER_FINAL_UPLOAD';
+                    const label = isFinal
+                      ? `v${ver.versionNumber} · Bản chốt`
+                      : `Phiên bản v${ver.versionNumber}`;
+                    const thumb = `/api/v1/design/asset/${ver.id}`;
+
+                    return (
+                      <button
+                        key={ver.id}
+                        type="button"
+                        data-testid={`version-card-v${ver.versionNumber}`}
+                        onClick={() => {
+                          setSelectedVersionId(ver.id);
+                          if (viewMode === 'original') setViewMode('result');
+                        }}
+                        className={`group relative flex shrink-0 flex-col items-center overflow-hidden rounded-xl border p-1.5 text-left transition ${
+                          isSelected
+                            ? 'border-[#2563EB] bg-blue-50/70 ring-2 ring-blue-500/20'
+                            : 'border-slate-200 hover:border-slate-300'
                         }`}
                       >
-                        {!isUser && <Sparkles className="h-3.5 w-3.5 text-blue-600 inline mr-1.5 -mt-0.5" />}
-                        <span>{msg.text}</span>
-                        {msg.cost && (
-                          <div className="mt-1.5 flex items-center space-x-2 text-[10px] text-slate-400 border-t border-slate-200/50 pt-1 font-normal">
-                            <span>⏱ {msg.durationSec}s</span>
-                            <span>•</span>
-                            <span>🪙 {msg.cost}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                        <div className="relative h-14 w-24 overflow-hidden rounded-lg bg-slate-900 border border-slate-100">
+                          <img src={thumb} alt={label} className="h-full w-full object-cover" />
+                          {ver.isApprovedFinal && (
+                            <span className="absolute left-1 top-1 rounded bg-emerald-600 px-1.5 py-0.2 text-[9px] font-bold text-white">
+                              Đã duyệt
+                            </span>
+                          )}
+                        </div>
+                        <span className="mt-1 text-xs font-bold text-slate-800">{label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
-              {/* PII Alert Warning if triggered */}
-              {piiAlert && (
-                <div className="mt-2 flex items-start space-x-1.5 rounded-lg bg-red-50 p-2 text-[11px] text-red-600 border border-red-200">
-                  <ShieldAlert className="h-4 w-4 shrink-0 text-red-500" />
-                  <span>{piiAlert}</span>
+              {/* FOOTER METRICS BAR */}
+              <div className="flex h-9 shrink-0 items-center justify-between border-t border-slate-200 bg-slate-50 px-4 text-xs text-slate-600">
+                <div className="flex items-center gap-4">
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3.5 w-3.5 text-slate-400" />
+                    <span>
+                      Thời gian xử lý:{' '}
+                      {currentProject?.processingDurationSec
+                        ? `${currentProject.processingDurationSec}s`
+                        : '—'}
+                    </span>
+                  </span>
+                  <span>|</span>
+                  <span className="flex items-center gap-1">
+                    <Layers className="h-3.5 w-3.5 text-slate-400" />
+                    <span>
+                      Token:{' '}
+                      {currentProject?.tokenCost ? currentProject.tokenCost.toLocaleString() : '—'}
+                    </span>
+                  </span>
+                  <span>|</span>
+                  <span className="flex items-center gap-1">
+                    <Coins className="h-3.5 w-3.5 text-slate-400" />
+                    <span>
+                      Chi phí uớc tính:{' '}
+                      {currentProject?.totalCost
+                        ? `${currentProject.totalCost.currency === 'USD' ? '$' : ''}${currentProject.totalCost.formattedDecimal}${
+                            currentProject.totalCost.currency === 'VND' ? ' ₫' : ''
+                          }`
+                        : '—'}
+                    </span>
+                  </span>
                 </div>
-              )}
 
-              {/* Fixed Composer Area */}
-              <form onSubmit={handleSendChatEdit} className="mt-3 shrink-0 pt-2 border-t border-slate-100">
-                <textarea
-                  rows={3}
-                  value={chatPrompt}
-                  onChange={(e) => handlePromptChange(e.target.value)}
-                  placeholder="Nhập yêu cầu chỉnh sửa..."
-                  className="w-full resize-none rounded-xl border border-slate-200 p-2.5 text-xs text-slate-800 placeholder-slate-400 focus:border-blue-500 focus:outline-none shadow-xs"
-                />
+                <div className="text-xs font-medium text-slate-500">
+                  {providerStatus?.isConfigured
+                    ? `● ${providerStatus.providerName}`
+                    : 'Chế độ mô phỏng cục bộ an toàn (Không phát sinh phí API)'}
+                </div>
+              </div>
+            </div>
 
-                <div className="mt-2 flex items-center justify-between">
-                  {/* Quality selector */}
-                  <div className="flex items-center space-x-1 text-xs text-slate-500">
-                    <span className="text-[11px]">Chất lượng:</span>
-                    <select
-                      value={chatQuality}
-                      onChange={(e) => setChatQuality(e.target.value as any)}
-                      className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:outline-none"
-                    >
-                      <option value="draft">Tiết kiệm</option>
-                      <option value="high_quality">Chất lượng cao</option>
-                    </select>
-                  </div>
-
-                  {/* Submit Button */}
+            {/* ================= RIGHT STUDIO DOCK: "TRỢ LÝ AI" & COMPACT "THÔNG SỐ" ================= */}
+            <aside
+              className={`${
+                mobilePane === 'assistant' || activeWorkspaceArea === 'assistant'
+                  ? 'flex w-full md:w-92 xl:w-96'
+                  : focusCanvas
+                ? 'hidden'
+                : 'hidden xl:flex xl:w-96'
+              } shrink-0 flex-col border-l border-slate-200 bg-white h-full min-h-0`}
+            >
+              {/* Side Dock Switcher */}
+              <div className="flex h-11 shrink-0 items-center justify-between border-b border-slate-200 px-4">
+                <div className="flex items-center gap-2">
                   <button
-                    type="submit"
-                    disabled={!chatPrompt.trim() || submitting || Boolean(piiAlert)}
-                    className="flex items-center space-x-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-blue-700 disabled:opacity-50"
+                    type="button"
+                    onClick={() => {
+                      setSideDockTab('assistant');
+                      setActiveWorkspaceArea('assistant');
+                    }}
+                    className={`flex items-center gap-1.5 py-2.5 text-sm font-bold border-b-2 transition ${
+                      sideDockTab === 'assistant'
+                        ? 'border-[#1E3A8A] text-[#1E3A8A]'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
                   >
-                    <Send className="h-3 w-3" />
-                    <span>{submitting ? 'Đang tạo...' : 'Gửi yêu cầu'}</span>
+                    <Sparkles className="h-4 w-4 text-[#2563EB]" />
+                    <span>Trợ lý AI</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSideDockTab('specs')}
+                    className={`flex items-center gap-1.5 py-2.5 text-sm font-bold border-b-2 transition ml-4 ${
+                      sideDockTab === 'specs'
+                        ? 'border-[#1E3A8A] text-[#1E3A8A]'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Settings2 className="h-4 w-4 text-slate-500" />
+                    <span>Thông số nhanh</span>
                   </button>
                 </div>
-              </form>
-            </div>
-          )}
 
-          {/* TAB 2: THÔNG SỐ (Technical Product Specifications) */}
-          {rightTab === 'specs' && (
-            <div className="flex-1 overflow-y-auto p-4 text-xs space-y-4">
-              <div className="border-b border-slate-100 pb-2">
-                <h3 className="font-bold text-slate-900 text-sm">Thông số kỹ thuật màn hình LED</h3>
-                <p className="text-[11px] text-slate-400">Trích xuất từ danh mục sản phẩm chuẩn Toàn Trung</p>
-              </div>
-
-              {/* Product Selection */}
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Mặt hàng LED chuẩn:</label>
-                <select
-                  value={currentProject?.productId || 1}
-                  onChange={(e) => {
-                    const id = Number(e.target.value);
-                    const opt = productOptions.find((p) => p.id === id);
-                    if (opt) {
-                      updateCurrentProjectImmutable((proj) => ({
-                        ...proj,
-                        productId: opt.id,
-                        productName: opt.name,
-                      }));
-                    }
-                  }}
-                  className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-800"
+                <button
+                  type="button"
+                  onClick={() => setActiveWorkspaceArea('specs')}
+                  className="text-xs font-semibold text-[#2563EB] hover:underline"
                 >
-                  {productOptions.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.code} - {p.name}
-                    </option>
-                  ))}
-                </select>
+                  Mở rộng Thông số
+                </button>
               </div>
 
-              {/* Physical Dimensions */}
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[11px] text-slate-500 mb-0.5">Chiều ngang (m):</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={currentProject?.screenWidthM || 4.8}
-                    onChange={(e) => {
-                      const nextW = Number(e.target.value) || 4.8;
-                      updateCurrentProjectImmutable((proj) => ({
-                        ...proj,
-                        screenWidthM: nextW,
-                        productSpec: proj.productSpec
-                          ? {
-                              ...proj.productSpec,
-                              areaM2: Number((nextW * (proj.screenHeightM || 2.7)).toFixed(2)),
-                            }
-                          : proj.productSpec,
-                      }));
-                    }}
-                    className="w-full rounded border border-slate-200 p-1.5 text-xs text-slate-800"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-slate-500 mb-0.5">Chiều cao (m):</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={currentProject?.screenHeightM || 2.7}
-                    onChange={(e) => {
-                      const nextH = Number(e.target.value) || 2.7;
-                      updateCurrentProjectImmutable((proj) => ({
-                        ...proj,
-                        screenHeightM: nextH,
-                        productSpec: proj.productSpec
-                          ? {
-                              ...proj.productSpec,
-                              areaM2: Number(((proj.screenWidthM || 4.8) * nextH).toFixed(2)),
-                            }
-                          : proj.productSpec,
-                      }));
-                    }}
-                    className="w-full rounded border border-slate-200 p-1.5 text-xs text-slate-800"
-                  />
-                </div>
-              </div>
+              {sideDockTab === 'assistant' ? (
+                <div className="flex flex-1 flex-col min-h-0 overflow-hidden p-3.5">
+                  {/* Context Summary Card */}
+                  <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900">
+                        {paramForm.projectName} ({paramForm.pixelPitch})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveWorkspaceArea('specs')}
+                        className="font-semibold text-[#2563EB] hover:underline"
+                      >
+                        Sửa thông số
+                      </button>
+                    </div>
+                    <div className="text-slate-600">
+                      Kích thước: {paramForm.screenWidthM}m × {paramForm.screenHeightM}m (
+                      {computedLiveSpecs.areaM2} m²) · Tỷ lệ {paramForm.aspectRatio}
+                    </div>
+                    <div className="text-slate-500 truncate">
+                      Ảnh gốc đang chọn: {selectedPhoto?.name || 'Ảnh chính diện showroom'}
+                    </div>
+                  </div>
 
-              {/* Technical Specifications Table */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2 text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Diện tích hiển thị:</span>
-                  <span className="font-semibold text-slate-800">
-                    {currentProject?.productSpec?.areaM2 || 12.96} m²
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Bước điểm ảnh (Pitch):</span>
-                  <span className="font-semibold text-slate-800">
-                    {currentProject?.productSpec?.pixelPitch || 'P2.5'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Độ phân giải:</span>
-                  <span className="font-semibold text-slate-800">
-                    {currentProject?.productSpec?.resolutionWidthPx || 1920} x {currentProject?.productSpec?.resolutionHeightPx || 1080} px
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Kích thước Cabinet:</span>
-                  <span className="font-semibold text-slate-800">640 x 480 mm</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Bộ xử lý (Controller):</span>
-                  <span className="font-semibold text-slate-800">Novastar TB60 / VX600</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Nguồn cấp:</span>
-                  <span className="font-semibold text-slate-800">Meanwell / G-Energy 5V-40A</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Công suất tiêu thụ:</span>
-                  <span className="font-semibold text-slate-800">Trung bình ~3.2 kW</span>
-                </div>
-              </div>
+                  {/* Conversation History */}
+                  <div className="flex-1 min-h-0 space-y-3 overflow-y-auto pr-1 text-sm">
+                    {currentProject?.chatMessages.map((msg) => {
+                      const isUser = msg.role === 'user';
+                      return (
+                        <div key={msg.id} className="space-y-1">
+                          <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
+                            <span>{isUser ? 'Yêu cầu của bạn' : 'Trợ lý AI Toàn Trung'}</span>
+                            {msg.versionNumber && (
+                              <span className="rounded bg-blue-100 px-1.5 py-0.2 text-[11px] font-bold text-[#1E3A8A]">
+                                Phiên bản v{msg.versionNumber}
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            className={`rounded-xl p-3 leading-relaxed text-sm ${
+                              isUser
+                                ? 'bg-slate-100 text-slate-900'
+                                : msg.status === 'timeout' || msg.status === 'failed'
+                                  ? 'border border-amber-200 bg-amber-50 text-amber-900'
+                                  : 'border border-blue-100 bg-blue-50/60 text-slate-900 font-medium'
+                            }`}
+                          >
+                            {!isUser && (
+                              <Sparkles className="h-4 w-4 text-[#2563EB] inline mr-1.5 -mt-0.5" />
+                            )}
+                            <span>{msg.text}</span>
+                            {msg.cost && (
+                              <div className="mt-1.5 flex items-center gap-2 text-xs text-slate-500 border-t border-slate-200/60 pt-1 font-normal">
+                                <span>Thời gian: {msg.durationSec}s</span>
+                                <span>·</span>
+                                <span>Token: {msg.tokenUsed ?? '—'}</span>
+                                <span>·</span>
+                                <span>Chi phí: {msg.cost}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
 
-              {/* Apply Specs Button */}
-              <button
-                onClick={async () => {
-                  if (currentProject) {
-                    try {
-                      await apiRequest(`/api/v1/design/${currentProject.id}`, {
-                        method: 'PATCH',
-                        csrfToken: user?.csrfToken,
-                        body: {
-                          action: 'update_project',
-                          expectedVersion: currentProject.version,
-                          placementQuad: quad,
-                          notes: currentProject.notes,
-                          projectName: currentProject.projectName,
-                        },
-                      });
-                      await loadData();
-                    } catch {
-                      // fallback to local toast if unchanged
-                    }
-                  }
-                  setSuccessToast('Đã lưu và áp dụng thông số vào phối cảnh AI.');
-                  setRightTab('request');
-                }}
-                className="w-full rounded-xl bg-blue-600 py-2.5 text-xs font-semibold text-white shadow hover:bg-blue-700 transition"
-              >
-                Áp dụng thông số vào phối cảnh
-              </button>
-            </div>
-          )}
-        </div>
+                  {/* Quick Prompt Suggestions */}
+                  <div className="mt-2 flex flex-wrap gap-1.5 shrink-0">
+                    {[
+                      'Giữ nguyên nội thất, hiển thị video sóng biển 4K sắc nét',
+                      'Tăng độ sáng viền cabinet LED, ánh sáng phản chiếu sàn',
+                      'Hiển thị slide hội nghị Toàn Trung nền xanh navy',
+                    ].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => handlePromptChange(preset)}
+                        className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600 hover:border-blue-300 hover:bg-blue-50 hover:text-[#1E3A8A] transition truncate max-w-full"
+                      >
+                        + {preset}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* PII Security Guard */}
+                  {piiAlert && (
+                    <div className="mt-2 flex items-start gap-2 rounded-xl bg-red-50 p-2.5 text-xs text-red-700 border border-red-200">
+                      <ShieldAlert className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+                      <span>{piiAlert}</span>
+                    </div>
+                  )}
+
+                  {/* Prompt Composer */}
+                  <form
+                    onSubmit={handleSendChatEdit}
+                    className="mt-2.5 shrink-0 pt-2.5 border-t border-slate-200"
+                  >
+                    <textarea
+                      rows={3}
+                      data-testid="ai-chat-prompt-input"
+                      value={chatPrompt}
+                      onChange={(e) => handlePromptChange(e.target.value)}
+                      placeholder="Nhập yêu cầu dựng phối cảnh hoặc chỉnh sửa nội dung màn hình LED..."
+                      className="w-full resize-none rounded-xl border border-slate-200 p-2.5 text-sm text-slate-900 placeholder-slate-400 focus:border-[#2563EB] focus:outline-none"
+                    />
+
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                        <span className="font-semibold">Chế độ:</span>
+                        <select
+                          value={chatQuality}
+                          onChange={(e) =>
+                            setChatQuality(e.target.value as 'draft' | 'high_quality')
+                          }
+                          className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-800 focus:outline-none"
+                        >
+                          <option value="draft">Nháp nhanh</option>
+                          <option value="high_quality">Độ nét cao</option>
+                        </select>
+                      </div>
+
+                      <button
+                        type="submit"
+                        data-testid="ai-chat-submit-btn"
+                        disabled={!chatPrompt.trim() || submitting || Boolean(piiAlert) || !canUseAiDesign}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-[#1E3A8A] px-4 py-2 text-sm font-bold text-white shadow-xs transition hover:bg-[#2563EB] disabled:opacity-50"
+                      >
+                        {submitting ? (
+                          <>
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                            <span>Đang dựng...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Send className="h-3.5 w-3.5" />
+                            <span>Tạo phiên bản mới</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              ) : (
+                <div className="flex-1 min-h-0 overflow-y-auto p-3.5">
+                  {renderParametersFormContent(true)}
+                </div>
+              )}
+            </aside>
+          </>
+        )}
       </div>
 
       {/* MODAL: CREATE PROJECT */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
-            <h3 className="text-base font-bold text-slate-900 mb-3">Tạo dự án thiết kế AI mới</h3>
-            <form onSubmit={handleCreateProject} className="space-y-3.5 text-xs">
+            <h3 className="text-lg font-bold text-slate-900 mb-3">Tạo dự án thiết kế mới</h3>
+            <form onSubmit={handleCreateProject} className="space-y-3.5 text-sm">
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Loại thiết kế:</label>
+                <label className="block font-semibold text-slate-700 mb-1">Loại dự án:</label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setNewProjectType('perspective_3d')}
                     className={`rounded-xl p-2.5 font-bold border text-center transition ${
                       newProjectType === 'perspective_3d'
-                        ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xs'
+                        ? 'border-[#1E3A8A] bg-blue-50 text-[#1E3A8A]'
                         : 'border-slate-200 text-slate-600'
                     }`}
                   >
-                    Phối cảnh 3D màn hình
+                    Phối cảnh 3D LED
                   </button>
                   <button
                     type="button"
                     onClick={() => setNewProjectType('banner')}
                     className={`rounded-xl p-2.5 font-bold border text-center transition ${
                       newProjectType === 'banner'
-                        ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xs'
+                        ? 'border-[#1E3A8A] bg-blue-50 text-[#1E3A8A]'
                         : 'border-slate-200 text-slate-600'
                     }`}
                   >
-                    Banner quảng cáo độc lập
+                    Banner khung LED
                   </button>
                 </div>
               </div>
@@ -1749,18 +2557,20 @@ export function AiDesignWorkspace() {
                   required
                   value={newProjectName}
                   onChange={(e) => setNewProjectName(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 p-2 text-xs"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Gắn Lead (Tùy chọn):</label>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Hồ sơ Lead liên kết (Tùy chọn):
+                </label>
                 <select
                   value={newLeadId}
                   onChange={(e) => setNewLeadId(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 p-2 text-xs"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                 >
-                  <option value="">-- Không gắn Lead (Tạo độc lập) --</option>
+                  <option value="">-- Không gắn Lead (Thiết kế độc lập) --</option>
                   {leadOptions.map((l) => (
                     <option key={l.id} value={l.id}>
                       {l.label}
@@ -1770,30 +2580,43 @@ export function AiDesignWorkspace() {
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Prompt mô tả ban đầu *:</label>
+                <label className="block font-semibold text-slate-700 mb-1">Người liên hệ:</label>
+                <input
+                  type="text"
+                  value={newContactName}
+                  onChange={(e) => setNewContactName(e.target.value)}
+                  placeholder="Tên khách hàng / đại diện dự án"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Mô tả yêu cầu dựng ban đầu *:
+                </label>
                 <textarea
                   rows={2}
                   required
                   value={newPrompt}
                   onChange={(e) => setNewPrompt(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 p-2 text-xs"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                 />
               </div>
 
-              <div className="flex justify-end space-x-2 pt-2">
+              <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowCreateModal(false)}
-                  className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
                 >
                   Hủy
                 </button>
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="rounded-lg bg-blue-600 px-5 py-2 text-xs font-semibold text-white hover:bg-blue-700 shadow"
+                  className="rounded-xl bg-[#1E3A8A] px-5 py-2 text-sm font-bold text-white hover:bg-[#2563EB] shadow-xs"
                 >
-                  {submitting ? 'Đang tạo...' : 'Tạo dự án'}
+                  {submitting ? 'Đang khởi tạo...' : 'Tạo dự án'}
                 </button>
               </div>
             </form>
@@ -1805,25 +2628,30 @@ export function AiDesignWorkspace() {
       {editingName && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
-            <h4 className="text-sm font-bold text-slate-800 mb-2">Đổi tên dự án</h4>
+            <h4 className="text-base font-bold text-slate-900 mb-2">Đổi tên dự án</h4>
             <input
               type="text"
               value={renameValue}
               onChange={(e) => setRenameValue(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 p-2.5 text-xs mb-3.5"
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm mb-4"
             />
-            <div className="flex justify-end space-x-2">
+            <div className="flex justify-end gap-2">
               <button
-                onClick={() => setEditingName(false)}
-                className="rounded-lg border border-slate-200 px-3.5 py-1.5 text-xs text-slate-600"
+                type="button"
+                onClick={() => {
+                  setEditingName(false);
+                  setRenameTargetId(null);
+                }}
+                className="rounded-xl border border-slate-200 px-4 py-1.5 text-sm font-semibold text-slate-600"
               >
                 Hủy
               </button>
               <button
+                type="button"
                 onClick={handleRenameProject}
-                className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white"
+                className="rounded-xl bg-[#1E3A8A] px-4 py-1.5 text-sm font-bold text-white"
               >
-                Lưu
+                Lưu tên mới
               </button>
             </div>
           </div>

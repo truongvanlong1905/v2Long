@@ -6,13 +6,16 @@ import {
   transitionLeadWithVersion,
 } from '@toantrung/database';
 import {
+  containsMonetaryAmountText,
   hasBaPermission,
-  toMonetaryAmountDto,
   type ContactChannel,
   type CreateManualLeadDto,
+  type CreatePrivateQuoteVersionDto,
   type LeadActivityDto,
   type LeadAttachmentDto,
+  type LeadDesignSummaryDto,
   type LeadItemDto,
+  type LeadQuoteVersionDto,
   type MarkLeadSpamDto,
   type PipelineStatus,
   type PriceCheckAlertDto,
@@ -67,6 +70,15 @@ export function buildNormalizedLookupKey(
 
 export function shouldAnonymizeLeadForRole(roleCode: SessionUserDto['roleCode']): boolean {
   return roleCode === 'MKT_STAFF' || roleCode === 'MKT_LEAD' || roleCode === 'ADS';
+}
+
+export function canViewPrivateQuoteFinancials(roleCode: SessionUserDto['roleCode']): boolean {
+  return (
+    roleCode === 'BOD' ||
+    roleCode === 'ADMIN' ||
+    roleCode === 'SALES_LEAD' ||
+    roleCode === 'SALES'
+  );
 }
 
 function maskPhone(phone: string): string {
@@ -261,11 +273,19 @@ export async function listLeadsForUser(
     status?: string;
     search?: string;
     includeSpam?: boolean;
+    overdueOnly?: boolean;
+    unreceivedOnly?: boolean;
+    page?: number;
+    pageSize?: number;
     limit?: number;
     cursorId?: number;
   },
 ): Promise<{
   leads: LeadItemDto[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
   products: ProductCatalogDto[];
   salesOptions: SalesAssigneeOptionDto[];
   priceCheckAlerts: PriceCheckAlertDto[];
@@ -292,6 +312,17 @@ export async function listLeadsForUser(
   if (!filters?.includeSpam) {
     whereClause.isSpam = false;
   }
+  if (filters?.overdueOnly) {
+    whereClause.pipelineStatus = 'quote_sent';
+    whereClause.quoteRespondedAt = null;
+    whereClause.firstQuoteSentAt = {
+      lte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+    };
+  }
+  if (filters?.unreceivedOnly) {
+    whereClause.pipelineStatus = 'new_lead';
+    whereClause.receivedAt = null;
+  }
   if (filters?.search && filters.search.trim()) {
     const q = filters.search.trim();
     whereClause.AND = [
@@ -306,13 +337,23 @@ export async function listLeadsForUser(
     ];
   }
 
-  const takeLimit = Math.min(Math.max(filters?.limit ?? 200, 1), 500);
+  const usePagePagination =
+    filters?.page !== undefined || filters?.pageSize !== undefined;
+  const pageSize = usePagePagination
+    ? Math.min(Math.max(filters?.pageSize ?? 50, 1), 500)
+    : Math.min(Math.max(filters?.limit ?? 500, 1), 1000);
+  const page = usePagePagination ? Math.max(filters?.page ?? 1, 1) : 1;
+  const skipCount = usePagePagination && !filters?.cursorId ? (page - 1) * pageSize : 0;
 
-  const [rows, { products, salesOptions }, alertRows] = await Promise.all([
+  const [rows, totalCount, { products, salesOptions }, alertRows] = await Promise.all([
     prisma.lead.findMany({
       where: whereClause,
-      ...(filters?.cursorId ? { cursor: { id: filters.cursorId }, skip: 1 } : {}),
-      take: takeLimit,
+      ...(filters?.cursorId
+        ? { cursor: { id: filters.cursorId }, skip: 1 }
+        : skipCount > 0
+          ? { skip: skipCount }
+          : {}),
+      take: pageSize,
       include: {
         assignedSales: { select: { id: true, fullName: true } },
         createdBy: { select: { id: true, fullName: true } },
@@ -332,11 +373,23 @@ export async function listLeadsForUser(
             toSales: { select: { fullName: true } },
           },
           orderBy: { createdAt: 'desc' },
-          take: 15,
+          take: 25,
+        },
+        designRequests: {
+          include: {
+            assignedDesigner: { select: { fullName: true } },
+            assetVersions: {
+              orderBy: { versionNumber: 'desc' },
+              take: 1,
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     }),
+    prisma.lead.count({ where: whereClause }),
     listProductsAndSalesOptions(user),
     prisma.priceCheckAlert.findMany({
       where: { status: 'active' },
@@ -384,9 +437,15 @@ export async function listLeadsForUser(
           ? 'WARN_STALE'
           : 'NORMAL';
 
+    const canSeePrivateQuote = canViewPrivateQuoteFinancials(user.roleCode) && !isAnonymized;
+
+    // Quy tắc không công khai giá: tệp "quote_doc" (hồ sơ báo giá) có thể chứa đơn giá/giá trị,
+    // nên KHÔNG trả về trong danh sách tệp đính kèm cho bất kỳ vai trò nào (kể cả Admin/BOD).
     const attachments: LeadAttachmentDto[] = isAnonymized
       ? []
-      : r.attachments.map((att) => ({
+      : r.attachments
+        .filter((att) => att.attachmentType !== 'quote_doc')
+        .map((att) => ({
           id: att.id,
           leadId: att.leadId,
           fileName: att.fileName,
@@ -396,6 +455,64 @@ export async function listLeadsForUser(
           uploadedByName: att.uploadedBy.fullName,
           createdAt: att.uploadedAt.toISOString(),
         }));
+
+    // Allowlist rõ ràng: chỉ trả về các trường tiến độ, tuyệt đối không có số tiền.
+    const quoteVersions: LeadQuoteVersionDto[] = [];
+    if (canSeePrivateQuote) {
+      for (const act of r.activities) {
+        if (act.actionType === 'quote_version' && act.newValueJson) {
+          try {
+            const parsed = JSON.parse(act.newValueJson) as {
+              quoteCode?: string;
+              versionNumber?: number;
+              scopeSummary?: string;
+              validUntilDate?: string | null;
+              bypassPriceCheckConfirmed?: boolean;
+            };
+            const rawScope = parsed.scopeSummary || 'Gửi báo giá theo phạm vi khảo sát';
+            quoteVersions.push({
+              id: act.id,
+              quoteCode: parsed.quoteCode || `BG-${r.leadCode}-V1`,
+              versionNumber: parsed.versionNumber || 1,
+              scopeSummary: containsMonetaryAmountText(rawScope)
+                ? '[Nội dung có số tiền đã được ẩn theo quy định không công khai giá]'
+                : rawScope,
+              validUntilDate: parsed.validUntilDate || null,
+              createdByName: act.actionBy?.fullName || 'Kinh doanh',
+              createdAt: act.createdAt.toISOString(),
+              bypassPriceCheckConfirmed: Boolean(parsed.bypassPriceCheckConfirmed),
+            });
+          } catch {
+            // ignore malformed JSON
+          }
+        }
+      }
+    }
+
+    const designRequests: LeadDesignSummaryDto[] = (r.designRequests || []).map((dr) => {
+      const latestVer = dr.assetVersions[0];
+      const approvedOrLatestId = dr.approvedVersionId || latestVer?.id || null;
+      return {
+        id: dr.id,
+        requestType: dr.requestType === 'banner' ? 'banner' : 'perspective_3d',
+        status:
+          dr.designStatus === 'completed'
+            ? 'completed'
+            : dr.designStatus === 'in_review'
+              ? 'in_review'
+              : dr.designStatus === 'ai_drafting' || dr.designStatus === 'ai_drafted'
+                ? 'ai_drafted'
+                : 'pending',
+        ledCategory: dr.ledCategory,
+        screenDimensions: dr.screenDimensions,
+        designerName: dr.assignedDesigner?.fullName || 'Phòng Thiết kế',
+        latestVersionNumber: latestVer?.versionNumber || 1,
+        previewImageUrl: approvedOrLatestId
+          ? `/api/v1/design/asset/${approvedOrLatestId}`
+          : '/brand/showroom-toan-trung.webp',
+        updatedAt: (dr.completedAt || dr.createdAt).toISOString(),
+      };
+    });
 
     const activities: LeadActivityDto[] = r.activities.map((act) => ({
       id: act.id,
@@ -408,7 +525,13 @@ export async function listLeadsForUser(
       fromSalesName: act.fromSales?.fullName || null,
       toSalesName: act.toSales?.fullName || null,
       reason: act.transferReason,
-      noteContent: isAnonymized ? '[Nội dung chi tiết ẩn danh theo UC01]' : act.note,
+      noteContent: isAnonymized
+        ? '[Nội dung chi tiết ẩn danh theo UC01]'
+        : act.actionType === 'quote_version' && !canSeePrivateQuote
+          ? '[Tiến độ gửi báo giá — chỉ Kinh doanh phụ trách và Quản lý xem chi tiết]'
+          : containsMonetaryAmountText(act.note)
+            ? '[Nội dung có số tiền đã được ẩn theo quy định không công khai giá]'
+            : act.note,
       createdAt: act.createdAt.toISOString(),
     }));
 
@@ -439,8 +562,6 @@ export async function listLeadsForUser(
       quoteSentAt: r.firstQuoteSentAt ? r.firstQuoteSentAt.toISOString() : null,
       quoteRespondedAt: r.quoteRespondedAt ? r.quoteRespondedAt.toISOString() : null,
       isQuoteOverdue7Days: isOverdue7Days,
-      quoteValue: isAnonymized ? null : toMonetaryAmountDto(r.quoteValueVnd, 'VND', 'unit'),
-      dealValue: isAnonymized ? null : toMonetaryAmountDto(r.dealValueVnd, 'VND', 'unit'),
       isDuplicateAlert: r.isDuplicateAlert,
       duplicateType,
       duplicateOfLeadId: r.matchedOldLeadId,
@@ -468,25 +589,27 @@ export async function listLeadsForUser(
       })),
       tracking: r.tracking
         ? {
-            marketingSource: r.tracking.marketingSource,
-            attributionMethod: r.tracking.sourceResolutionMethod,
-            utmSource: r.tracking.utmSource,
-            utmMedium: r.tracking.utmMedium,
-            utmCampaign: r.tracking.utmCampaign,
-            campaignCode: r.tracking.campaign?.campaignCode || null,
-            campaignName: r.tracking.campaignName || r.tracking.campaign?.campaignName || null,
-            gclid: r.tracking.gclid,
-            landingPageUrl: r.tracking.landingPageUrl,
-            deviceType: r.tracking.deviceType,
-            isUnmatchedUtm: r.tracking.isUnmatchedUtm,
-            isUnknownSource: r.tracking.isUnknownSource,
-            isUnknownCampaign: r.tracking.isUnknownCampaign,
-            utmGclidMismatch: r.tracking.isUtmGclidMismatch,
-          }
+          marketingSource: r.tracking.marketingSource,
+          attributionMethod: r.tracking.sourceResolutionMethod,
+          utmSource: r.tracking.utmSource,
+          utmMedium: r.tracking.utmMedium,
+          utmCampaign: r.tracking.utmCampaign,
+          campaignCode: r.tracking.campaign?.campaignCode || null,
+          campaignName: r.tracking.campaignName || r.tracking.campaign?.campaignName || null,
+          gclid: r.tracking.gclid,
+          landingPageUrl: r.tracking.landingPageUrl,
+          deviceType: r.tracking.deviceType,
+          isUnmatchedUtm: r.tracking.isUnmatchedUtm,
+          isUnknownSource: r.tracking.isUnknownSource,
+          isUnknownCampaign: r.tracking.isUnknownCampaign,
+          utmGclidMismatch: r.tracking.isUtmGclidMismatch,
+        }
         : null,
-      attachmentsCount: r.attachments.length,
+      attachmentsCount: attachments.length,
       attachments,
       activities,
+      quoteVersions,
+      designRequests,
     };
   });
 
@@ -507,7 +630,56 @@ export async function listLeadsForUser(
     createdAt: a.createdAt.toISOString(),
   }));
 
-  return { leads, products, salesOptions, priceCheckAlerts };
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+
+  return {
+    leads,
+    totalCount,
+    page,
+    pageSize,
+    totalPages,
+    products,
+    salesOptions,
+    priceCheckAlerts,
+  };
+}
+
+/**
+ * Bounded batch iterator for exporting 100% of matching authorized Leads (DATA-02).
+ * Fetches in bounded pages of 100 records per query so records > 200 (e.g. 212 Leads)
+ * are never silently omitted while keeping memory and query size bounded.
+ */
+export async function exportAllLeadsForUser(
+  user: SessionUserDto,
+  filters?: {
+    status?: string;
+    search?: string;
+    includeSpam?: boolean;
+    overdueOnly?: boolean;
+    unreceivedOnly?: boolean;
+  },
+): Promise<{ leads: LeadItemDto[]; totalCount: number }> {
+  const BATCH_SIZE = 100;
+  const MAX_BATCHES = 50; // up to 5,000 records in bounded chunks
+  const allLeads: LeadItemDto[] = [];
+  let currentPage = 1;
+  let totalCount = 0;
+
+  while (currentPage <= MAX_BATCHES) {
+    const batch = await listLeadsForUser(user, {
+      ...filters,
+      page: currentPage,
+      pageSize: BATCH_SIZE,
+    });
+    totalCount = batch.totalCount;
+    allLeads.push(...batch.leads);
+    if (batch.leads.length < BATCH_SIZE || allLeads.length >= batch.totalCount) {
+      break;
+    }
+    currentPage += 1;
+  }
+
+  return { leads: allLeads, totalCount };
 }
 
 export async function createManualLead(actor: SessionUserDto, input: CreateManualLeadDto) {
@@ -767,6 +939,17 @@ export async function transitionLeadPipeline(
     throw new Error('Bắt buộc chọn hoặc nhập lý do khi chuyển trạng thái sang "Thất bại" (UC02 5.1).');
   }
 
+  // Chốt chặn chống lộ giá cho đối thủ khảo giá (Anti-Price-Check Gate)
+  if (
+    existing.isSuspectedPriceCheck &&
+    input.toStatus === 'quote_sent' &&
+    !input.bypassPriceCheckConfirmed
+  ) {
+    throw new Error(
+      'Hồ sơ này đang gắn cờ "Nghi đối thủ dò giá (E5)". Theo quy định bảo mật giá B2B Toàn Trung, bắt buộc xác nhận đã thẩm tra thực tế địa chỉ công trình / được Quản lý duyệt trước khi chuyển sang "Đã gửi báo giá".',
+    );
+  }
+
   const isClosed = existing.pipelineStatus === 'won' || existing.pipelineStatus === 'lost';
   const isReopening = isClosed && input.toStatus !== existing.pipelineStatus;
   if (isReopening) {
@@ -779,23 +962,14 @@ export async function transitionLeadPipeline(
   }
 
   const now = new Date();
-  const quoteValueVnd =
-    input.quoteValueVndString !== undefined
-      ? parseBigIntString(input.quoteValueVndString)
-      : existing.quoteValueVnd;
-  const dealValueVnd =
-    input.dealValueVndString !== undefined
-      ? parseBigIntString(input.dealValueVndString)
-      : existing.dealValueVnd;
 
+  // Không ghi quoteValueVnd/dealValueVnd: quy tắc không công khai giá. Giá trị cũ trong DB được giữ nguyên.
   return transitionLeadWithVersion(prisma, {
     leadId,
     expectedVersion: input.expectedVersion,
     patch: {
       pipelineStatus: input.toStatus,
       lostReason: input.toStatus === 'lost' ? input.reason?.trim() || null : existing.lostReason,
-      quoteValueVnd,
-      dealValueVnd,
       firstQuoteSentAt:
         input.toStatus === 'quote_sent' && !existing.firstQuoteSentAt
           ? now
@@ -939,9 +1113,82 @@ export async function markLeadSpam(
       transferReason: input.spamReason,
       actionById: actor.id,
       actorType: 'user',
-      note: `Đánh dấu Spam (${input.spamReason}) · Trạng thái loại trừ Ads: ${
-        isAutoExcludedReason ? 'Tự động loại khỏi L2 & L3' : 'Chờ xác nhận (loại khỏi L2, giữ ở L3)'
-      }${input.noteContent ? ` · ${input.noteContent}` : ''}`,
+      note: `Đánh dấu Spam (${input.spamReason}) · Trạng thái loại trừ Ads: ${isAutoExcludedReason ? 'Tự động loại khỏi L2 & L3' : 'Chờ xác nhận (loại khỏi L2, giữ ở L3)'
+        }${input.noteContent ? ` · ${input.noteContent}` : ''}`,
+    },
+  });
+}
+
+export async function createPrivateQuoteVersion(
+  actor: SessionUserDto,
+  leadId: number,
+  input: CreatePrivateQuoteVersionDto,
+) {
+  if (!canViewPrivateQuoteFinancials(actor.roleCode)) {
+    throw new Error('Chỉ Ban Giám đốc, Quản lý và Kinh doanh được phép ghi nhận tiến độ gửi báo giá.');
+  }
+  if (containsMonetaryAmountText(input.scopeSummary)) {
+    throw new Error(
+      'Không nhập số tiền, đơn giá hay giá trị báo giá vào hệ thống. Chỉ ghi phạm vi kỹ thuật và tiến độ.',
+    );
+  }
+
+  const existing = await prisma.lead.findUnique({
+    where: { id: leadId },
+    include: {
+      activities: {
+        where: { actionType: 'quote_version' },
+        select: { id: true },
+      },
+    },
+  });
+  if (!existing) throw new Error('Không tìm thấy hồ sơ Lead.');
+  assertLeadMutationScope(actor, existing);
+
+  if (existing.isSuspectedPriceCheck && !input.bypassPriceCheckConfirmed) {
+    throw new Error(
+      'Hồ sơ này đang gắn cờ "Nghi đối thủ dò giá (E5)". Vui lòng tick xác nhận đã thẩm tra thực tế công trình / được Trưởng phòng duyệt trước khi gửi báo giá.',
+    );
+  }
+
+  const versionNumber = existing.activities.length + 1;
+  const quoteCode = `BG-${existing.leadCode}-V${versionNumber}`;
+
+  const now = new Date();
+  const nextStatus =
+    input.transitionToQuoteSent && existing.pipelineStatus !== 'won'
+      ? 'quote_sent'
+      : existing.pipelineStatus === 'new_lead'
+        ? 'quoting'
+        : existing.pipelineStatus;
+
+  // Payload chỉ chứa thông tin tiến độ — không có số tiền.
+  const payloadJson = JSON.stringify({
+    quoteCode,
+    versionNumber,
+    scopeSummary: input.scopeSummary.trim(),
+    validUntilDate: input.validUntilDate || null,
+    bypassPriceCheckConfirmed: Boolean(input.bypassPriceCheckConfirmed),
+  });
+
+  return transitionLeadWithVersion(prisma, {
+    leadId,
+    expectedVersion: input.expectedVersion,
+    patch: {
+      pipelineStatus: nextStatus,
+      firstQuoteSentAt:
+        nextStatus === 'quote_sent' && !existing.firstQuoteSentAt
+          ? now
+          : existing.firstQuoteSentAt,
+    },
+    activity: {
+      actionType: 'quote_version',
+      oldStatus: existing.pipelineStatus,
+      newStatus: nextStatus,
+      newValueJson: payloadJson,
+      actionById: actor.id,
+      actorType: 'user',
+      note: `Ghi nhận báo giá ${quoteCode} (Lần ${versionNumber}): ${input.scopeSummary.trim()}`,
     },
   });
 }
@@ -949,7 +1196,7 @@ export async function markLeadSpam(
 export async function uploadLeadAttachment(params: {
   actor: SessionUserDto;
   leadId: number;
-  attachmentType: 'site_photo' | 'customer_drawing_doc';
+  attachmentType: 'site_photo' | 'customer_drawing_doc' | 'quote_doc';
   folderPath?: string | null;
   fileName: string;
   fileBuffer: Buffer;
@@ -965,14 +1212,17 @@ export async function uploadLeadAttachment(params: {
     fileBuffer: params.fileBuffer,
     declaredMimeType: params.declaredMimeType,
     originalFileName: params.fileName,
-    allowPdfOrDoc: params.attachmentType === 'customer_drawing_doc',
+    allowPdfOrDoc:
+      params.attachmentType === 'customer_drawing_doc' || params.attachmentType === 'quote_doc',
   });
 
   const attachment = await prisma.leadAttachment.create({
     data: {
       leadId: params.leadId,
       attachmentType: params.attachmentType,
-      folderPath: params.folderPath || '/ho-so-cong-trinh',
+      folderPath:
+        params.folderPath ||
+        (params.attachmentType === 'quote_doc' ? '/ho-so-bao-gia-kin' : '/ho-so-cong-trinh'),
       fileName: params.fileName,
       fileUrl: saved.storageObjectKey,
       fileSizeKb: Math.max(1, Math.round(saved.fileSizeBytes / 1024)),
@@ -1093,6 +1343,8 @@ export async function notifyLeadSalesOnDesignCompleted(params: {
   versionNumber: number;
   actor: SessionUserDto;
   note?: string;
+  storageObjectKey?: string;
+  fileSizeBytes?: number | null;
 }) {
   const lead = await prisma.lead.findUnique({
     where: { id: params.leadId },
@@ -1107,6 +1359,28 @@ export async function notifyLeadSalesOnDesignCompleted(params: {
   });
   if (!lead) return;
 
+  if (params.storageObjectKey) {
+    const existingAtt = await prisma.leadAttachment.findFirst({
+      where: {
+        leadId: lead.id,
+        fileUrl: params.storageObjectKey,
+      },
+    });
+    if (!existingAtt) {
+      await prisma.leadAttachment.create({
+        data: {
+          leadId: lead.id,
+          attachmentType: 'site_photo',
+          folderPath: '/phoi-canh-3d-ai',
+          fileName: `Phoi-canh-3D-${lead.leadCode}-Req${params.designRequestId}-v${params.versionNumber}.png`,
+          fileUrl: params.storageObjectKey,
+          fileSizeKb: Math.max(1, Math.round((params.fileSizeBytes || 204800) / 1024)),
+          uploadedById: params.actor.id,
+        },
+      });
+    }
+  }
+
   await prisma.leadActivity.create({
     data: {
       leadId: lead.id,
@@ -1115,7 +1389,7 @@ export async function notifyLeadSalesOnDesignCompleted(params: {
       actorType: 'user',
       note:
         params.note ||
-        `Designer ${params.actor.fullName} đã hoàn thiện và phê duyệt bản phối cảnh 3D v${params.versionNumber} (Yêu cầu #${params.designRequestId}).`,
+        `Designer ${params.actor.fullName} đã hoàn thiện và đính kèm tự động bản phối cảnh 3D v${params.versionNumber} (Yêu cầu #${params.designRequestId}) vào hồ sơ Lead.`,
     },
   });
 

@@ -250,7 +250,7 @@ export function SeoKeywordsWorkspace() {
         },
       });
       setFeedbackMsg(
-        `Đã rút quyết định phê duyệt (UC05 A1). Bài viết #${selectedArticle.id} đã chuyển về trạng thái Nháp.`,
+        `Đã rút quyết định phê duyệt. Bài viết #${selectedArticle.id} đã chuyển về trạng thái Nháp.`,
       );
       await fetchSeoData();
     } catch (err) {
@@ -298,63 +298,63 @@ export function SeoKeywordsWorkspace() {
   );
 
   return (
-    <div className="space-y-6 text-xs">
-      {/* 1. Header (Reference Pack: Breadcrumbs M03 / QUẢNG CÁO + Title + Export) */}
+    <div className="space-y-6 text-sm">
+      {/* 1. Header */}
       <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-card flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 text-[11px] font-bold text-brand uppercase tracking-wider mb-1">
-            <span>M03 / QUẢNG CÁO</span>
-            <ChevronRight className="w-3 h-3 text-slate-400" />
+          <div className="flex items-center gap-2 text-xs font-bold text-brand uppercase tracking-wider mb-1">
+            <span>QUẢNG CÁO & SEO</span>
+            <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
             <span className="text-slate-600">Hiệu suất Chiến dịch & Từ khóa SEO</span>
           </div>
           <h1 className="font-display text-2xl font-bold text-ink">
             Quảng cáo & từ khóa
           </h1>
-          <p className="text-slate-500 text-xs mt-1">
+          <p className="text-slate-500 text-sm mt-1">
             Theo dõi hiệu suất chiến dịch Google Ads, phân tích nhu cầu tìm kiếm và quản lý nội dung SEO
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-brand text-[11px] font-bold">
-            <span className="w-2 h-2 rounded-full bg-brand animate-pulse" />
-            <span>CANONICAL D3 · CHUẨN XÁC</span>
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-brand text-xs font-bold">
+            <span className="w-2 h-2 rounded-full bg-brand" />
+            <span>Dữ liệu đồng bộ định kỳ</span>
           </span>
 
           <button
             type="button"
             onClick={handleExportData}
-            className="h-9 px-3.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold inline-flex items-center gap-1.5 transition-colors shadow-xs"
+            className="h-9 px-3.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-sm font-semibold inline-flex items-center gap-1.5 transition-colors shadow-xs"
             title="Xuất danh sách Từ khóa SEO và Chiến dịch Ads ra file Excel chuẩn OpenXML"
           >
-            <Download className="w-3.5 h-3.5 text-slate-600" />
+            <Download className="w-4 h-4 text-slate-600" />
             <span>Xuất Excel (.xlsx)</span>
           </button>
 
           <button
             type="button"
             onClick={() => void fetchSeoData()}
-            className="h-9 px-3.5 rounded-xl bg-brand hover:bg-brand-deep text-white font-bold inline-flex items-center gap-1.5 transition-colors shadow-sm"
+            className="h-9 px-3.5 rounded-xl bg-brand hover:bg-brand-deep text-white text-sm font-bold inline-flex items-center gap-1.5 transition-colors shadow-sm"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             <span>Làm mới</span>
           </button>
         </div>
       </div>
 
-      {/* UC05 A4 Notice when logged in as ADS */}
+      {/* Role Notice when logged in as ADS */}
       {isAdsReadOnly && (
-        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3">
+        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-sm text-amber-900 flex items-start gap-3">
           <Lock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <div>
-            <strong>Giới hạn phân quyền Nhân viên Ads (UC05 Luồng phụ A4):</strong> Tài khoản{' '}
-            <strong>{user?.fullName}</strong> (Vai trò: {user?.roleName}) chỉ được tra cứu số liệu chiến dịch, bảng từ khóa và xu hướng tìm kiếm để phối hợp cùng Marketing. Các chức năng &ldquo;Tạo bài viết AI&rdquo;, &ldquo;Sửa bài&rdquo;, &ldquo;Duyệt bài&rdquo;, &ldquo;Lên lịch&rdquo; và &ldquo;Xem hiệu quả bài viết&rdquo; chỉ dành cho Nhân viên / Trưởng phòng Marketing.
+            <strong>Phân quyền Chuyên viên Quảng cáo (Ads):</strong> Tài khoản{' '}
+            <strong>{user?.fullName}</strong> (Vai trò: {user?.roleName}) được tra cứu số liệu chiến dịch, bảng từ khóa và xu hướng tìm kiếm để phối hợp cùng Marketing. Các chức năng &ldquo;Tạo bài viết AI&rdquo;, &ldquo;Sửa bài&rdquo;, &ldquo;Duyệt bài&rdquo;, &ldquo;Lên lịch&rdquo; và &ldquo;Xem hiệu quả bài viết&rdquo; dành cho Nhân viên / Trưởng phòng Marketing.
           </div>
         </div>
       )}
 
       {errorMsg && (
-        <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-700 flex items-center justify-between">
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700 flex items-center justify-between">
           <span>{errorMsg}</span>
           <button type="button" onClick={() => setErrorMsg(null)} className="font-bold hover:underline">
             Đóng
@@ -363,7 +363,7 @@ export function SeoKeywordsWorkspace() {
       )}
 
       {feedbackMsg && (
-        <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center justify-between">
+        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-800 flex items-center justify-between">
           <span>{feedbackMsg}</span>
           <button type="button" onClick={() => setFeedbackMsg(null)} className="font-bold hover:underline">
             Đóng
@@ -371,12 +371,12 @@ export function SeoKeywordsWorkspace() {
         </div>
       )}
 
-      {/* 2. 4 Semantic KPI Cards (Visual Reference Layout) */}
+      {/* 2. 4 Semantic KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* KPI 1: Lượt hiển thị */}
         <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-card hover:border-blue-300 transition-colors">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold tracking-wider text-slate-500 uppercase">
+            <span className="text-xs font-bold tracking-wider text-slate-500 uppercase">
               LƯỢT HIỂN THỊ
             </span>
             <div className="w-8 h-8 rounded-lg bg-blue-50 text-brand grid place-items-center">
@@ -388,18 +388,15 @@ export function SeoKeywordsWorkspace() {
               {kpis?.totalImpressions ? kpis.totalImpressions.toLocaleString('vi-VN') : '0'}
             </span>
           </div>
-          <p className="mt-2 text-[11px] text-slate-500 flex items-center gap-1">
-            <span className="text-emerald-600 font-semibold inline-flex items-center">
-              <ArrowUpRight className="w-3 h-3" /> Tăng 12%
-            </span>
-            <span>so với chu kỳ trước</span>
+          <p className="mt-2 text-xs text-slate-500">
+            Tổng lượt hiển thị chiến dịch trong kỳ
           </p>
         </div>
 
         {/* KPI 2: Lượt nhấp */}
         <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-card hover:border-blue-300 transition-colors">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold tracking-wider text-slate-500 uppercase">
+            <span className="text-xs font-bold tracking-wider text-slate-500 uppercase">
               LƯỢT NHẤP
             </span>
             <div className="w-8 h-8 rounded-lg bg-sky-50 text-sky-600 grid place-items-center">
@@ -411,7 +408,7 @@ export function SeoKeywordsWorkspace() {
               {kpis?.totalClicks ? kpis.totalClicks.toLocaleString('vi-VN') : '0'}
             </span>
           </div>
-          <p className="mt-2 text-[11px] text-slate-500 flex items-center gap-1">
+          <p className="mt-2 text-xs text-slate-500 flex items-center gap-1">
             <span>Tỷ lệ CTR trung bình:</span>
             <strong className="text-brand font-bold">{kpis?.avgCtrPct || '0%'}</strong>
           </p>
@@ -420,7 +417,7 @@ export function SeoKeywordsWorkspace() {
         {/* KPI 3: Chi phí quảng cáo */}
         <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-card hover:border-amber-300 transition-colors">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold tracking-wider text-slate-500 uppercase">
+            <span className="text-xs font-bold tracking-wider text-slate-500 uppercase">
               CHI PHÍ QUẢNG CÁO
             </span>
             <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 grid place-items-center">
@@ -432,7 +429,7 @@ export function SeoKeywordsWorkspace() {
               {kpis?.totalSpendVndText || '0 VND'}
             </span>
           </div>
-          <p className="mt-2 text-[11px] text-slate-500">
+          <p className="mt-2 text-xs text-slate-500">
             Tổng ngân sách ghi nhận từ Google & Facebook
           </p>
         </div>
@@ -440,7 +437,7 @@ export function SeoKeywordsWorkspace() {
         {/* KPI 4: Hiệu quả chiến dịch */}
         <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-card hover:border-emerald-300 transition-colors">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold tracking-wider text-slate-500 uppercase">
+            <span className="text-xs font-bold tracking-wider text-slate-500 uppercase">
               HIỆU QUẢ CHIẾN DỊCH
             </span>
             <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 grid place-items-center">
@@ -452,7 +449,7 @@ export function SeoKeywordsWorkspace() {
               {kpis?.avgCtrPct || '0.00%'} CTR
             </span>
           </div>
-          <p className="mt-2 text-[11px] text-slate-500 flex items-center gap-1">
+          <p className="mt-2 text-xs text-slate-500 flex items-center gap-1">
             <span>CPL:</span>
             <strong className="text-ink font-semibold">{kpis?.cplVndText || 'Chưa phát sinh'}</strong>
             <span>/ Lead</span>
@@ -460,30 +457,30 @@ export function SeoKeywordsWorkspace() {
         </div>
       </div>
 
-      {/* 3. Middle 2-Column Row (Visual Reference: Campaign Performance Chart vs Keyword Search Demand) */}
+      {/* 3. Middle 2-Column Row (Campaign Performance Chart vs Keyword Search Demand) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Left Column: Hiệu suất chiến dịch (Bar chart with Clicks & Conversions) */}
         <div className="lg:col-span-7 bg-white border border-slate-200/90 rounded-2xl p-5 shadow-card flex flex-col justify-between">
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
               <div>
-                <h2 className="font-display text-sm font-bold text-ink flex items-center gap-1.5">
+                <h2 className="font-display text-base font-bold text-ink flex items-center gap-1.5">
                   <BarChart3 className="w-4 h-4 text-brand" />
                   <span>Hiệu suất chiến dịch</span>
                 </h2>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Dữ liệu đồng bộ trực tiếp từ Google Ads (Kho D3 platform_daily_metrics)
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Dữ liệu đồng bộ định kỳ từ tài khoản quảng cáo
                 </p>
               </div>
 
-              <div className="flex items-center gap-3 text-[11px]">
+              <div className="flex items-center gap-3 text-xs">
                 <span className="flex items-center gap-1.5">
                   <span className="w-2.5 h-2.5 rounded-sm bg-blue-600" />
                   <span className="text-slate-600 font-medium">Lượt nhấp (Clicks)</span>
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="w-2.5 h-2.5 rounded-sm bg-sky-400" />
-                  <span className="text-slate-600 font-medium">Chuyển đổi (Leads)</span>
+                  <span className="text-slate-600 font-medium">Chuyển đổi nền tảng</span>
                 </span>
               </div>
             </div>
@@ -492,7 +489,7 @@ export function SeoKeywordsWorkspace() {
             <div className="pt-6 pb-2">
               <div className="h-52 flex items-end justify-between gap-3 px-2">
                 {performanceChart.length === 0 ? (
-                  <div className="w-full h-full grid place-items-center text-slate-400">
+                  <div className="w-full h-full grid place-items-center text-sm text-slate-400">
                     Chưa có đủ chu kỳ dữ liệu để vẽ biểu đồ
                   </div>
                 ) : (
@@ -502,15 +499,15 @@ export function SeoKeywordsWorkspace() {
 
                     return (
                       <div key={idx} className="flex-1 flex flex-col items-center gap-1 group">
-                        <div className="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity font-mono">
-                          {p.clicks} clicks / {p.conversions} leads
+                        <div className="text-xs text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity font-mono">
+                          {p.clicks} clicks / {p.conversions} conv
                         </div>
                         <div className="w-full flex items-end justify-center gap-1.5 h-44">
                           <div
                             style={{ height: `${clickHeight}px` }}
                             className="w-1/2 max-w-[28px] rounded-t-md bg-blue-600 hover:bg-blue-700 transition-all cursor-pointer relative group/bar"
                           >
-                            <span className="absolute -top-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-slate-800 text-white text-[9px] font-mono opacity-0 group-hover/bar:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                            <span className="absolute -top-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-slate-800 text-white text-xs font-mono opacity-0 group-hover/bar:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
                               {p.clicks}
                             </span>
                           </div>
@@ -518,12 +515,12 @@ export function SeoKeywordsWorkspace() {
                             style={{ height: `${convHeight}px` }}
                             className="w-1/2 max-w-[28px] rounded-t-md bg-sky-400 hover:bg-sky-500 transition-all cursor-pointer relative group/bar"
                           >
-                            <span className="absolute -top-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-slate-800 text-white text-[9px] font-mono opacity-0 group-hover/bar:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                            <span className="absolute -top-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-slate-800 text-white text-xs font-mono opacity-0 group-hover/bar:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
                               {p.conversions}
                             </span>
                           </div>
                         </div>
-                        <span className="text-[11px] font-medium text-slate-600 mt-2 truncate max-w-full text-center">
+                        <span className="text-xs font-medium text-slate-600 mt-2 truncate max-w-full text-center">
                           {p.label}
                         </span>
                       </div>
@@ -534,9 +531,9 @@ export function SeoKeywordsWorkspace() {
             </div>
           </div>
 
-          <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
             <span>Chiến dịch chủ lực: Màn hình LED Hội trường & Ngoài trời</span>
-            <span className="font-semibold text-brand">Tổng chuyển đổi: {kpis?.totalConversions || 0} hồ sơ Lead</span>
+            <span className="font-semibold text-brand">Chuyển đổi nền tảng báo: {kpis?.totalConversions || 0} lượt</span>
           </div>
         </div>
 
@@ -545,22 +542,22 @@ export function SeoKeywordsWorkspace() {
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div>
-                <h2 className="font-display text-sm font-bold text-ink flex items-center gap-1.5">
+                <h2 className="font-display text-base font-bold text-ink flex items-center gap-1.5">
                   <TrendingUp className="w-4 h-4 text-emerald-600" />
                   <span>Từ khóa & nội dung SEO</span>
                 </h2>
-                <p className="text-[11px] text-slate-500 mt-0.5">
+                <p className="text-xs text-slate-500 mt-0.5">
                   Khu vực phân tích nhu cầu tìm kiếm khách hàng tiềm năng B2B
                 </p>
               </div>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
                 GSC & Ads
               </span>
             </div>
 
             <div className="pt-4 space-y-4">
               {demandBars.length === 0 ? (
-                <div className="py-10 text-center text-slate-400">
+                <div className="py-10 text-center text-sm text-slate-400">
                   Chưa có dữ liệu từ khóa mục tiêu
                 </div>
               ) : (
@@ -568,20 +565,20 @@ export function SeoKeywordsWorkspace() {
                   <div key={bar.id} className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-ink text-xs">{bar.keywordText}</span>
+                        <span className="font-bold text-ink text-sm">{bar.keywordText}</span>
                         {bar.trendDirection === 'UP' ? (
-                          <span className="text-[10px] text-emerald-600 font-bold inline-flex items-center">
-                            <TrendingUp className="w-3 h-3" />
+                          <span className="text-xs text-emerald-600 font-bold inline-flex items-center">
+                            <TrendingUp className="w-3.5 h-3.5" />
                           </span>
                         ) : bar.trendDirection === 'DOWN' ? (
-                          <span className="text-[10px] text-rose-500 font-bold inline-flex items-center">
-                            <TrendingDown className="w-3 h-3" />
+                          <span className="text-xs text-rose-500 font-bold inline-flex items-center">
+                            <TrendingDown className="w-3.5 h-3.5" />
                           </span>
                         ) : (
-                          <span className="text-[10px] text-slate-400 font-bold">→</span>
+                          <span className="text-xs text-slate-400 font-bold">→</span>
                         )}
                       </div>
-                      <span className="text-[11px] font-mono text-slate-600 font-semibold">
+                      <span className="text-xs font-mono text-slate-600 font-semibold">
                         {bar.searchVolume.toLocaleString('vi-VN')} lượt
                       </span>
                     </div>
@@ -598,7 +595,7 @@ export function SeoKeywordsWorkspace() {
             </div>
           </div>
 
-          <div className="pt-3 border-t border-slate-100 mt-4 flex items-center justify-between text-[11px] text-slate-500">
+          <div className="pt-3 border-t border-slate-100 mt-4 flex items-center justify-between text-xs text-slate-500">
             <span>Dữ liệu tìm kiếm trung bình 30 ngày qua</span>
             <button
               type="button"
@@ -617,7 +614,7 @@ export function SeoKeywordsWorkspace() {
           <button
             type="button"
             onClick={() => setActiveBottomTab('campaigns')}
-            className={`px-4 py-2.5 font-bold text-xs border-b-2 transition-all inline-flex items-center gap-2 ${
+            className={`px-4 py-2.5 font-bold text-sm border-b-2 transition-all inline-flex items-center gap-2 ${
               activeBottomTab === 'campaigns'
                 ? 'border-brand text-brand bg-brand-soft/30 rounded-t-xl'
                 : 'border-transparent text-slate-500 hover:text-ink'
@@ -630,7 +627,7 @@ export function SeoKeywordsWorkspace() {
           <button
             type="button"
             onClick={() => setActiveBottomTab('seo')}
-            className={`px-4 py-2.5 font-bold text-xs border-b-2 transition-all inline-flex items-center gap-2 ${
+            className={`px-4 py-2.5 font-bold text-sm border-b-2 transition-all inline-flex items-center gap-2 ${
               activeBottomTab === 'seo'
                 ? 'border-brand text-brand bg-brand-soft/30 rounded-t-xl'
                 : 'border-transparent text-slate-500 hover:text-ink'
@@ -641,25 +638,25 @@ export function SeoKeywordsWorkspace() {
           </button>
         </div>
 
-        {/* TAB 1: Danh sách chiến dịch (Visual Reference Bottom Table) */}
+        {/* TAB 1: Danh sách chiến dịch */}
         {activeBottomTab === 'campaigns' && (
           <div className="bg-white border border-slate-200/90 rounded-2xl overflow-hidden shadow-card">
             <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h2 className="font-display text-sm font-bold text-ink">
+                <h2 className="font-display text-base font-bold text-ink">
                   Danh sách chiến dịch quảng cáo trực tuyến
                 </h2>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Ghi nhận từ Google Ads & Facebook Ads liên kết nguồn Lead (M01 & M02)
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Ghi nhận từ Google Ads & Facebook Ads liên kết nguồn tiếp nhận Lead
                 </p>
               </div>
-              <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 font-mono text-[11px]">
+              <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-mono text-xs">
                 {campaigns.length} chiến dịch đang kích hoạt
               </span>
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
+              <table className="w-full text-left border-collapse text-sm">
                 <thead>
                   <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
                     <th className="py-3 px-4 font-bold">Mã chiến dịch</th>
@@ -693,7 +690,7 @@ export function SeoKeywordsWorkspace() {
                         </td>
                         <td className="py-3 px-4">
                           <span
-                            className={`px-2 py-0.5 rounded font-medium text-[10px] ${
+                            className={`px-2.5 py-0.5 rounded font-medium text-xs ${
                               camp.platform === 'Google Ads'
                                 ? 'bg-blue-50 text-blue-700 border border-blue-200'
                                 : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
@@ -704,7 +701,7 @@ export function SeoKeywordsWorkspace() {
                         </td>
                         <td className="py-3 px-4 text-center">
                           <span
-                            className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${
+                            className={`px-2.5 py-0.5 rounded-full font-bold text-xs ${
                               camp.isActive
                                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                 : 'bg-slate-100 text-slate-600'
@@ -746,17 +743,17 @@ export function SeoKeywordsWorkspace() {
         {/* TAB 2: Quản lý từ khóa & Soạn thảo SEO (AI Assistant) */}
         {activeBottomTab === 'seo' && (
           <div className="space-y-6">
-            {/* 1. Bảng Từ khóa & Xu hướng tìm kiếm (Derived Cache) */}
+            {/* 1. Bảng Từ khóa & Xu hướng tìm kiếm */}
             <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-card space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4 text-brand" />
-                  <h2 className="font-display text-sm font-bold text-ink">
-                    Bảng Phân tích Từ khóa & Xu hướng Tìm kiếm (Derived Cache từ PlatformDailyMetric)
+                  <TrendingUp className="w-5 h-5 text-brand" />
+                  <h2 className="font-display text-base font-bold text-ink">
+                    Bảng Phân tích Từ khóa & Xu hướng Tìm kiếm
                   </h2>
                 </div>
                 {keywords[0] && (
-                  <span className="text-[11px] text-slate-500">
+                  <span className="text-xs text-slate-500">
                     Nguồn: <code className="font-mono">{keywords[0].cacheSourceAccountKey}</code> · Kỳ:{' '}
                     {keywords[0].cacheWindowStartDate} &rarr; {keywords[0].cacheWindowEndDate}
                   </span>
@@ -764,16 +761,16 @@ export function SeoKeywordsWorkspace() {
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
+                <table className="w-full text-sm text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <th className="py-2.5 px-3 font-bold">Từ khóa mục tiêu</th>
-                      <th className="py-2.5 px-3 font-bold">Volume (Cache)</th>
+                      <th className="py-2.5 px-3 font-bold">Volume tìm kiếm</th>
                       <th className="py-2.5 px-3 font-bold">Click Google Ads</th>
                       <th className="py-2.5 px-3 font-bold">Click Organic (GSC)</th>
                       <th className="py-2.5 px-3 font-bold">Vị trí TB</th>
                       <th className="py-2.5 px-3 font-bold">Xu hướng</th>
-                      <th className="py-2.5 px-3 font-bold">Khung giờ đăng gợi ý (UC05 B5)</th>
+                      <th className="py-2.5 px-3 font-bold">Khung giờ đăng gợi ý</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -792,7 +789,7 @@ export function SeoKeywordsWorkspace() {
                         </td>
                         <td className="py-2.5 px-3">
                           <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
                               kw.trendDirection === 'UP'
                                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                 : 'bg-slate-100 text-slate-600'
@@ -819,12 +816,12 @@ export function SeoKeywordsWorkspace() {
                     value={newKeywordText}
                     onChange={(e) => setNewKeywordText(e.target.value)}
                     placeholder="Thêm từ khóa mục tiêu mới (VD: màn hình led p3 ngoài trời)..."
-                    className="flex-1 h-9 px-3 rounded-xl border border-slate-200"
+                    className="flex-1 h-9 px-3 rounded-xl border border-slate-200 text-sm"
                   />
                   <select
                     value={newKeywordWebsite}
                     onChange={(e) => setNewKeywordWebsite(e.target.value as TargetWebsite)}
-                    className="h-9 px-3 rounded-xl border border-slate-200"
+                    className="h-9 px-3 rounded-xl border border-slate-200 text-sm"
                   >
                     {TARGET_WEBSITES.map((w) => (
                       <option key={w} value={w}>
@@ -835,16 +832,16 @@ export function SeoKeywordsWorkspace() {
                   <button
                     type="submit"
                     disabled={busy}
-                    className="h-9 px-4 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold inline-flex items-center gap-1.5"
+                    className="h-9 px-4 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold inline-flex items-center gap-1.5"
                   >
-                    <Plus className="w-3.5 h-3.5" />
+                    <Plus className="w-4 h-4" />
                     <span>Thêm từ khóa</span>
                   </button>
                 </form>
               )}
             </div>
 
-            {/* Phân hệ Soạn thảo & Duyệt bài (Chỉ Marketing/Admin theo UC05 A4) */}
+            {/* Phân hệ Soạn thảo & Duyệt bài */}
             {!isAdsReadOnly && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
                 {/* Left 5 cols: AI Draft Composer + Article List */}
@@ -854,20 +851,20 @@ export function SeoKeywordsWorkspace() {
                     className="bg-white border border-blue-200 rounded-2xl p-5 shadow-card space-y-3"
                   >
                     <div className="flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-brand" />
-                      <h2 className="font-display text-sm font-bold text-ink">
-                        Soạn Bản nháp Bài viết Chuẩn SEO bằng AI (UC05 Bước 2-3)
+                      <Sparkles className="w-5 h-5 text-brand" />
+                      <h2 className="font-display text-base font-bold text-ink">
+                        Soạn Bản nháp Bài viết Chuẩn SEO bằng AI
                       </h2>
                     </div>
 
                     <div>
-                      <label className="block font-semibold text-slate-700 mb-1">
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">
                         Chọn từ khóa mục tiêu *
                       </label>
                       <select
                         value={selectedKeywordId}
                         onChange={(e) => setSelectedKeywordId(Number(e.target.value))}
-                        className="w-full h-9 px-3 rounded-xl border border-slate-200"
+                        className="w-full h-9 px-3 rounded-xl border border-slate-200 text-sm"
                       >
                         {keywords.map((k) => (
                           <option key={k.id} value={k.id}>
@@ -879,17 +876,17 @@ export function SeoKeywordsWorkspace() {
 
                     <div>
                       <div className="flex items-center justify-between mb-1">
-                        <label className="block font-semibold text-slate-700">
-                          Website đích xuất bản (2 Website BA Toàn Trung · Q12) *
+                        <label className="block text-sm font-semibold text-slate-700">
+                          Website đích xuất bản *
                         </label>
-                        <span className="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold">
+                        <span className="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold">
                           Chế độ Giả lập (Simulated)
                         </span>
                       </div>
                       <select
                         value={draftWebsite}
                         onChange={(e) => setDraftWebsite(e.target.value as TargetWebsite)}
-                        className="w-full h-9 px-3 rounded-xl border border-slate-200"
+                        className="w-full h-9 px-3 rounded-xl border border-slate-200 text-sm"
                       >
                         {TARGET_WEBSITES.map((w) => (
                           <option key={w} value={w}>
@@ -900,8 +897,8 @@ export function SeoKeywordsWorkspace() {
                     </div>
 
                     <div>
-                      <label className="block font-semibold text-slate-700 mb-1">
-                        Chủ đề & Yêu cầu nội dung (Cấm nhập SĐT/Email khách hàng) *
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">
+                        Chủ đề & Yêu cầu nội dung (Không nhập SĐT/Email khách hàng) *
                       </label>
                       <textarea
                         required
@@ -909,32 +906,32 @@ export function SeoKeywordsWorkspace() {
                         value={topicFocus}
                         onChange={(e) => setTopicFocus(e.target.value)}
                         placeholder="VD: Phân tích khoảng cách nhìn tối ưu cho màn hình LED hội trường 300 chỗ ngồi..."
-                        className="w-full p-2.5 rounded-xl border border-slate-200"
+                        className="w-full p-2.5 rounded-xl border border-slate-200 text-sm"
                       />
                     </div>
 
-                    <label className="inline-flex items-center gap-2 text-slate-600 cursor-pointer">
+                    <label className="inline-flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={simulateAiFailure}
                         onChange={(e) => setSimulateAiFailure(e.target.checked)}
                       />
-                      <span>Giả lập sự cố AI quá tải / Timeout để kiểm thử ngoại lệ UC05 A3</span>
+                      <span>Giả lập sự cố AI quá tải / Timeout để kiểm thử xử lý lỗi</span>
                     </label>
 
                     <button
                       type="submit"
                       disabled={busy}
-                      className="w-full h-9 rounded-xl bg-brand hover:bg-brand-deep text-white font-bold inline-flex items-center justify-center gap-1.5"
+                      className="w-full h-10 rounded-xl bg-brand hover:bg-brand-deep text-white text-sm font-bold inline-flex items-center justify-center gap-1.5"
                     >
-                      <Sparkles className="w-3.5 h-3.5" />
+                      <Sparkles className="w-4 h-4" />
                       <span>{busy ? 'AI đang soạn bản nháp...' : 'Tạo Bản nháp SEO bằng AI'}</span>
                     </button>
                   </form>
 
                   {/* Danh sách Bài viết & Cảnh báo tối ưu bài cũ (>30 ngày) */}
                   <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card space-y-3">
-                    <h2 className="font-display text-sm font-bold text-ink">
+                    <h2 className="font-display text-base font-bold text-ink">
                       Danh sách Bài viết SEO ({articles.length})
                     </h2>
                     <div className="space-y-2.5">
@@ -949,26 +946,26 @@ export function SeoKeywordsWorkspace() {
                           }`}
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <span className="px-2 py-0.5 rounded-full bg-white border border-slate-200 text-[10px] font-bold text-brand">
+                            <span className="px-2.5 py-0.5 rounded-full bg-white border border-slate-200 text-xs font-bold text-brand">
                               {SEO_ARTICLE_STATUS_LABELS[art.status]}
                             </span>
-                            <span className="font-mono text-[11px] text-slate-500">
+                            <span className="font-mono text-xs text-slate-500">
                               {art.targetWebsite} · v{art.version}
                             </span>
                           </div>
-                          <p className="font-bold text-ink mt-1.5">{art.title}</p>
-                          <p className="text-[11px] text-slate-500 mt-0.5">
+                          <p className="font-bold text-sm text-ink mt-1.5">{art.title}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">
                             Từ khóa: <strong>{art.keywordText}</strong> · {art.revisions?.length || 1} phiên bản
                           </p>
                           {art.needsOptimization && (
-                            <div className="mt-2 px-2.5 py-1 rounded bg-amber-100 text-amber-900 font-bold text-[10px] inline-flex items-center gap-1">
-                              <AlertTriangle className="w-3 h-3" />
+                            <div className="mt-2 px-2.5 py-1 rounded bg-amber-100 text-amber-900 font-bold text-xs inline-flex items-center gap-1">
+                              <AlertTriangle className="w-3.5 h-3.5" />
                               <span>Cần rà soát tối ưu lại (&gt;30 ngày, vị trí #{art.avgPosition30d})</span>
                             </div>
                           )}
                           {art.publishErrorMessage && (
-                            <div className="mt-2 px-2.5 py-1 rounded bg-red-100 text-red-800 font-bold text-[10px]">
-                              Lỗi đẩy bài (A2): {art.publishErrorMessage}
+                            <div className="mt-2 px-2.5 py-1 rounded bg-red-100 text-red-800 font-bold text-xs">
+                              Lỗi xuất bản: {art.publishErrorMessage}
                             </div>
                           )}
                         </div>
@@ -977,16 +974,16 @@ export function SeoKeywordsWorkspace() {
                   </div>
                 </div>
 
-                {/* Right 7 cols: Biên tập, Phê duyệt, Rút duyệt (A1), Xuất bản & Lịch sử Revision */}
+                {/* Right 7 cols: Biên tập, Phê duyệt, Rút duyệt, Xuất bản & Lịch sử Revision */}
                 <div className="lg:col-span-7">
                   {selectedArticle ? (
                     <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card space-y-4">
                       <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
                         <div>
-                          <span className="px-2.5 py-1 rounded-full bg-brand-soft text-brand font-bold text-[11px]">
+                          <span className="px-2.5 py-1 rounded-full bg-brand-soft text-brand font-bold text-xs">
                             {SEO_ARTICLE_STATUS_LABELS[selectedArticle.status]}
                           </span>
-                          <span className="ml-2 text-slate-500 font-mono">
+                          <span className="ml-2 text-xs text-slate-500 font-mono">
                             Website đích: {selectedArticle.targetWebsite} · Phiên bản khóa: rev#
                             {selectedArticle.approvedRevisionId || selectedArticle.currentRevisionId}
                           </span>
@@ -996,11 +993,11 @@ export function SeoKeywordsWorkspace() {
                             href={selectedArticle.publishedUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-brand font-bold inline-flex items-center gap-1 hover:underline"
+                            className="text-brand text-sm font-bold inline-flex items-center gap-1 hover:underline"
                           >
-                            <Globe className="w-3.5 h-3.5" />
+                            <Globe className="w-4 h-4" />
                             <span> Mở URL bài đã đăng</span>
-                            <ExternalLink className="w-3 h-3" />
+                            <ExternalLink className="w-3.5 h-3.5" />
                           </a>
                         )}
                       </div>
@@ -1008,7 +1005,7 @@ export function SeoKeywordsWorkspace() {
                       {/* Form Biên tập Nội dung (chỉ cho sửa khi đang ở trạng thái Nháp) */}
                       <form onSubmit={(e) => void handleSaveRevision(e)} className="space-y-3">
                         <div>
-                          <label className="block font-bold text-slate-700 mb-1">
+                          <label className="block text-sm font-bold text-slate-700 mb-1">
                             Tiêu đề bài viết chuẩn SEO
                           </label>
                           <input
@@ -1016,12 +1013,12 @@ export function SeoKeywordsWorkspace() {
                             disabled={selectedArticle.status !== 'DRAFT'}
                             value={editTitle}
                             onChange={(e) => setEditTitle(e.target.value)}
-                            className="w-full h-9 px-3 rounded-xl border border-slate-200 disabled:bg-slate-100"
+                            className="w-full h-9 px-3 rounded-xl border border-slate-200 text-sm disabled:bg-slate-100"
                           />
                         </div>
 
                         <div>
-                          <label className="block font-bold text-slate-700 mb-1">
+                          <label className="block text-sm font-bold text-slate-700 mb-1">
                             Thẻ Meta Description
                           </label>
                           <input
@@ -1029,12 +1026,12 @@ export function SeoKeywordsWorkspace() {
                             disabled={selectedArticle.status !== 'DRAFT'}
                             value={editMeta}
                             onChange={(e) => setEditMeta(e.target.value)}
-                            className="w-full h-9 px-3 rounded-xl border border-slate-200 disabled:bg-slate-100"
+                            className="w-full h-9 px-3 rounded-xl border border-slate-200 text-sm disabled:bg-slate-100"
                           />
                         </div>
 
                         <div>
-                          <label className="block font-bold text-slate-700 mb-1">
+                          <label className="block text-sm font-bold text-slate-700 mb-1">
                             Nội dung HTML (Thẻ H2/H3, thân bài & hình ảnh thực tế)
                           </label>
                           <textarea
@@ -1042,7 +1039,7 @@ export function SeoKeywordsWorkspace() {
                             disabled={selectedArticle.status !== 'DRAFT'}
                             value={editContentHtml}
                             onChange={(e) => setEditContentHtml(e.target.value)}
-                            className="w-full p-3 rounded-xl border border-slate-200 font-mono text-[11px] disabled:bg-slate-100"
+                            className="w-full p-3 rounded-xl border border-slate-200 font-mono text-xs disabled:bg-slate-100"
                           />
                         </div>
 
@@ -1053,21 +1050,21 @@ export function SeoKeywordsWorkspace() {
                               value={editNote}
                               onChange={(e) => setEditNote(e.target.value)}
                               placeholder="Ghi chú phiên bản chỉnh sửa (VD: Bổ sung ảnh công trình thực tế)..."
-                              className="flex-1 h-9 px-3 rounded-xl border border-slate-200"
+                              className="flex-1 h-9 px-3 rounded-xl border border-slate-200 text-sm"
                             />
                             <button
                               type="submit"
                               disabled={busy}
-                              className="h-9 px-4 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold inline-flex items-center gap-1.5"
+                              className="h-9 px-4 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold inline-flex items-center gap-1.5"
                             >
-                              <FileEdit className="w-3.5 h-3.5" />
+                              <FileEdit className="w-4 h-4" />
                               <span>Lưu Phiên bản mới</span>
                             </button>
                           </div>
                         )}
                       </form>
 
-                      {/* Checklist SEO Trực tiếp & Xem trước (Mục 3.4) */}
+                      {/* Checklist SEO Trực tiếp & Xem trước */}
                       {(() => {
                         const kwLower = (selectedArticle.keywordText || '').toLowerCase().trim();
                         const titleOk = kwLower ? editTitle.toLowerCase().includes(kwLower) : false;
@@ -1097,21 +1094,21 @@ export function SeoKeywordsWorkspace() {
                             : 0;
 
                         return (
-                          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3 text-xs">
+                          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3 text-sm">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <span className="font-bold text-ink">
                                 Checklist Chuẩn SEO On-page (Từ khóa:{' '}
                                 <span className="text-brand">{selectedArticle.keywordText}</span>)
                               </span>
-                              <span className="font-mono text-[11px] text-slate-600">
+                              <span className="font-mono text-xs text-slate-600">
                                 Độ dài: <strong>{wordCount}</strong> từ · Mật độ từ khóa:{' '}
                                 <strong>{densityPct}%</strong> ({kwOccurrences} lần)
                               </span>
                             </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                               <div className="flex items-center gap-1.5">
                                 <CheckCircle2
-                                  className={`w-3.5 h-3.5 ${
+                                  className={`w-4 h-4 ${
                                     titleOk ? 'text-emerald-600' : 'text-slate-300'
                                   }`}
                                 />
@@ -1121,7 +1118,7 @@ export function SeoKeywordsWorkspace() {
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <CheckCircle2
-                                  className={`w-3.5 h-3.5 ${
+                                  className={`w-4 h-4 ${
                                     metaOk ? 'text-emerald-600' : 'text-slate-300'
                                   }`}
                                 />
@@ -1131,7 +1128,7 @@ export function SeoKeywordsWorkspace() {
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <CheckCircle2
-                                  className={`w-3.5 h-3.5 ${
+                                  className={`w-4 h-4 ${
                                     h2Ok ? 'text-emerald-600' : 'text-slate-300'
                                   }`}
                                 />
@@ -1141,7 +1138,7 @@ export function SeoKeywordsWorkspace() {
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <CheckCircle2
-                                  className={`w-3.5 h-3.5 ${
+                                  className={`w-4 h-4 ${
                                     lengthOk ? 'text-emerald-600' : 'text-slate-300'
                                   }`}
                                 />
@@ -1154,11 +1151,11 @@ export function SeoKeywordsWorkspace() {
                         );
                       })()}
 
-                      {/* Khối Duyệt bài, Hẹn giờ đăng, Rút duyệt (A1) & Đẩy bài lên Website (A2) */}
+                      {/* Khối Duyệt bài, Hẹn giờ đăng, Rút duyệt & Đẩy bài lên Website */}
                       <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-200 space-y-3">
-                        <p className="font-bold text-ink flex items-center gap-1.5">
+                        <p className="text-sm font-bold text-ink flex items-center gap-1.5">
                           <CalendarClock className="w-4 h-4 text-brand" />
-                          <span>Quy trình Duyệt bài, Lên lịch & Đẩy tự động lên Website (UC05 Bước 5-7, A1, A2)</span>
+                          <span>Quy trình Duyệt bài, Lên lịch & Xuất bản lên Website</span>
                         </p>
 
                         {selectedArticle.status === 'DRAFT' && (
@@ -1167,15 +1164,15 @@ export function SeoKeywordsWorkspace() {
                               type="datetime-local"
                               value={scheduleIso}
                               onChange={(e) => setScheduleIso(e.target.value)}
-                              className="h-9 px-3 rounded-xl border border-slate-200 bg-white"
+                              className="h-9 px-3 rounded-xl border border-slate-200 bg-white text-sm"
                             />
                             <button
                               type="button"
                               disabled={busy}
                               onClick={() => void handleApproveAndSchedule()}
-                              className="h-9 px-4 rounded-xl bg-brand hover:bg-brand-deep text-white font-bold inline-flex items-center gap-1.5"
+                              className="h-9 px-4 rounded-xl bg-brand hover:bg-brand-deep text-white text-sm font-bold inline-flex items-center gap-1.5"
                             >
-                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <CheckCircle2 className="w-4 h-4" />
                               <span>Duyệt bài & Hẹn giờ đăng</span>
                             </button>
                           </div>
@@ -1189,9 +1186,9 @@ export function SeoKeywordsWorkspace() {
                                 type="button"
                                 disabled={busy}
                                 onClick={() => void handlePublishNow()}
-                                className="h-9 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold inline-flex items-center gap-1.5"
+                                className="h-9 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold inline-flex items-center gap-1.5"
                               >
-                                <Send className="w-3.5 h-3.5" />
+                                <Send className="w-4 h-4" />
                                 <span>Đẩy bài lên {selectedArticle.targetWebsite} ngay</span>
                               </button>
 
@@ -1199,56 +1196,54 @@ export function SeoKeywordsWorkspace() {
                                 type="button"
                                 disabled={busy}
                                 onClick={() => void handleWithdrawApproval()}
-                                className="h-9 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold inline-flex items-center gap-1.5"
+                                className="h-9 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold inline-flex items-center gap-1.5"
                               >
-                                <RotateCcw className="w-3.5 h-3.5" />
-                                <span>Rút duyệt về Nháp (UC05 A1)</span>
+                                <RotateCcw className="w-4 h-4" />
+                                <span>Rút duyệt về Nháp</span>
                               </button>
                             </div>
 
-                            <label className="inline-flex items-center gap-2 text-slate-700 cursor-pointer">
+                            <label className="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                               <input
                                 type="checkbox"
                                 checked={simulatePublishError}
                                 onChange={(e) => setSimulatePublishError(e.target.checked)}
                               />
                               <span>
-                                Giả lập lỗi API Website từ chối để kiểm thử luồng giữ trạng thái chờ đăng lại (UC05 A2)
+                                Giả lập lỗi API Website từ chối để kiểm thử luồng giữ trạng thái chờ đăng lại
                               </span>
                             </label>
                           </div>
                         )}
                       </div>
 
-                      {/* Lịch sử các phiên bản chỉnh sửa (SeoArticleRevision) */}
+                      {/* Lịch sử các phiên bản chỉnh sửa */}
                       <div className="space-y-2">
-                        <p className="font-bold text-ink flex items-center gap-1.5">
+                        <p className="text-sm font-bold text-ink flex items-center gap-1.5">
                           <History className="w-4 h-4 text-brand" />
-                          <span>
-                            Lịch sử Phiên bản bài viết (<code className="font-mono">@@unique([article_id, revision_number])</code>)
-                          </span>
+                          <span>Lịch sử Phiên bản bài viết</span>
                         </p>
                         <div className="space-y-2">
                           {selectedArticle.revisions?.map((rev) => (
                             <div
                               key={rev.id}
-                              className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-start justify-between gap-3"
+                              className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-start justify-between gap-3 text-sm"
                             >
                               <div>
-                                <span className="px-2 py-0.5 rounded bg-white border border-slate-200 font-mono font-bold text-brand">
+                                <span className="px-2 py-0.5 rounded bg-white border border-slate-200 font-mono text-xs font-bold text-brand">
                                   Phiên bản #{rev.revisionNumber}
                                 </span>
                                 <span className="ml-2 font-semibold text-ink">
                                   {rev.isAiGenerated ? 'Khởi tạo bởi AI' : `Biên tập bởi ${rev.editedByName}`}
                                 </span>
                                 {selectedArticle.approvedRevisionId === rev.id && (
-                                  <span className="ml-2 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                                  <span className="ml-2 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold text-xs">
                                     Phiên bản đã duyệt khóa
                                   </span>
                                 )}
-                                <p className="text-slate-600 mt-1">{rev.editorNote}</p>
+                                <p className="text-xs text-slate-600 mt-1">{rev.editorNote}</p>
                               </div>
-                              <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                              <span className="text-xs text-slate-400 whitespace-nowrap">
                                 {new Date(rev.createdAt).toLocaleString('vi-VN')}
                               </span>
                             </div>
@@ -1257,7 +1252,7 @@ export function SeoKeywordsWorkspace() {
                       </div>
                     </div>
                   ) : (
-                    <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center text-slate-500">
+                    <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center text-sm text-slate-500">
                       Chọn một bài viết SEO bên trái để biên tập, xem lịch sử phiên bản hoặc duyệt xuất bản.
                     </div>
                   )}

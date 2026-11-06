@@ -28,6 +28,8 @@ export interface XlsxSheet {
   kpiSummary?: Array<{ label: string; value: string | number }>;
   columns: XlsxColumn[];
   rows: Array<Record<string, unknown>>;
+  summaryRow?: Record<string, unknown>;
+  footerNotes?: string[];
 }
 
 function escapeXml(str: unknown): string {
@@ -63,7 +65,7 @@ function colToLetter(colIndex: number): string {
 /**
  * Lightweight ZIP (PKZip) packager using standard Node.js zlib
  */
-class ZipArchive {
+export class ZipArchive {
   private files: Array<{
     name: string;
     data: Buffer;
@@ -335,6 +337,42 @@ function buildSheetXml(sheet: XlsxSheet): string {
   });
 
   const lastDataRow = Math.max(firstDataRow, currentRow - 1);
+
+  if (sheet.summaryRow) {
+    const summaryCells = sheet.columns
+      .map((col, colIdx) => {
+        const colLetter = colToLetter(colIdx);
+        const cellRef = `${colLetter}${currentRow}`;
+        const rawVal = sheet.summaryRow?.[col.key];
+        if (rawVal == null || rawVal === '') {
+          return `<c r="${cellRef}" s="7"/>`;
+        }
+        if (col.type === 'number' || col.type === 'currency' || col.type === 'percent') {
+          const num = typeof rawVal === 'number' ? rawVal : Number(rawVal);
+          if (!isNaN(num)) {
+            const numStyle = col.type === 'percent' ? 6 : 5;
+            return `<c r="${cellRef}" s="${numStyle}"><v>${num}</v></c>`;
+          }
+        }
+        const sanitized = sanitizeForFormulaInjection(String(rawVal));
+        return `<c r="${cellRef}" s="7" t="inlineStr"><is><t>${escapeXml(sanitized)}</t></is></c>`;
+      })
+      .join('');
+    rowsXml.push(`<row r="${currentRow}" ht="24" customHeight="1">${summaryCells}</row>`);
+    currentRow++;
+  }
+
+  if (sheet.footerNotes && sheet.footerNotes.length > 0) {
+    currentRow++;
+    for (const note of sheet.footerNotes) {
+      rowsXml.push(
+        `<row r="${currentRow}" ht="18">` +
+          `<c r="A${currentRow}" t="inlineStr"><is><t>${escapeXml(sanitizeForFormulaInjection(note))}</t></is></c>` +
+          `</row>`
+      );
+      currentRow++;
+    }
+  }
 
   // AutoFilter range: from header row to last data row
   const autoFilterXml = `<autoFilter ref="A${headerRowIndex}:${lastColLetter}${lastDataRow}"/>`;

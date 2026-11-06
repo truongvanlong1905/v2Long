@@ -20,12 +20,24 @@ export async function GET(req: Request) {
     const status = url.searchParams.get('status') || undefined;
     const search = url.searchParams.get('search') || undefined;
     const includeSpam = url.searchParams.get('includeSpam') === 'true';
+    const overdueOnly = url.searchParams.get('overdueOnly') === 'true';
+    const unreceivedOnly =
+      url.searchParams.get('unreceived') === '1' ||
+      url.searchParams.get('unreceivedOnly') === 'true';
+    const pageParam = url.searchParams.get('page');
+    const pageSizeParam = url.searchParams.get('pageSize');
+    const page = pageParam ? Math.max(1, Number(pageParam) || 1) : undefined;
+    const pageSize = pageSizeParam ? Math.max(1, Number(pageSizeParam) || 50) : undefined;
 
     const [payload, currentUserRecord] = await Promise.all([
       listLeadsForUser(auth.user, {
         status,
         search,
         includeSpam,
+        overdueOnly,
+        unreceivedOnly,
+        page,
+        pageSize,
       }),
       prisma.user.findUnique({
         where: { id: auth.user.id },

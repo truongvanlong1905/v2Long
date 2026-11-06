@@ -37,6 +37,15 @@ export async function GET(
     return jsonError('NOT_FOUND', 'Không tìm thấy tệp đính kèm.', 404);
   }
 
+  // Quy tắc không công khai giá: hồ sơ báo giá cũ (quote_doc) có thể chứa đơn giá → không phục vụ qua web.
+  if (attachment.attachmentType === 'quote_doc') {
+    return jsonError(
+      'PRICE_DOCUMENT_RESTRICTED',
+      'Tệp hồ sơ báo giá có thể chứa giá nên không được hiển thị hoặc tải qua hệ thống.',
+      403,
+    );
+  }
+
   const canViewAll = hasBaPermission(auth.user.roleCode, 'LEAD_VIEW_ALL');
   if (
     !canViewAll &&

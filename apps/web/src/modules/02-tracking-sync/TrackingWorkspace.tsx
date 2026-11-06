@@ -16,9 +16,31 @@ import type { TrackingDashboardDto } from '@toantrung/contracts';
 import { apiRequest } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
 
+interface AdapterStatusItem {
+  code: string;
+  name: string;
+  moduleScope: string;
+  mode: 'LIVE_CONNECTED' | 'SIMULATED_FALLBACK';
+  envKeysRequired: string[];
+  description: string;
+}
+
+interface WorkerHistoryItem {
+  id: number;
+  jobCode: string;
+  summary: string;
+  durationMs: number;
+  executedAt: string;
+}
+
+type ExtendedTrackingDashboardDto = TrackingDashboardDto & {
+  adapterMatrix?: AdapterStatusItem[];
+  workerHistory?: WorkerHistoryItem[];
+};
+
 export function TrackingWorkspace() {
   const { user } = useSession();
-  const [data, setData] = useState<TrackingDashboardDto | null>(null);
+  const [data, setData] = useState<ExtendedTrackingDashboardDto | null>(null);
   const [periodDays, setPeriodDays] = useState<number>(30);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -48,7 +70,7 @@ export function TrackingWorkspace() {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await apiRequest<TrackingDashboardDto>(
+      const res = await apiRequest<ExtendedTrackingDashboardDto>(
         `/api/v1/tracking?periodDays=${periodDays}`,
       );
       setData(res);
@@ -198,21 +220,55 @@ export function TrackingWorkspace() {
     }
   };
 
+  const handleRunWorkerJob = async (
+    jobCode:
+      | 'D3_SYNC_FULL'
+      | 'GCLID_HOURLY_RETRY'
+      | 'GOOGLE_LEAD_RECONCILE'
+      | 'SEO_SCHEDULED_PUBLISH'
+      | 'OVERDUE_QUOTE_REMINDER'
+      | 'ALL_JOBS',
+  ) => {
+    if (!user) return;
+    setBusy(true);
+    setErrorMsg(null);
+    try {
+      const res = await apiRequest<{
+        executionId: string;
+        jobCode: string;
+        attempts: number;
+        results: Array<{ jobCode: string; summary: string; durationMs: number }>;
+      }>(`/api/v1/workers/${jobCode}/run`, {
+        method: 'POST',
+        csrfToken: user.csrfToken,
+        body: {},
+      });
+      const firstResult = res.results?.[0];
+      const summaryText = res.results?.map((r) => r.summary).join(' · ') || 'Hoàn tất đồng bộ';
+      setFeedbackMsg(
+        `[Mã thực thi ${res.executionId} · ${res.jobCode}] Hoàn tất (${firstResult?.durationMs ?? 0}ms, lần thử #${res.attempts}): ${summaryText}`,
+      );
+      await fetchDashboard();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Lỗi thực thi tác vụ nền.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <div className="space-y-6 text-xs">
+    <div className="space-y-6 text-sm">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-brand-soft border border-brand-border text-[11px] font-bold text-brand mb-2">
-            <span>Phân hệ 02 · Nhóm 2</span>
-            <span>·</span>
-            <span>UC03: Tracking Nguồn, Đồng bộ Đa kênh & Đối soát</span>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-soft border border-brand-border text-xs font-bold text-brand mb-2">
+            <span>Tracking Nguồn, Đồng bộ Đa kênh & Đối soát</span>
           </div>
-          <h1 className="font-display text-2xl sm:text-3xl font-bold text-ink tracking-tight">
+          <h1 className="font-display text-2xl font-bold text-ink tracking-tight">
             Tracking Nguồn & Đồng bộ Dữ liệu Đa kênh
           </h1>
-          <p className="text-xs sm:text-[13px] text-ink-muted mt-1">
-            Ưu tiên tín hiệu <code className="font-mono">gclid &gt; UTM &gt; Referrer</code> (BR4), 3 cấp đếm Lead L1/L2/L3 (BR6) và đối soát Google Lead Form (Luồng D).
+          <p className="text-sm text-ink-muted mt-1">
+            Ưu tiên tín hiệu <code className="font-mono">gclid &gt; UTM &gt; Referrer</code>, phân tầng 3 cấp Lead (L1/L2/L3) và đối soát Google Lead Form tự động.
           </p>
         </div>
 
@@ -222,7 +278,7 @@ export function TrackingWorkspace() {
               key={d}
               type="button"
               onClick={() => setPeriodDays(d)}
-              className={`h-9 px-3.5 rounded-xl font-semibold ${
+              className={`h-9 px-3.5 rounded-xl text-sm font-semibold ${
                 periodDays === d
                   ? 'bg-brand text-white'
                   : 'bg-white border border-slate-200 text-slate-600'
@@ -236,31 +292,39 @@ export function TrackingWorkspace() {
             type="button"
             disabled={busy}
             onClick={() => void handleTriggerSync('FULL_0200')}
-            className="h-9 px-3.5 rounded-xl bg-brand hover:bg-brand-deep text-white font-bold inline-flex items-center gap-1.5 shadow-sm"
+            className="h-9 px-3.5 rounded-xl bg-brand hover:bg-brand-deep text-white text-sm font-bold inline-flex items-center gap-1.5 shadow-sm"
           >
-            <Play className="w-3.5 h-3.5" />
+            <Play className="w-4 h-4" />
             <span>Chạy Đồng bộ + Tra lại gclid</span>
           </button>
+
+          <a
+            href={`/api/v1/tracking/export?periodDays=${periodDays}`}
+            className="h-9 px-3.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-sm font-semibold inline-flex items-center gap-1.5"
+            title="Xuất báo cáo Excel Tracking & Đồng bộ (02_Tracking_DongBo.xlsx)"
+          >
+            <span>Xuất Excel (.xlsx)</span>
+          </a>
 
           <button
             type="button"
             onClick={() => void fetchDashboard()}
-            className="h-9 px-3 rounded-xl bg-white border border-slate-200 text-slate-700 font-semibold inline-flex items-center gap-1.5"
+            className="h-9 px-3.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-sm font-semibold inline-flex items-center gap-1.5"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
+            <RefreshCw className="w-4 h-4" />
             <span>Làm mới</span>
           </button>
         </div>
       </div>
 
-      {/* Adapter Mode, Freshness & Open Question Q02 Notice */}
+      {/* Adapter Mode & Freshness Notice */}
       {data && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <div className="p-3.5 rounded-xl bg-brand-soft/80 border border-brand-border flex items-start gap-2.5 text-slate-700">
+          <div className="p-4 rounded-xl bg-brand-soft/80 border border-brand-border flex items-start gap-2.5 text-sm text-slate-700">
             <Info className="w-4 h-4 text-brand shrink-0 mt-0.5" />
             <div>
               <strong>
-                Trạng thái Adapter ({data.liveIntegrationMode === 'FIXTURE_SIMULATION' ? 'Fixture Simulation — Chưa cấu hình API thật' : 'Live API'}):
+                Trạng thái kết nối ({data.liveIntegrationMode === 'FIXTURE_SIMULATION' ? 'Dữ liệu mô phỏng — Chưa cấu hình khóa API thật' : 'Live API'}):
               </strong>{' '}
               Cập nhật lần cuối lúc{' '}
               <strong>
@@ -277,17 +341,17 @@ export function TrackingWorkspace() {
             </div>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 flex items-start gap-2.5 text-amber-900">
+          <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 flex items-start gap-2.5 text-sm text-amber-900">
             <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
-              <strong>Quyết định nghiệp vụ đang mở (Q02 — UC03-4 vs UC03 BR5):</strong> Nguồn Marketing & Chiến dịch hiện chỉ cập nhật tự động qua tra lại <code className="font-mono">gclid</code> (A2) và ánh xạ danh mục chiến dịch (A3). Chức năng sửa tay Nguồn/Chiến dịch được giữ đóng chờ BA chốt giữa <code className="font-mono">UC03-4</code> và <code className="font-mono">UC03 BR5</code>.
+              <strong>Quy tắc bảo toàn Nguồn Marketing & Chiến dịch:</strong> Nguồn Marketing và Chiến dịch hiện được cập nhật tự động qua đối chiếu <code className="font-mono">gclid</code> và ánh xạ danh mục chiến dịch để bảo đảm tính khách quan khi tính chi phí quảng cáo.
             </div>
           </div>
         </div>
       )}
 
       {errorMsg && (
-        <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-700 flex items-center justify-between">
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700 flex items-center justify-between">
           <span>{errorMsg}</span>
           <button type="button" onClick={() => setErrorMsg(null)} className="font-bold">
             Đóng
@@ -296,7 +360,7 @@ export function TrackingWorkspace() {
       )}
 
       {feedbackMsg && (
-        <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center justify-between">
+        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-800 flex items-center justify-between">
           <span>{feedbackMsg}</span>
           <button type="button" onClick={() => setFeedbackMsg(null)} className="font-bold">
             Đóng
@@ -305,7 +369,7 @@ export function TrackingWorkspace() {
       )}
 
       {loading || !data ? (
-        <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center text-slate-500">
+        <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center text-sm text-slate-500">
           Đang tải số liệu Tracking & Đồng bộ...
         </div>
       ) : (
@@ -313,40 +377,40 @@ export function TrackingWorkspace() {
           {/* 4 KPI Cards for L1 / L2 / L3 & Tracking Quality */}
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card">
-              <p className="font-bold text-slate-600">Cấp L1 — Lead thô (Raw Leads)</p>
+              <p className="text-sm font-bold text-slate-700">Cấp L1 — Lead thô (Raw Leads)</p>
               <p className="font-display text-3xl font-bold text-ink mt-2">
                 {data.totals.rawLeadsL1}
               </p>
-              <p className="text-slate-500 mt-1">
+              <p className="text-xs text-slate-500 mt-1.5">
                 Mọi Lead tiếp nhận trong kỳ (Trong đó Lead lặp: <strong>{data.totals.repeatLeads}</strong>)
               </p>
             </div>
 
             <div className="bg-white border border-blue-200 rounded-2xl p-5 shadow-card">
-              <p className="font-bold text-brand">Cấp L2 — Lead hợp lệ (Pipeline UC01)</p>
+              <p className="text-sm font-bold text-brand">Cấp L2 — Lead hợp lệ (Pipeline)</p>
               <p className="font-display text-3xl font-bold text-brand mt-2">
                 {data.totals.validLeadsL2}
               </p>
-              <p className="text-slate-500 mt-1">
+              <p className="text-xs text-slate-500 mt-1.5">
                 L1 trừ toàn bộ Lead có cờ Spam (kể cả đang chờ xác nhận)
               </p>
             </div>
 
             <div className="bg-white border border-emerald-200 rounded-2xl p-5 shadow-card">
-              <p className="font-bold text-emerald-700">Cấp L3 — Lead hiệu quả (Tính CPL/Ads)</p>
+              <p className="text-sm font-bold text-emerald-700">Cấp L3 — Lead hiệu quả (Tính CPL/Ads)</p>
               <p className="font-display text-3xl font-bold text-emerald-700 mt-2">
                 {data.totals.effectiveLeadsL3}
               </p>
-              <p className="text-slate-500 mt-1">
-                L1 trừ Spam tự động & Spam đã xác nhận (Chờ duyệt vẫn tính theo BR6)
+              <p className="text-xs text-slate-500 mt-1.5">
+                L1 trừ Spam tự động & Spam đã xác nhận của Trưởng bộ phận
               </p>
             </div>
 
             <div className="bg-white border border-amber-200 rounded-2xl p-5 shadow-card">
-              <p className="font-bold text-amber-800">Chất lượng Tracking & Cảnh báo</p>
-              <div className="mt-2 space-y-1 text-slate-700">
+              <p className="text-sm font-bold text-amber-800">Chất lượng Tracking & Cảnh báo</p>
+              <div className="mt-2 space-y-1 text-sm text-slate-700">
                 <div>
-                  UTM lệch gclid (BR4): <strong>{data.totals.utmGclidMismatchCount}</strong>
+                  UTM lệch gclid: <strong>{data.totals.utmGclidMismatchCount}</strong>
                 </div>
                 <div>
                   Chưa rõ chiến dịch / UTM chưa khớp:{' '}
@@ -355,33 +419,33 @@ export function TrackingWorkspace() {
                   </strong>
                 </div>
                 <div>
-                  Cảnh báo đối soát mở (Luồng D):{' '}
+                  Cảnh báo đối soát mở:{' '}
                   <strong className="text-red-600">{data.totals.openReconciliationAlerts}</strong>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Luồng D: Cảnh báo Đối soát Google Lead Form */}
+          {/* Cảnh báo Đối soát Google Lead Form */}
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-600" />
-                <h2 className="font-display text-sm font-bold text-ink">
-                  Luồng D — Đối soát Lead Google Form (Cảnh báo khi chênh lệch &ge; 2 Lead)
+                <AlertTriangle className="w-5 h-5 text-amber-600" />
+                <h2 className="font-display text-base font-bold text-ink">
+                  Đối soát Lead Google Form (Cảnh báo khi chênh lệch &ge; 2 Lead)
                 </h2>
               </div>
-              <span className="text-slate-400">So khớp CRM (cộng cả log lỗi E1) vs Google Ads</span>
+              <span className="text-xs text-slate-500">So khớp CRM (cộng cả log lỗi tiếp nhận) với Google Ads</span>
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+              <table className="w-full text-sm text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
                     <th className="py-2.5 px-3 font-bold">Ngày đối soát</th>
                     <th className="py-2.5 px-3 font-bold">Tài khoản</th>
                     <th className="py-2.5 px-3 font-bold">Lead trong CRM</th>
-                    <th className="py-2.5 px-3 font-bold">Log lỗi E1</th>
+                    <th className="py-2.5 px-3 font-bold">Log lỗi tiếp nhận</th>
                     <th className="py-2.5 px-3 font-bold">Google báo</th>
                     <th className="py-2.5 px-3 font-bold">Chênh lệch</th>
                     <th className="py-2.5 px-3 font-bold">Trạng thái / Xử lý</th>
@@ -414,13 +478,13 @@ export function TrackingWorkspace() {
                                 }))
                               }
                               placeholder="Nhập ghi chú đối chiếu danh sách Google Ads..."
-                              className="h-8 px-2.5 rounded-lg border border-red-200 bg-white flex-1"
+                              className="h-9 px-3 rounded-lg border border-red-200 bg-white text-sm flex-1"
                             />
                             <button
                               type="button"
                               disabled={busy}
                               onClick={() => void handleResolveReconciliation(rec.id)}
-                              className="h-8 px-3 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold shrink-0"
+                              className="h-9 px-3.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-bold shrink-0"
                             >
                               Xác nhận Đã xử lý
                             </button>
@@ -431,7 +495,7 @@ export function TrackingWorkspace() {
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Khớp 100%
+                            <CheckCircle2 className="w-4 h-4" /> Khớp 100%
                           </span>
                         )}
                       </td>
@@ -442,14 +506,14 @@ export function TrackingWorkspace() {
             </div>
           </div>
 
-          {/* Bảng phân bổ theo Nguồn Marketing & Kênh tiếp nhận (Luồng C) */}
+          {/* Bảng phân bổ theo Nguồn Marketing & Kênh tiếp nhận */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card space-y-3">
-              <h2 className="font-display text-sm font-bold text-ink">
-                Phân bổ Lead theo Nguồn Marketing (Luồng C · Đầy đủ dòng Chưa xác định & Nhập tay)
+              <h2 className="font-display text-base font-bold text-ink">
+                Phân bổ Lead theo Nguồn Marketing (Bao gồm Chưa xác định & Nhập tay)
               </h2>
               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
+                <table className="w-full text-sm text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <th className="py-2.5 px-3 font-bold">Nguồn Marketing</th>
@@ -483,18 +547,18 @@ export function TrackingWorkspace() {
             </div>
 
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card space-y-3">
-              <h2 className="font-display text-sm font-bold text-ink">
-                Đối chiếu Nguồn Marketing (Hệ thống) vs Nguồn Khách tự khai (NVKD hỏi)
+              <h2 className="font-display text-base font-bold text-ink">
+                Đối chiếu Nguồn Marketing (Hệ thống) vs Nguồn Khách tự khai
               </h2>
               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
+                <table className="w-full text-sm text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <th className="py-2.5 px-3 font-bold">Mã Lead</th>
                       <th className="py-2.5 px-3 font-bold">Kênh</th>
-                      <th className="py-2.5 px-3 font-bold">Nguồn Marketing (UC03)</th>
-                      <th className="py-2.5 px-3 font-bold">Khách tự khai (UC01)</th>
-                      <th className="py-2.5 px-3 font-bold">Cờ BR4</th>
+                      <th className="py-2.5 px-3 font-bold">Nguồn Marketing</th>
+                      <th className="py-2.5 px-3 font-bold">Khách tự khai</th>
+                      <th className="py-2.5 px-3 font-bold">Đối chiếu Tín hiệu</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -512,7 +576,7 @@ export function TrackingWorkspace() {
                         </td>
                         <td className="py-2.5 px-3">
                           {item.utmGclidMismatch ? (
-                            <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold text-[10px]">
+                            <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold text-xs">
                               UTM lệch gclid
                             </span>
                           ) : (
@@ -527,13 +591,13 @@ export function TrackingWorkspace() {
             </div>
           </div>
 
-          {/* Hiệu quả Chiến dịch Quảng cáo, CPL & ROAS nội bộ */}
+          {/* Hiệu quả Chiến dịch Quảng cáo — chỉ dùng chi phí quảng cáo, không có doanh thu/ROAS */}
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card space-y-4">
-            <h2 className="font-display text-sm font-bold text-ink">
-              Hiệu quả Chiến dịch Quảng cáo (BigInt Micros · CPL trên L3 · ROAS nội bộ)
+            <h2 className="font-display text-base font-bold text-ink">
+              Hiệu quả Chiến dịch Quảng cáo (CPL trên L3)
             </h2>
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+              <table className="w-full text-sm text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
                     <th className="py-2.5 px-3 font-bold">Mã / Tên Chiến dịch</th>
@@ -543,7 +607,7 @@ export function TrackingWorkspace() {
                     <th className="py-2.5 px-3 font-bold">L1 / L3</th>
                     <th className="py-2.5 px-3 font-bold">CPL (Chi phí/L3)</th>
                     <th className="py-2.5 px-3 font-bold">Chi phí/Báo giá</th>
-                    <th className="py-2.5 px-3 font-bold">ROAS nội bộ</th>
+                    <th className="py-2.5 px-3 font-bold">Chi phí/Lead chốt</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -551,11 +615,11 @@ export function TrackingWorkspace() {
                     <tr key={camp.id}>
                       <td className="py-2.5 px-3">
                         <div className="font-bold text-ink">{camp.campaignName}</div>
-                        <div className="font-mono text-[11px] text-slate-400">
+                        <div className="font-mono text-xs text-slate-400">
                           {camp.campaignCode}
                         </div>
                       </td>
-                      <td className="py-2.5 px-3 font-mono text-[11px]">
+                      <td className="py-2.5 px-3 font-mono text-xs">
                         {camp.platform} · {camp.accountExternalId}
                       </td>
                       <td className="py-2.5 px-3 font-mono">
@@ -581,8 +645,10 @@ export function TrackingWorkspace() {
                           ? `${Math.round(Number(camp.costPerQuote.formattedDecimal)).toLocaleString('vi-VN')} ₫`
                           : '—'}
                       </td>
-                      <td className="py-2.5 px-3 font-mono font-bold text-emerald-700">
-                        {camp.internalRoasText}
+                      <td className="py-2.5 px-3 font-mono">
+                        {camp.costPerWon
+                          ? `${Math.round(Number(camp.costPerWon.formattedDecimal)).toLocaleString('vi-VN')} ₫`
+                          : '—'}
                       </td>
                     </tr>
                   ))}
@@ -590,21 +656,21 @@ export function TrackingWorkspace() {
               </table>
             </div>
 
-            {/* Form khai báo chiến dịch ngoài Google Ads (UC03 A3) */}
+            {/* Form khai báo chiến dịch ngoài Google Ads */}
             <form
               onSubmit={(e) => void handleDeclareCampaign(e)}
               className="pt-3 border-t border-slate-100 grid grid-cols-1 md:grid-cols-5 gap-2.5 items-end"
             >
               <div>
-                <label className="block font-semibold text-slate-600 mb-1">
-                  Nền tảng ngoài Google (A3)
+                <label className="block text-sm font-semibold text-slate-600 mb-1">
+                  Nền tảng chiến dịch
                 </label>
                 <select
                   value={newCampPlatform}
                   onChange={(e) =>
                     setNewCampPlatform(e.target.value as 'EXTERNAL' | 'GOOGLE_ADS' | 'FANPAGE')
                   }
-                  className="w-full h-9 px-2.5 rounded-xl border border-slate-200"
+                  className="w-full h-9 px-2.5 rounded-xl border border-slate-200 text-sm"
                 >
                   <option value="EXTERNAL">Chiến dịch Ngoài (Zalo/PR/Event)</option>
                   <option value="FANPAGE">Facebook Fanpage Ads</option>
@@ -612,7 +678,7 @@ export function TrackingWorkspace() {
                 </select>
               </div>
               <div>
-                <label className="block font-semibold text-slate-600 mb-1">
+                <label className="block text-sm font-semibold text-slate-600 mb-1">
                   Mã chiến dịch / UTM Slug *
                 </label>
                 <input
@@ -621,11 +687,11 @@ export function TrackingWorkspace() {
                   value={newCampCode}
                   onChange={(e) => setNewCampCode(e.target.value)}
                   placeholder="VD: zalo_led_outdoor_t11"
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200"
+                  className="w-full h-9 px-3 rounded-xl border border-slate-200 text-sm"
                 />
               </div>
               <div className="md:col-span-2">
-                <label className="block font-semibold text-slate-600 mb-1">
+                <label className="block text-sm font-semibold text-slate-600 mb-1">
                   Tên chiến dịch *
                 </label>
                 <input
@@ -634,15 +700,15 @@ export function TrackingWorkspace() {
                   value={newCampName}
                   onChange={(e) => setNewCampName(e.target.value)}
                   placeholder="Tên chiến dịch truyền thông..."
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200"
+                  className="w-full h-9 px-3 rounded-xl border border-slate-200 text-sm"
                 />
               </div>
               <button
                 type="submit"
                 disabled={busy}
-                className="h-9 px-4 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold inline-flex items-center justify-center gap-1.5"
+                className="h-9 px-4 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold inline-flex items-center justify-center gap-1.5"
               >
-                <Plus className="w-3.5 h-3.5" />
+                <Plus className="w-4 h-4" />
                 <span>Khai báo & Map lại UTM</span>
               </button>
             </form>
@@ -651,16 +717,16 @@ export function TrackingWorkspace() {
           {/* Trình mô phỏng Webhook & Kiểm thử Chống trùng (Idempotency theo Website + Submission ID) */}
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card space-y-3">
             <div className="flex items-center gap-2">
-              <Crosshair className="w-4 h-4 text-brand" />
-              <h2 className="font-display text-sm font-bold text-ink">
-                Trình mô phỏng Webhook Intake & Kiểm thử Chống trùng theo Website (UC01 & UC03 A1)
+              <Crosshair className="w-5 h-5 text-brand" />
+              <h2 className="font-display text-base font-bold text-ink">
+                Trình mô phỏng Webhook Intake & Kiểm thử Chống trùng theo Website
               </h2>
             </div>
-            <p className="text-slate-500">
+            <p className="text-sm text-slate-600">
               Khóa chống trùng: <code className="font-mono">(intakeSourceProvider, intakeSourceAccountKey, externalSubmissionId)</code>. Gửi lặp cùng Submission ID trên cùng 1 website sẽ được deduplicate an toàn; cùng Submission ID trên website khác vẫn tạo Lead hợp lệ.
             </p>
             <div className="flex flex-wrap items-center gap-2 pb-1">
-              <span className="font-bold text-slate-600">Chọn nhanh kịch bản mẫu:</span>
+              <span className="text-sm font-bold text-slate-600">Chọn nhanh kịch bản mẫu:</span>
               <button
                 type="button"
                 onClick={() => {
@@ -672,7 +738,7 @@ export function TrackingWorkspace() {
                   setWhUtmSource('google');
                   setWhUtmCampaign('led_indoor_p25_q4');
                 }}
-                className="px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-brand font-semibold hover:bg-blue-100"
+                className="px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-brand text-xs font-semibold hover:bg-blue-100"
               >
                 1. Lead chuẩn Google Ads
               </button>
@@ -687,9 +753,9 @@ export function TrackingWorkspace() {
                   setWhUtmSource('');
                   setWhUtmCampaign('');
                 }}
-                className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 font-semibold hover:bg-amber-100"
+                className="px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold hover:bg-amber-100"
               >
-                2. GCLID trễ Campaign (Chờ A2 tra lại)
+                2. GCLID trễ Campaign (Chờ đồng bộ tra lại)
               </button>
               <button
                 type="button"
@@ -702,9 +768,9 @@ export function TrackingWorkspace() {
                   setWhUtmSource('facebook');
                   setWhUtmCampaign('fb_retargeting_q4');
                 }}
-                className="px-2.5 py-1 rounded-lg bg-purple-50 border border-purple-200 text-purple-900 font-semibold hover:bg-purple-100"
+                className="px-3 py-1.5 rounded-lg bg-purple-50 border border-purple-200 text-purple-900 text-xs font-semibold hover:bg-purple-100"
               >
-                3. UTM lệch GCLID (Cờ BR4)
+                3. UTM lệch GCLID
               </button>
             </div>
             <form
@@ -712,11 +778,11 @@ export function TrackingWorkspace() {
               className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3"
             >
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Website nguồn</label>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">Website nguồn</label>
                 <select
                   value={whWebsite}
                   onChange={(e) => setWhWebsite(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200"
+                  className="w-full h-9 px-3 rounded-xl border border-slate-200 text-sm"
                 >
                   <option value="toantrung.com.vn">toantrung.com.vn</option>
                   <option value="bangled.vn">bangled.vn</option>
@@ -724,7 +790,7 @@ export function TrackingWorkspace() {
                 </select>
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">
+                <label className="block text-sm font-semibold text-slate-700 mb-1">
                   Mã sự kiện (externalSubmissionId)
                 </label>
                 <input
@@ -732,21 +798,21 @@ export function TrackingWorkspace() {
                   required
                   value={whSubmissionId}
                   onChange={(e) => setWhSubmissionId(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200 font-mono"
+                  className="w-full h-9 px-3 rounded-xl border border-slate-200 font-mono text-sm"
                 />
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">SĐT khách hàng *</label>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">SĐT khách hàng *</label>
                 <input
                   type="text"
                   required
                   value={whPhone}
                   onChange={(e) => setWhPhone(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200"
+                  className="w-full h-9 px-3 rounded-xl border border-slate-200 text-sm"
                 />
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">
+                <label className="block text-sm font-semibold text-slate-700 mb-1">
                   Email (Bắt buộc với Form Web) *
                 </label>
                 <input
@@ -754,47 +820,196 @@ export function TrackingWorkspace() {
                   required
                   value={whEmail}
                   onChange={(e) => setWhEmail(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200"
+                  className="w-full h-9 px-3 rounded-xl border border-slate-200 text-sm"
                 />
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Tên công ty</label>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">Tên công ty</label>
                 <input
                   type="text"
                   value={whCompany}
                   onChange={(e) => setWhCompany(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200"
+                  className="w-full h-9 px-3 rounded-xl border border-slate-200 text-sm"
                 />
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">gclid (tùy chọn)</label>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">gclid (tùy chọn)</label>
                 <input
                   type="text"
                   value={whGclid}
                   onChange={(e) => setWhGclid(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200 font-mono"
+                  className="w-full h-9 px-3 rounded-xl border border-slate-200 font-mono text-sm"
                 />
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">utm_campaign</label>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">utm_campaign</label>
                 <input
                   type="text"
                   value={whUtmCampaign}
                   onChange={(e) => setWhUtmCampaign(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200 font-mono"
+                  className="w-full h-9 px-3 rounded-xl border border-slate-200 font-mono text-sm"
                 />
               </div>
               <div className="flex items-end">
                 <button
                   type="submit"
                   disabled={busy}
-                  className="w-full h-9 px-4 rounded-xl bg-brand hover:bg-brand-deep text-white font-bold inline-flex items-center justify-center gap-1.5"
+                  className="w-full h-9 px-4 rounded-xl bg-brand hover:bg-brand-deep text-white text-sm font-bold inline-flex items-center justify-center gap-1.5"
                 >
-                  <Send className="w-3.5 h-3.5" />
+                  <Send className="w-4 h-4" />
                   <span>Gửi Webhook Intake</span>
                 </button>
               </div>
             </form>
+          </div>
+
+          {/* Bảng điều khiển 5 Tác vụ Nền (Background Workers) & Ma trận Kết nối API Thật/Giả lập */}
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+            {/* Cột trái: Điều khiển 5 Worker Jobs */}
+            <div className="xl:col-span-7 bg-white border border-slate-200 rounded-2xl p-5 shadow-card space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                <div>
+                  <h2 className="font-display font-bold text-base text-ink">
+                    Trung tâm Điều hành 5 Tác vụ Tự động (Background Workers)
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Kích hoạt trực tiếp hoặc theo dõi lịch sử thực thi của 5 tiến trình đồng bộ tự động
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void handleRunWorkerJob('ALL_JOBS')}
+                  className="h-9 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold inline-flex items-center gap-1.5 shadow-xs"
+                >
+                  <Play className="w-4 h-4" />
+                  <span>Chạy Tất Cả 5 Worker Jobs</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {[
+                  {
+                    code: 'D3_SYNC_FULL' as const,
+                    title: '1. Đồng bộ Đa kênh & Cache Từ khóa',
+                    schedule: 'Định kỳ 02:00 / 11:00 / 17:00',
+                    desc: 'Kéo chi phí Ads, GA4, GSC và làm mới cache từ khóa SEO.',
+                  },
+                  {
+                    code: 'GCLID_HOURLY_RETRY' as const,
+                    title: '2. Tra lại mã gclid bị trễ',
+                    schedule: 'Định kỳ mỗi 60 phút',
+                    desc: 'Quét các Lead <= 7 ngày có gclid nhưng chưa rõ chiến dịch.',
+                  },
+                  {
+                    code: 'GOOGLE_LEAD_RECONCILE' as const,
+                    title: '3. Đối soát Google Lead Form (T-1)',
+                    schedule: 'Định kỳ 02:15 sáng',
+                    desc: 'So khớp số Lead trên Google Ads với số Lead vào CRM.',
+                  },
+                  {
+                    code: 'SEO_SCHEDULED_PUBLISH' as const,
+                    title: '4. Xuất bản Bài SEO Đúng Giờ Hẹn',
+                    schedule: 'Định kỳ mỗi 5 phút',
+                    desc: 'Đẩy bài viết đã duyệt đến hạn lên 3 Website qua REST API.',
+                  },
+                  {
+                    code: 'OVERDUE_QUOTE_REMINDER' as const,
+                    title: '5. Nhắc Báo giá Quá hạn > 7 ngày',
+                    schedule: 'Định kỳ 08:00 sáng',
+                    desc: 'Gửi thông báo nhắc NVKD chăm sóc lại các báo giá chưa phản hồi.',
+                  },
+                ].map((job) => (
+                  <div
+                    key={job.code}
+                    className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 flex flex-col justify-between gap-2"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2">
+                        <strong className="text-sm text-slate-900 font-bold">{job.title}</strong>
+                        <span className="text-xs font-mono px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
+                          {job.schedule}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 mt-1">{job.desc}</p>
+                    </div>
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void handleRunWorkerJob(job.code)}
+                        className="px-3 py-1.5 rounded-lg bg-white hover:bg-brand hover:text-white border border-slate-300 text-slate-800 font-bold text-xs transition inline-flex items-center gap-1"
+                      >
+                        <Play className="w-3.5 h-3.5" />
+                        <span>Chạy ngay</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {data.workerHistory && data.workerHistory.length > 0 && (
+                <div className="pt-2 space-y-1.5">
+                  <span className="text-sm font-bold text-slate-700 block">
+                    Nhật ký thực thi Worker gần nhất:
+                  </span>
+                  <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                    {data.workerHistory.map((wh) => (
+                      <div
+                        key={wh.id}
+                        className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200/80 flex items-center justify-between gap-3 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <span className="font-mono font-bold text-brand mr-2">[{wh.jobCode}]</span>
+                          <span className="text-slate-700">{wh.summary}</span>
+                        </div>
+                        <span className="text-slate-400 font-mono shrink-0">
+                          {wh.durationMs}ms · {new Date(wh.executedAt).toLocaleTimeString('vi-VN')}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Cột phải: Ma trận Kết nối API Thật / Giả lập */}
+            <div className="xl:col-span-5 bg-white border border-slate-200 rounded-2xl p-5 shadow-card space-y-4">
+              <div className="border-b border-slate-100 pb-3">
+                <h2 className="font-display font-bold text-base text-ink">
+                  Ma trận Trạng thái Kết nối Tài nguyên Công ty (Dual-Mode Adapters)
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Hệ thống tự động chuyển từ <strong>Mô phỏng an toàn</strong> sang <strong>Kết nối thật (Live API)</strong> ngay khi cấu hình khóa kết nối
+                </p>
+              </div>
+
+              <div className="space-y-2.5">
+                {(data.adapterMatrix || []).map((item) => (
+                  <div
+                    key={item.code}
+                    className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 space-y-1"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <strong className="text-sm text-slate-900 font-bold">{item.name}</strong>
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-xs font-bold shrink-0 ${
+                          item.mode === 'LIVE_CONNECTED'
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : 'bg-amber-100 text-amber-900 border border-amber-300'
+                        }`}
+                      >
+                        {item.mode === 'LIVE_CONNECTED' ? '● Live API' : '◐ Mô phỏng (Chờ cấp Key)'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-600">{item.description}</p>
+                    <div className="text-xs text-slate-400 font-mono">
+                      Biến môi trường: {item.envKeysRequired.join(', ')}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </>
       )}
