@@ -38,11 +38,13 @@ export async function POST(req: Request) {
       userAgent: req.headers.get('user-agent') || undefined,
     });
 
+    const isHttps =
+      req.headers.get('x-forwarded-proto') === 'https' || req.url.startsWith('https://');
     const response = jsonSuccess({ user: result.user }, 200);
     response.cookies.set(APP_CONFIG.sessionCookieName, result.rawSessionToken, {
       httpOnly: true,
       sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      secure: isHttps,
       path: '/',
       expires: result.expiresAt,
     });

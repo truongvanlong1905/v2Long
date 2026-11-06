@@ -3,8 +3,15 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const defaultDbFile = path.resolve(__dirname, '../prisma/independent_v2.db').replace(/\\/g, '/');
-const defaultDbUrl = defaultDbFile.startsWith('/') ? `file://${defaultDbFile}` : `file:${defaultDbFile}`;
+const independentDbFile = path.resolve(__dirname, '../prisma/independent_v2.db').replace(/\\/g, '/');
+const devDbFile = path.resolve(__dirname, '../prisma/dev.db').replace(/\\/g, '/');
+const chosenDbFile =
+  fs.existsSync(independentDbFile) && fs.statSync(independentDbFile).size > 0
+    ? independentDbFile
+    : fs.existsSync(devDbFile) && fs.statSync(devDbFile).size > 0
+      ? devDbFile
+      : independentDbFile;
+const defaultDbUrl = chosenDbFile.startsWith('/') ? `file://${chosenDbFile}` : `file:${chosenDbFile}`;
 const targetDbUrl =
   process.env.DATABASE_URL &&
   process.env.DATABASE_URL !== 'file:./dev.db' &&
@@ -1037,7 +1044,8 @@ async function main() {
     });
   }
 
-  if (process.env.NODE_ENV !== 'production') {
+  const shouldSeedAccounts = process.env.SKIP_SEED_ACCOUNTS !== 'true';
+  if (shouldSeedAccounts) {
     const seedPassword = process.env.SEED_DEV_PASSWORD || 'ToanTrung@2026';
     const passwordHash = hashPassword(seedPassword);
 

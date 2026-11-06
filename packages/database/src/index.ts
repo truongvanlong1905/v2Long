@@ -2,6 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { PrismaClient } from '@prisma/client';
 
+function toSqliteFileUrl(filePath: string): string {
+  const norm = filePath.replace(/\\/g, '/');
+  return norm.startsWith('/') ? `file://${norm}` : `file:${norm}`;
+}
+
 function resolveIndependentSqliteUrl(): string {
   const cwd = process.cwd();
   const candidates = [
@@ -11,16 +16,16 @@ function resolveIndependentSqliteUrl(): string {
   ];
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
-      return `file:${candidate.replace(/\\/g, '/')}`;
+      return toSqliteFileUrl(candidate);
     }
   }
   for (const candidate of candidates) {
     const parent = path.dirname(candidate);
     if (fs.existsSync(parent)) {
-      return `file:${candidate.replace(/\\/g, '/')}`;
+      return toSqliteFileUrl(candidate);
     }
   }
-  return `file:${candidates[0].replace(/\\/g, '/')}`;
+  return toSqliteFileUrl(candidates[0]);
 }
 
 const resolvedDbUrl =

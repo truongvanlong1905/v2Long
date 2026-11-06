@@ -1,11 +1,25 @@
 'use strict';
 
-// Only apply on Windows to prevent transient EPERM/EEXIST collisions in Windows sandbox.
+const fs = require('node:fs');
+const path = require('node:path');
+
+// Ensure DATABASE_URL is always present in process.env before Next.js or Prisma Engine initializes
+if (
+  !process.env.DATABASE_URL ||
+  process.env.DATABASE_URL === 'file:./independent_v2.db' ||
+  process.env.DATABASE_URL === 'file:./dev.db'
+) {
+  const defaultDbFile = path
+    .resolve(__dirname, '..', 'packages', 'database', 'prisma', 'independent_v2.db')
+    .replace(/\\/g, '/');
+  process.env.DATABASE_URL = defaultDbFile.startsWith('/')
+    ? `file://${defaultDbFile}`
+    : `file:${defaultDbFile}`;
+}
+
+// Only apply mkdir patch on Windows to prevent transient EPERM/EEXIST collisions in Windows sandbox.
 // On Linux/POSIX systems (like Render, Docker, CI), keep native fast asynchronous filesystem calls.
 if (process.platform === 'win32') {
-  const fs = require('node:fs');
-  const path = require('node:path');
-
   const origMkdirSync = fs.mkdirSync.bind(fs);
   const origMkdir = fs.mkdir.bind(fs);
   const origPromisesMkdir = fs.promises.mkdir.bind(fs.promises);
