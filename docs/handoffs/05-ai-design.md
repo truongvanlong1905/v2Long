@@ -10,7 +10,7 @@ Kho mã nguồn GitHub: `https://github.com/truongvanlong1905/ToanTrungMar` (nh�
 ## 1. Hiện trạng & Nguồn nghiệp vụ chuẩn
 - Đã tiếp nhận và phân tích toàn diện **Tài liệu đặc tả BA: UC06 (Hỗ trợ thiết kế & phối cảnh AI)** kèm Sơ đồ hoạt động, Sơ đồ tuần tự và BPMN As-is/To-be.
 - Chi tiết đặc tả nghiệp vụ đầy đủ đã được ghi nhận tại [docs/modules/05-ai-design.md](../modules/05-ai-design.md).
-- Khung thư mục mã nguồn đã sẵn sàng: `apps/web/src/modules/05-ai-design/`, `apps/api/src/modules/05-ai-design/`, `packages/contracts/src/05-ai-design/`.
+- Mã nguồn hiện tại: Đã triển khai hoàn chỉnh (`apps/web/src/modules/05-ai-design/AiDesignWorkspace.tsx`, `apps/api/src/modules/05-ai-design/service.ts`, `packages/contracts/src/05-ai-design/index.ts`), bao gồm Studio 3 cột kéo thả 4 góc màn hình LED 3D, tạo Banner đa tỷ lệ, bảo vệ CSRF & chặn PII gửi sang AI, quản lý lịch sử phiên bản và tải ảnh hiện trạng/thành phẩm.
 
 ---
 

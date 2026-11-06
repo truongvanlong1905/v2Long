@@ -4,8 +4,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   AlertTriangle,
-  CheckCircle2,
   Lock,
+  MoreHorizontal,
+  Pencil,
   Plus,
   ShieldAlert,
   ShieldCheck,
@@ -28,6 +29,41 @@ import {
 import { apiRequest, ApiClientError } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
 
+const CONCISE_ROLE_BADGES: Record<RoleCode, { label: string; className: string }> = {
+  SALES: {
+    label: 'Sales',
+    className: 'bg-blue-50 text-blue-700 border-blue-200 font-medium',
+  },
+  SALES_LEAD: {
+    label: 'Lead Sales',
+    className: 'bg-indigo-50 text-indigo-700 font-semibold border-indigo-200',
+  },
+  MKT_STAFF: {
+    label: 'MKT',
+    className: 'bg-purple-50 text-purple-700 border-purple-200 font-medium',
+  },
+  ADS: {
+    label: 'Ads',
+    className: 'bg-cyan-50 text-cyan-700 border-cyan-200 font-medium',
+  },
+  MKT_LEAD: {
+    label: 'Lead MKT',
+    className: 'bg-emerald-50 text-emerald-700 font-semibold border-emerald-200',
+  },
+  DESIGNER: {
+    label: 'Design',
+    className: 'bg-amber-50 text-amber-700 border-amber-200 font-medium',
+  },
+  BOD: {
+    label: 'Giám đốc',
+    className: 'bg-rose-50 text-rose-700 font-semibold border-rose-200',
+  },
+  ADMIN: {
+    label: 'Admin',
+    className: 'bg-slate-900 text-white font-semibold border-slate-900',
+  },
+};
+
 export default function AdminUsersPage() {
   const { user } = useSession();
   const [users, setUsers] = useState<AdminUserDto[]>([]);
@@ -48,6 +84,13 @@ export default function AdminUsersPage() {
   const [userToDelete, setUserToDelete] = useState<AdminUserDto | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteDialogError, setDeleteDialogError] = useState<string | null>(null);
+
+  // 3-Dots Action Menu & Edit User Modal state (Enhancement 6 & 7)
+  const [openMenuUserId, setOpenMenuUserId] = useState<number | null>(null);
+  const [userToEdit, setUserToEdit] = useState<AdminUserDto | null>(null);
+  const [editRoleCode, setEditRoleCode] = useState<RoleCode>('SALES');
+  const [editDepartment, setEditDepartment] = useState<DepartmentCode>('sales');
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const loadUsers = useCallback(async () => {
     setErrorMsg(null);
@@ -297,110 +340,136 @@ export default function AdminUsersPage() {
                 <tr className="bg-slate-50/80 text-slate-500 border-b border-slate-200/80">
                   <th className="py-3.5 px-5 font-bold">Nhân sự</th>
                   <th className="py-3.5 px-5 font-bold">Phòng ban</th>
-                  <th className="py-3.5 px-5 font-bold">Vai trò BA</th>
-                  <th className="py-3.5 px-5 font-bold">Trạng thái</th>
+                  <th className="py-3.5 px-5 font-bold">Vai trò</th>
                   <th className="py-3.5 px-5 font-bold text-right">Thao tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr>
-                    <td colSpan={5} className="py-8 text-center text-slate-400">
+                    <td colSpan={4} className="py-8 text-center text-slate-400">
                       Đang tải danh sách nhân sự...
                     </td>
                   </tr>
                 ) : (
-                  users.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-50/60">
-                      <td className="py-3.5 px-5">
-                        <strong className="font-bold text-ink block">{item.fullName}</strong>
-                        <span className="text-slate-500">{item.email}</span>
-                        {item.phone && (
-                          <span className="block text-[11px] text-slate-400">{item.phone}</span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-5 text-slate-600">
-                        {DEPARTMENT_LABELS[item.department] || item.department}
-                      </td>
-                      <td className="py-3.5 px-5">
-                        <select
-                          aria-label={`Đổi vai trò của ${item.fullName}`}
-                          value={item.roleCode}
-                          disabled={item.id === user.id}
-                          onChange={(e) =>
-                            void handleChangeRole(item, e.target.value as RoleCode)
-                          }
-                          className="h-8 px-2.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-ink focus:border-brand focus:outline-none disabled:bg-slate-100 disabled:text-slate-500"
-                        >
-                          {ROLE_CODES.map((code) => (
-                            <option key={code} value={code}>
-                              {ROLE_LABELS[code]} ({code})
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="py-3.5 px-5">
-                        {item.isActive ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold">
-                            <CheckCircle2 className="w-3 h-3" />
-                            Hoạt động
+                  users.map((item) => {
+                    const roleMeta = CONCISE_ROLE_BADGES[item.roleCode] || {
+                      label: item.roleCode,
+                      className: 'bg-slate-100 text-slate-700 border-slate-200',
+                    };
+                    return (
+                      <tr key={item.id} className="hover:bg-slate-50/60">
+                        <td className="py-3.5 px-5">
+                          <div className="flex items-center gap-2">
+                            <strong className="font-bold text-ink">{item.fullName}</strong>
+                            {!item.isActive && (
+                              <span
+                                title="Tài khoản đang tạm khóa"
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-bold"
+                              >
+                                <Lock className="w-2.5 h-2.5" />
+                                Tạm khóa
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-slate-500">{item.email}</span>
+                          {item.phone && (
+                            <span className="block text-[11px] text-slate-400">{item.phone}</span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-5 text-slate-600 font-medium">
+                          {DEPARTMENT_LABELS[item.department] || item.department}
+                        </td>
+                        <td className="py-3.5 px-5">
+                          <span
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-md border text-xs ${roleMeta.className}`}
+                          >
+                            {roleMeta.label}
                           </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-semibold">
-                            <Lock className="w-3 h-3" />
-                            Đã khóa
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-5 text-right">
+                        </td>
+                        <td className="py-3.5 px-5 text-right relative">
                         {item.id === user.id ? (
                           <span className="text-[11px] text-slate-400 font-medium">
                             Tài khoản của bạn
                           </span>
                         ) : (
-                          <div className="inline-flex items-center justify-end gap-2">
-                            {/* Lock / Unlock Action */}
+                          <div className="inline-block text-left relative">
                             <button
                               type="button"
-                              onClick={() => void handleToggleActive(item)}
-                              className={`h-8 px-3 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 transition-colors ${
-                                item.isActive
-                                  ? 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100'
-                                  : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
-                              }`}
+                              aria-label={`Thao tác với ${item.fullName}`}
+                              onClick={() =>
+                                setOpenMenuUserId((prev) => (prev === item.id ? null : item.id))
+                              }
+                              className="w-8 h-8 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 grid place-items-center transition-colors shadow-2xs"
                             >
-                              {item.isActive ? (
-                                <>
-                                  <Lock className="w-3.5 h-3.5" />
-                                  <span>Khóa</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Unlock className="w-3.5 h-3.5" />
-                                  <span>Mở khóa</span>
-                                </>
-                              )}
+                              <MoreHorizontal className="w-4 h-4" />
                             </button>
 
-                            {/* Visually separated Delete Account Action */}
-                            <span aria-hidden="true" className="h-4 w-px bg-slate-200" />
+                            {openMenuUserId === item.id && (
+                              <>
+                                <div
+                                  className="fixed inset-0 z-30"
+                                  onClick={() => setOpenMenuUserId(null)}
+                                />
+                                <div className="absolute right-0 mt-1.5 w-48 rounded-xl bg-white border border-slate-200 shadow-xl py-1.5 z-40 text-xs">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenMenuUserId(null);
+                                      setUserToEdit(item);
+                                      setEditRoleCode(item.roleCode);
+                                      setEditDepartment(item.department);
+                                    }}
+                                    className="w-full px-3.5 py-2 text-left text-slate-700 hover:bg-slate-50 font-semibold flex items-center gap-2.5"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5 text-slate-500" />
+                                    <span>Sửa thông tin</span>
+                                  </button>
 
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setDeleteDialogError(null);
-                                setUserToDelete(item);
-                              }}
-                              className="h-8 px-3 rounded-lg bg-white border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold inline-flex items-center gap-1.5 transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Xóa tài khoản</span>
-                            </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenMenuUserId(null);
+                                      void handleToggleActive(item);
+                                    }}
+                                    className="w-full px-3.5 py-2 text-left text-slate-700 hover:bg-slate-50 font-semibold flex items-center gap-2.5"
+                                  >
+                                    {item.isActive ? (
+                                      <>
+                                        <Lock className="w-3.5 h-3.5 text-amber-600" />
+                                        <span>Khóa tài khoản</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Unlock className="w-3.5 h-3.5 text-emerald-600" />
+                                        <span>Mở khóa tài khoản</span>
+                                      </>
+                                    )}
+                                  </button>
+
+                                  <div className="my-1 border-t border-slate-100" />
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenMenuUserId(null);
+                                      setDeleteDialogError(null);
+                                      setUserToDelete(item);
+                                    }}
+                                    className="w-full px-3.5 py-2 text-left text-red-600 hover:bg-red-50 font-bold flex items-center gap-2.5"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                                    <span>Xóa</span>
+                                  </button>
+                                </div>
+                              </>
+                            )}
                           </div>
                         )}
                       </td>
                     </tr>
-                  ))
+                  );
+                  })
                 )}
               </tbody>
             </table>
@@ -524,6 +593,115 @@ export default function AdminUsersPage() {
           </form>
         </section>
       </div>
+
+      {/* Edit User Information Dialog */}
+      {userToEdit && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-[1px]"
+        >
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-elevated space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 text-[#1E3A8A] grid place-items-center shrink-0">
+                  <Pencil className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="font-display text-base font-bold text-slate-900">
+                    Sửa thông tin nhân sự
+                  </h2>
+                  <p className="text-xs text-slate-500">{userToEdit.fullName} · {userToEdit.email}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUserToEdit(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Vai trò BA</label>
+                <select
+                  value={editRoleCode}
+                  onChange={(e) => setEditRoleCode(e.target.value as RoleCode)}
+                  className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white font-semibold text-slate-800"
+                >
+                  {ROLE_CODES.map((code) => (
+                    <option key={code} value={code}>
+                      {ROLE_LABELS[code]} ({code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Phòng ban trực thuộc</label>
+                <select
+                  value={editDepartment}
+                  onChange={(e) => setEditDepartment(e.target.value as DepartmentCode)}
+                  className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white font-semibold text-slate-800"
+                >
+                  {DEPARTMENTS.map((dep) => (
+                    <option key={dep} value={dep}>
+                      {DEPARTMENT_LABELS[dep]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2.5 text-xs">
+              <button
+                type="button"
+                disabled={savingEdit}
+                onClick={() => setUserToEdit(null)}
+                className="h-9 px-4 rounded-xl border border-slate-200 font-bold text-slate-600 hover:bg-slate-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={savingEdit}
+                onClick={async () => {
+                  setSavingEdit(true);
+                  try {
+                    await apiRequest('/api/v1/users', {
+                      method: 'PATCH',
+                      csrfToken: user.csrfToken,
+                      body: {
+                        userId: userToEdit.id,
+                        roleCode: editRoleCode,
+                        department: editDepartment,
+                      },
+                    });
+                    setFeedback({
+                      type: 'ok',
+                      text: `Đã cập nhật vai trò & phòng ban cho ${userToEdit.fullName}.`,
+                    });
+                    setUserToEdit(null);
+                    await loadUsers();
+                  } catch (err) {
+                    setFeedback({
+                      type: 'err',
+                      text: err instanceof ApiClientError ? err.message : 'Lỗi cập nhật thông tin.',
+                    });
+                  } finally {
+                    setSavingEdit(false);
+                  }
+                }}
+                className="h-9 px-4 rounded-xl bg-[#1E3A8A] hover:bg-[#2563EB] text-white font-bold shadow-xs"
+              >
+                {savingEdit ? 'Đang lưu...' : 'Lưu thay đổi'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmation Dialog for Account Deletion */}
       {userToDelete && (

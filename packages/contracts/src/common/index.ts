@@ -431,6 +431,44 @@ export function toMonetaryAmountDto(
   };
 }
 
+/**
+ * Shared BA Lead Tier Predicates (L1 / L2 / L3) — Single Source of Truth for M02 & M04
+ * - L1: Tổng Lead thu nhận (mọi Lead)
+ * - L2: Lead hợp lệ (!isSpam)
+ * - L3: Lead hiệu quả truyền về Ads / tính CPL (UC03 BR6: trừ Spam tự động auto_excluded & Spam đã xác nhận confirmed_excluded)
+ */
+export function isL2Valid(lead: { isSpam: boolean }): boolean {
+  return !lead.isSpam;
+}
+
+export function isL3Effective(lead: {
+  isSpam: boolean;
+  spamAdsExclusionStatus?: string | null;
+}): boolean {
+  return (
+    !lead.isSpam ||
+    (lead.spamAdsExclusionStatus !== 'auto_excluded' &&
+      lead.spamAdsExclusionStatus !== 'confirmed_excluded')
+  );
+}
+
+export function getL2PrismaWhere() {
+  return { isSpam: false } as const;
+}
+
+export function getL3PrismaWhere() {
+  return {
+    OR: [
+      { isSpam: false },
+      {
+        spamAdsExclusionStatus: {
+          notIn: ['auto_excluded', 'confirmed_excluded'],
+        },
+      },
+    ],
+  };
+}
+
 export * from '../01-leads';
 export * from '../02-tracking-sync';
 export * from '../03-keywords-ads';

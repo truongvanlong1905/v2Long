@@ -10,9 +10,11 @@ import {
   requirePermissionSession,
 } from '../../../../../core/permissions';
 import {
+  assertLeadMutationScope,
   confirmReceiveLead,
   markLeadSpam,
   reassignLeadSales,
+  reviewPendingSpamLead,
   transitionLeadPipeline,
   updateLeadInformation,
 } from '../../../../../modules/01-leads/service';
@@ -81,11 +83,27 @@ export async function PATCH(
       return jsonSuccess({ id: res.lead.id, version: res.lead.version });
     }
 
+    if (action === 'review_spam') {
+      const decision = raw.decision === 'restore_lead' ? 'RESTORE_VALID' : 'CONFIRM_SPAM';
+      const updated = await reviewPendingSpamLead(
+        auth.user,
+        leadId,
+        decision,
+        typeof raw.note === 'string' ? raw.note : undefined,
+      );
+      return jsonSuccess({ id: updated.id, version: updated.version });
+    }
+
     if (action === 'add_note') {
       const note = String(raw.noteContent || '').trim();
       if (!note) {
         return jsonError('VALIDATION_ERROR', 'Nội dung ghi chú không được để trống.', 400);
       }
+      const existing = await prisma.lead.findUnique({ where: { id: leadId } });
+      if (!existing) {
+        return jsonError('NOT_FOUND', 'Không tìm thấy hồ sơ Lead.', 404);
+      }
+      assertLeadMutationScope(auth.user, existing);
       await prisma.leadActivity.create({
         data: {
           leadId,

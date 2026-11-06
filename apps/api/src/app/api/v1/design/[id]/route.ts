@@ -11,6 +11,7 @@ import { requirePermissionSession } from '../../../../../core/permissions';
 import {
   addProjectPhoto,
   approveDesignAssetVersion,
+  deleteDesignProject,
   deleteProjectPhoto,
   processChatDesignRequest,
   regenerateDesignDraftByAi,
@@ -200,14 +201,14 @@ export async function DELETE(
   const { searchParams } = new URL(req.url);
   const photoId = searchParams.get('photoId');
 
-  if (!photoId) {
-    return jsonError('MISSING_PARAM', 'Thiếu tham số photoId cần xóa.', 400);
-  }
-
   try {
+    if (!photoId) {
+      const res = await deleteDesignProject(auth.user, requestId);
+      return jsonSuccess(res);
+    }
     const res = await deleteProjectPhoto(auth.user, requestId, photoId);
     return jsonSuccess(res);
   } catch (err) {
-    return jsonError('DELETE_FAILED', err instanceof Error ? err.message : 'Xóa ảnh thất bại.', 400);
+    return jsonError('DELETE_FAILED', err instanceof Error ? err.message : 'Xóa thất bại.', 400);
   }
 }

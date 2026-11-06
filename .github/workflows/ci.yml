@@ -35,10 +35,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Generate Prisma Client & Push local test schema
+      - name: Generate Prisma Client, Push & Seed local test schema
         run: |
           npm run db:generate
-          npm run db:push
+          DATABASE_URL="file:./independent_v2.db" npm run db:push
+          npm run db:seed
+          cp packages/database/prisma/independent_v2.db packages/database/prisma/dev.db
 
       - name: Run Core security & RBAC unit tests
         run: npm run test:core

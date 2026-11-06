@@ -6,6 +6,8 @@ import {
 } from '@toantrung/database';
 import {
   CONTACT_CHANNEL_LABELS,
+  isL2Valid,
+  isL3Effective,
   toMonetaryAmountDto,
   type AttributionSummaryRowDto,
   type CampaignItemDto,
@@ -27,6 +29,7 @@ import {
   normalizeVietnamPhone,
   selectAutoAssignedSales,
 } from '../01-leads/service';
+import { refreshKeywordDerivedCacheFromCanonicalMetrics } from '../03-keywords-ads/service';
 
 export function resolveAttributionBySignals(input: {
   provider: 'WEBSITE_FORM' | 'GOOGLE_LEAD_FORM';
@@ -196,12 +199,10 @@ export async function ingestWebhookLeadWithErrorProtection(input: WebhookLeadInt
     const googleCampaignCode = input.tracking?.googleCampaignCode?.trim() || null;
 
     const allCampaigns = await prisma.campaign.findMany({ where: { isActive: true } });
-    const matchedByGclid =
-      googleCampaignCode
-        ? allCampaigns.find((c) => c.campaignCode.toLowerCase() === googleCampaignCode.toLowerCase()) || null
-        : gclid
-          ? allCampaigns.find((c) => c.platform === 'google_ads') || null
-          : null;
+    const matchedByGclid = googleCampaignCode
+      ? allCampaigns.find((c) => c.campaignCode.toLowerCase() === googleCampaignCode.toLowerCase()) ||
+        null
+      : null;
 
     const matchedByUtm = utmCampaign
       ? allCampaigns.find(
@@ -501,6 +502,8 @@ export async function triggerPlatformSyncExecution(input: TriggerPlatformSyncDto
     ? await retryUnresolvedGclids()
     : { scanned: 0, resolved: 0 };
 
+  await refreshKeywordDerivedCacheFromCanonicalMetrics({ force: true });
+
   return {
     syncLogId: syncLog.id,
     recordsSynced: 2,
@@ -532,46 +535,71 @@ function formatRatioPct(numerator: number, denominator: number): string {
 export async function getTrackingDashboardData(periodDays = 30): Promise<TrackingDashboardDto> {
   const cutoffDate = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000);
 
-  const leads = await prisma.lead.findMany({
-    where: { createdAt: { gte: cutoffDate } },
-    include: {
-      tracking: { include: { campaign: true } },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
-
-  const campaigns = await prisma.campaign.findMany({
-    include: {
-      dailyMetrics: true,
-      trackings: {
-        include: { lead: true },
+  const [leads, campaigns, syncLogs, reconciliations, webhookErrors] = await Promise.all([
+    prisma.lead.findMany({
+      where: { createdAt: { gte: cutoffDate } },
+      select: {
+        id: true,
+        leadCode: true,
+        contactChannel: true,
+        selfReportedSource: true,
+        isSpam: true,
+        spamAdsExclusionStatus: true,
+        pipelineStatus: true,
+        dealValueVnd: true,
+        createdAt: true,
+        tracking: {
+          select: {
+            marketingSource: true,
+            isRepeatLead: true,
+            isUnknownSource: true,
+            isUnknownCampaign: true,
+            isUtmGclidMismatch: true,
+            isUnmatchedUtm: true,
+            campaign: {
+              select: { id: true, campaignCode: true, campaignName: true },
+            },
+          },
+        },
       },
-    },
-    orderBy: { id: 'asc' },
-  });
-
-  const syncLogs = await prisma.platformSyncLog.findMany({
-    orderBy: { startedAt: 'desc' },
-    take: 10,
-  });
-
-  const reconciliations = await prisma.leadReconciliation.findMany({
-    include: { resolvedBy: { select: { fullName: true } } },
-    orderBy: { reconcileDate: 'desc' },
-    take: 10,
-  });
-
-  const webhookErrors = await prisma.webhookIntakeErrorLog.findMany({
-    orderBy: { createdAt: 'desc' },
-    take: 10,
-  });
-
-  // UC03 BR6: 3 cấp đếm Lead (L1 Lead thô, L2 Lead hợp lệ cho Pipeline, L3 Lead hiệu quả cho CPL/Ads)
-  const isL2Valid = (l: { isSpam: boolean }) => !l.isSpam;
-  const isL3Effective = (l: { isSpam: boolean; spamAdsExclusionStatus: string }) =>
-    !l.isSpam ||
-    (l.spamAdsExclusionStatus !== 'auto_excluded' &&
-      l.spamAdsExclusionStatus !== 'confirmed_excluded');
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.campaign.findMany({
+      include: {
+        dailyMetrics: {
+          where: { grain: 'campaign' },
+          select: { grain: true, spendMicros: true },
+        },
+        trackings: {
+          select: {
+            isRepeatLead: true,
+            lead: {
+              select: {
+                isSpam: true,
+                spamAdsExclusionStatus: true,
+                pipelineStatus: true,
+                dealValueVnd: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { id: 'asc' },
+    }),
+    prisma.platformSyncLog.findMany({
+      orderBy: { startedAt: 'desc' },
+      take: 10,
+    }),
+    prisma.leadReconciliation.findMany({
+      include: { resolvedBy: { select: { fullName: true } } },
+      orderBy: { reconcileDate: 'desc' },
+      take: 10,
+    }),
+    prisma.webhookIntakeErrorLog.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    }),
+  ]);
 
   const rawLeadsL1 = leads.length;
   const validLeadsL2 = leads.filter(isL2Valid).length;

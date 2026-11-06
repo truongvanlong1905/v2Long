@@ -28,7 +28,7 @@ const DEFAULT_BRANDING: PublicBrandingDto = {
   },
   loginHero: {
     slot: 'login_hero',
-    url: '/brand/showroom-toan-trung.webp',
+    url: '/brand/login-hero-led-building.jpg',
     isDefault: true,
     altText: 'Không gian trưng bày giải pháp màn hình LED Toàn Trung',
     coverPosition: 'center',

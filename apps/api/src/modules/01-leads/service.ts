@@ -261,6 +261,8 @@ export async function listLeadsForUser(
     status?: string;
     search?: string;
     includeSpam?: boolean;
+    limit?: number;
+    cursorId?: number;
   },
 ): Promise<{
   leads: LeadItemDto[];
@@ -304,31 +306,48 @@ export async function listLeadsForUser(
     ];
   }
 
-  const rows = await prisma.lead.findMany({
-    where: whereClause,
-    include: {
-      assignedSales: { select: { id: true, fullName: true } },
-      createdBy: { select: { id: true, fullName: true } },
-      receivedBy: { select: { id: true, fullName: true } },
-      matchedOldLead: { select: { id: true, leadCode: true, pipelineStatus: true } },
-      leadProducts: { include: { product: true } },
-      tracking: { include: { campaign: true } },
-      attachments: {
-        include: { uploadedBy: { select: { id: true, fullName: true } } },
-        orderBy: { uploadedAt: 'desc' },
-      },
-      activities: {
-        include: {
-          actionBy: { select: { fullName: true } },
-          fromSales: { select: { fullName: true } },
-          toSales: { select: { fullName: true } },
+  const takeLimit = Math.min(Math.max(filters?.limit ?? 200, 1), 500);
+
+  const [rows, { products, salesOptions }, alertRows] = await Promise.all([
+    prisma.lead.findMany({
+      where: whereClause,
+      ...(filters?.cursorId ? { cursor: { id: filters.cursorId }, skip: 1 } : {}),
+      take: takeLimit,
+      include: {
+        assignedSales: { select: { id: true, fullName: true } },
+        createdBy: { select: { id: true, fullName: true } },
+        receivedBy: { select: { id: true, fullName: true } },
+        matchedOldLead: { select: { id: true, leadCode: true, pipelineStatus: true } },
+        leadProducts: { include: { product: true } },
+        tracking: { include: { campaign: { select: { id: true, campaignCode: true, campaignName: true } } } },
+        attachments: {
+          include: { uploadedBy: { select: { id: true, fullName: true } } },
+          orderBy: { uploadedAt: 'desc' },
+          take: 15,
         },
-        orderBy: { createdAt: 'desc' },
-        take: 25,
+        activities: {
+          include: {
+            actionBy: { select: { fullName: true } },
+            fromSales: { select: { fullName: true } },
+            toSales: { select: { fullName: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 15,
+        },
       },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+      orderBy: { createdAt: 'desc' },
+    }),
+    listProductsAndSalesOptions(user),
+    prisma.priceCheckAlert.findMany({
+      where: { status: 'active' },
+      include: {
+        lead: { select: { leadCode: true } },
+        createdBy: { select: { id: true, fullName: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    }),
+  ]);
 
   const nowMs = Date.now();
   const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
@@ -420,8 +439,8 @@ export async function listLeadsForUser(
       quoteSentAt: r.firstQuoteSentAt ? r.firstQuoteSentAt.toISOString() : null,
       quoteRespondedAt: r.quoteRespondedAt ? r.quoteRespondedAt.toISOString() : null,
       isQuoteOverdue7Days: isOverdue7Days,
-      quoteValue: toMonetaryAmountDto(r.quoteValueVnd, 'VND', 'unit'),
-      dealValue: toMonetaryAmountDto(r.dealValueVnd, 'VND', 'unit'),
+      quoteValue: isAnonymized ? null : toMonetaryAmountDto(r.quoteValueVnd, 'VND', 'unit'),
+      dealValue: isAnonymized ? null : toMonetaryAmountDto(r.dealValueVnd, 'VND', 'unit'),
       isDuplicateAlert: r.isDuplicateAlert,
       duplicateType,
       duplicateOfLeadId: r.matchedOldLeadId,
@@ -469,17 +488,6 @@ export async function listLeadsForUser(
       attachments,
       activities,
     };
-  });
-
-  const { products, salesOptions } = await listProductsAndSalesOptions(user);
-
-  const alertRows = await prisma.priceCheckAlert.findMany({
-    where: { status: 'active' },
-    include: {
-      lead: { select: { leadCode: true } },
-      createdBy: { select: { id: true, fullName: true } },
-    },
-    orderBy: { createdAt: 'desc' },
   });
 
   const priceCheckAlerts: PriceCheckAlertDto[] = alertRows.map((a) => ({
@@ -605,11 +613,28 @@ export async function createManualLead(actor: SessionUserDto, input: CreateManua
   return ingested.lead;
 }
 
+export function assertLeadMutationScope(
+  actor: SessionUserDto,
+  existing: { assignedSalesId: number | null; createdByUserId: number | null },
+) {
+  if (
+    existing.assignedSalesId !== actor.id &&
+    existing.createdByUserId !== actor.id &&
+    !hasBaPermission(actor.roleCode, 'LEAD_VIEW_ALL')
+  ) {
+    throw new Error('Bạn chỉ được phép thao tác trên hồ sơ Lead do chính mình phụ trách.');
+  }
+}
+
 export async function confirmReceiveLead(
   actor: SessionUserDto,
   leadId: number,
   expectedVersion: number,
 ) {
+  const existing = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!existing) throw new Error('Không tìm thấy hồ sơ Lead.');
+  assertLeadMutationScope(actor, existing);
+
   return transitionLeadWithVersion(prisma, {
     leadId,
     expectedVersion,
@@ -633,6 +658,7 @@ export async function updateLeadInformation(
 ) {
   const existing = await prisma.lead.findUnique({ where: { id: leadId } });
   if (!existing) throw new Error('Không tìm thấy hồ sơ Lead.');
+  assertLeadMutationScope(actor, existing);
 
   const phoneToUse = input.phone ? input.phone : existing.phone;
   const { normalizedPhone, isUnstandardized } = normalizeVietnamPhone(phoneToUse);
@@ -735,10 +761,7 @@ export async function transitionLeadPipeline(
 ) {
   const existing = await prisma.lead.findUnique({ where: { id: leadId } });
   if (!existing) throw new Error('Không tìm thấy hồ sơ Lead.');
-
-  if (existing.assignedSalesId !== actor.id && !hasBaPermission(actor.roleCode, 'LEAD_VIEW_ALL')) {
-    throw new Error('Bạn chỉ được cập nhật trạng thái Pipeline của hồ sơ Lead do mình phụ trách.');
-  }
+  assertLeadMutationScope(actor, existing);
 
   if (input.toStatus === 'lost' && (!input.reason || !input.reason.trim())) {
     throw new Error('Bắt buộc chọn hoặc nhập lý do khi chuyển trạng thái sang "Thất bại" (UC02 5.1).');
@@ -804,6 +827,7 @@ export async function reassignLeadSales(
 ) {
   const existing = await prisma.lead.findUnique({ where: { id: leadId } });
   if (!existing) throw new Error('Không tìm thấy hồ sơ Lead.');
+  assertLeadMutationScope(actor, existing);
 
   const targetSales = await prisma.user.findFirst({
     where: {
@@ -893,6 +917,7 @@ export async function markLeadSpam(
 ) {
   const existing = await prisma.lead.findUnique({ where: { id: leadId } });
   if (!existing) throw new Error('Không tìm thấy hồ sơ Lead.');
+  assertLeadMutationScope(actor, existing);
 
   const isAutoExcludedReason =
     input.spamReason === 'SĐT không tồn tại' ||
@@ -932,6 +957,7 @@ export async function uploadLeadAttachment(params: {
 }) {
   const lead = await prisma.lead.findUnique({ where: { id: params.leadId } });
   if (!lead) throw new Error('Không tìm thấy hồ sơ Lead.');
+  assertLeadMutationScope(params.actor, lead);
 
   const saved = savePrivateBusinessFile({
     bucket: 'leads',
@@ -976,6 +1002,7 @@ export async function createCompetitorPriceCheckAlert(params: {
 }) {
   const lead = await prisma.lead.findUnique({ where: { id: params.leadId } });
   if (!lead) throw new Error('Không tìm thấy hồ sơ Lead.');
+  assertLeadMutationScope(params.actor, lead);
 
   let chatScreenshotUrl: string | null = null;
   if (params.screenshotBuffer && params.screenshotBuffer.length > 0) {
@@ -1055,3 +1082,114 @@ export async function createCompetitorPriceCheckAlert(params: {
 
   return alert;
 }
+
+/**
+ * M05 -> M01 Service Boundary (UC06 bước 7):
+ * Ghi lịch sử hoạt động Lead và gửi thông báo cho NVKD khi bản phối cảnh 3D hoàn thiện.
+ */
+export async function notifyLeadSalesOnDesignCompleted(params: {
+  leadId: number;
+  designRequestId: number;
+  versionNumber: number;
+  actor: SessionUserDto;
+  note?: string;
+}) {
+  const lead = await prisma.lead.findUnique({
+    where: { id: params.leadId },
+    select: {
+      id: true,
+      leadCode: true,
+      companyName: true,
+      contactName: true,
+      assignedSalesId: true,
+      createdByUserId: true,
+    },
+  });
+  if (!lead) return;
+
+  await prisma.leadActivity.create({
+    data: {
+      leadId: lead.id,
+      actionType: 'design_completed',
+      actionById: params.actor.id,
+      actorType: 'user',
+      note:
+        params.note ||
+        `Designer ${params.actor.fullName} đã hoàn thiện và phê duyệt bản phối cảnh 3D v${params.versionNumber} (Yêu cầu #${params.designRequestId}).`,
+    },
+  });
+
+  const targetUserIds = Array.from(
+    new Set([lead.assignedSalesId, lead.createdByUserId].filter((id): id is number => Boolean(id))),
+  );
+
+  if (targetUserIds.length > 0) {
+    await prisma.notification.createMany({
+      data: targetUserIds.map((uid) => ({
+        userId: uid,
+        title: `Hoàn thiện phối cảnh 3D: ${lead.leadCode}`,
+        summary: `${params.actor.fullName} đã hoàn tất bản phối cảnh v${params.versionNumber} cho ${lead.companyName || lead.contactName || lead.leadCode}.`,
+        category: 'Thiết kế 3D',
+        actionLabel: 'Xem bản phối cảnh',
+        actionUrl: `/design?leadId=${lead.id}`,
+        requiredPermission: 'LEAD_VIEW_OWN',
+      })),
+    });
+  }
+}
+
+/**
+ * UC01 4.4 & UC03 BR6: Duyệt hàng đợi Spam chờ xác nhận (pending_confirm -> confirmed_excluded hoặc khôi phục)
+ */
+export async function reviewPendingSpamLead(
+  actor: SessionUserDto,
+  leadId: number,
+  decision: 'CONFIRM_SPAM' | 'RESTORE_VALID',
+  note?: string,
+) {
+  if (!['SALES_LEAD', 'MKT_LEAD', 'BOD', 'ADMIN'].includes(actor.roleCode)) {
+    throw new Error('Chỉ Trưởng nhóm Kinh doanh / Marketing, Giám đốc hoặc Admin được duyệt hàng đợi Spam chờ xác nhận.');
+  }
+
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!lead) throw new Error('Không tìm thấy hồ sơ Lead.');
+
+  const isConfirmSpam = decision === 'CONFIRM_SPAM';
+  const updated = await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      isSpam: isConfirmSpam,
+      spamAdsExclusionStatus: isConfirmSpam ? 'confirmed_excluded' : 'none',
+      version: { increment: 1 },
+    },
+  });
+
+  await prisma.leadActivity.create({
+    data: {
+      leadId,
+      actionType: isConfirmSpam ? 'spam_confirmed_excluded' : 'spam_restored_valid',
+      actionById: actor.id,
+      actorType: 'user',
+      note:
+        note ||
+        (isConfirmSpam
+          ? 'Quản lý xác nhận Spam: Đã loại trừ khỏi mẫu số L3 / tập học Ads (UC03 BR6).'
+          : 'Quản lý khôi phục Lead hợp lệ từ hàng đợi chờ duyệt Spam.'),
+    },
+  });
+
+  return updated;
+}
+
+/**
+ * UC01 & UC02 5.2: Công tắc Online / Đang nhận Lead cho Nhân viên Kinh doanh
+ */
+export async function setSalesReceivingStatus(actor: SessionUserDto, isReceivingLeads: boolean) {
+  const updated = await prisma.user.update({
+    where: { id: actor.id },
+    data: { isReceivingLeads },
+    select: { id: true, fullName: true, isReceivingLeads: true },
+  });
+  return updated;
+}
+

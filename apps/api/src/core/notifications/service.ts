@@ -80,3 +80,31 @@ export async function markNotificationsRead(
 
   return listUserNotifications(userId, roleCode);
 }
+
+export async function createDispatchNotification(
+  userId: number,
+  roleCode: RoleCode,
+  input: {
+    title: string;
+    summary: string;
+    category?: string;
+    actionLabel?: string;
+    actionUrl?: string;
+  },
+) {
+  await prisma.notification.create({
+    data: {
+      userId,
+      title: input.title.trim().slice(0, 200),
+      summary: input.summary.trim().slice(0, 500),
+      category: (input.category || 'Báo cáo & Điều hành').trim().slice(0, 80),
+      isRead: false,
+      actionLabel: input.actionLabel || 'Xem báo cáo',
+      actionUrl: input.actionUrl || '/reports',
+      requiredPermission: 'DASHBOARD_VIEW',
+    },
+  });
+
+  return listUserNotifications(userId, roleCode);
+}
+

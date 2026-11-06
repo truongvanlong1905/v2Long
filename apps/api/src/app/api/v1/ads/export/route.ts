@@ -1,4 +1,5 @@
 import { prisma } from '@toantrung/database';
+import { hasBaPermission } from '@toantrung/contracts';
 import { jsonError } from '../../../../../core/http';
 import { requirePermissionSession } from '../../../../../core/permissions';
 import { buildStandardXlsxBuffer } from '../../../../../core/export/xlsx-builder';
@@ -6,6 +7,17 @@ import { buildStandardXlsxBuffer } from '../../../../../core/export/xlsx-builder
 export async function GET(request: Request) {
   const auth = await requirePermissionSession(request, 'EXPORT_DATA');
   if (!auth.ok) return auth.response;
+
+  if (
+    !hasBaPermission(auth.user.roleCode, 'AI_MARKETING_SEO') &&
+    !hasBaPermission(auth.user.roleCode, 'TRACKING_ADS_OPTIMIZE')
+  ) {
+    return jsonError(
+      'FORBIDDEN',
+      'Bạn không có quyền xuất dữ liệu Từ khóa SEO & Chiến dịch Quảng cáo.',
+      403,
+    );
+  }
 
   try {
     const [keywords, campaigns, dailyMetrics] = await Promise.all([
@@ -73,7 +85,11 @@ export async function GET(request: Request) {
           { header: 'Lượt chuyển đổi', key: 'conversions', width: 18, type: 'number' },
         ],
         rows: campaigns.map((c, idx) => {
-          const campMetrics = dailyMetrics.filter((m) => m.campaignId === c.id);
+          const campMetrics = dailyMetrics.filter(
+            (m) =>
+              m.grain === 'campaign' &&
+              (m.campaignId === c.id || m.campaignExternalId === c.campaignCode),
+          );
           const impressions = campMetrics.reduce((s, m) => s + m.impressions, 0);
           const clicks = campMetrics.reduce((s, m) => s + m.clicks, 0);
           const spendVnd = Number(campMetrics.reduce((s, m) => s + m.spendMicros, 0n) / 1_000_000n);

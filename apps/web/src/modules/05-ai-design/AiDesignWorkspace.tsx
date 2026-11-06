@@ -44,6 +44,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
+import { apiRequest } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
 
 interface LeadOpt {
@@ -109,6 +110,10 @@ export function AiDesignWorkspace() {
   // Right Tab: 'request' | 'specs'
   const [rightTab, setRightTab] = useState<'request' | 'specs'>('request');
 
+  // Responsive Pane Switcher for Mobile (<768px) & Tablet Drawer (768px-1279px) (Step 3)
+  const [mobilePane, setMobilePane] = useState<'projects' | 'canvas' | 'assistant'>('canvas');
+  const [tabletAssistantOpen, setTabletAssistantOpen] = useState(false);
+
   // Search Project
   const [searchProject, setSearchProject] = useState('');
 
@@ -130,6 +135,7 @@ export function AiDesignWorkspace() {
     bottomLeft: { x: 64.5, y: 70.1 },
   });
   const [draggingHandle, setDraggingHandle] = useState<keyof QuadCoordinatesDto | null>(null);
+  const [draggingCompare, setDraggingCompare] = useState(false);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
 
   // Modal: Create New Project
@@ -141,25 +147,29 @@ export function AiDesignWorkspace() {
   const [newNotes, setNewNotes] = useState('');
   const [newPrompt, setNewPrompt] = useState('Đặt màn hình ở tường bên phải, hiển thị sóng biển xanh và giữ nguyên nội thất.');
 
-  // Modal: Rename Project
+  // Modal / Inline Rename & Aspect Ratio Edit State (Enhancement 6)
   const [editingName, setEditingName] = useState(false);
   const [renameValue, setRenameValue] = useState('');
+  const [inlineEditProjId, setInlineEditProjId] = useState<number | null>(null);
+  const [inlineNameDraft, setInlineNameDraft] = useState('');
+  const [inlineAspectDraft, setInlineAspectDraft] = useState('16:9');
 
   // Load Data from API
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/v1/design', { cache: 'no-store' });
-      const json = await res.json();
-      if (!res.ok || json.error || !json.data) {
-        throw new Error(json.error?.message || 'Không thể tải dữ liệu phân hệ Thiết kế AI.');
-      }
-      const list: DesignRequestItemDto[] = json.data.requests || [];
+      const data = await apiRequest<{
+        requests: DesignRequestItemDto[];
+        leadOptions: LeadOpt[];
+        productOptions: ProductOpt[];
+        providerStatus: ProviderStatusInfo;
+      }>('/api/v1/design');
+      const list: DesignRequestItemDto[] = data.requests || [];
       setRequests(list);
-      setLeadOptions(json.data.leadOptions || []);
-      setProductOptions(json.data.productOptions || []);
-      setProviderStatus(json.data.providerStatus || null);
+      setLeadOptions(data.leadOptions || []);
+      setProductOptions(data.productOptions || []);
+      setProviderStatus(data.providerStatus || null);
 
       if (list.length > 0) {
         const currentReq = selectedId ? list.find((r) => r.id === selectedId) || list[0] : list[0];
@@ -189,10 +199,40 @@ export function AiDesignWorkspace() {
     void loadData();
   }, [loadData]);
 
+  // Auto-select or prefill project when navigated with ?leadId=<id> from LeadsWorkspace
+  useEffect(() => {
+    if (typeof window === 'undefined' || loading) return;
+    const params = new URLSearchParams(window.location.search);
+    const leadIdParam = Number(params.get('leadId'));
+    if (Number.isInteger(leadIdParam) && leadIdParam > 0) {
+      const existingReq = requests.find((r) => r.leadId === leadIdParam);
+      if (existingReq) {
+        setSelectedId(existingReq.id);
+      } else {
+        const opt = leadOptions.find((l) => l.id === leadIdParam);
+        setNewLeadId(String(leadIdParam));
+        if (opt) {
+          setNewProjectName(`Phối cảnh ${opt.leadCode}`);
+        }
+        setShowCreateModal(true);
+      }
+    }
+  }, [loading, requests, leadOptions]);
+
   // Current selected project & version
   const currentProject = requests.find((r) => r.id === selectedId) || requests[0] || null;
   const currentVersion = currentProject?.assetVersions.find((v) => v.id === selectedVersionId) ||
     currentProject?.assetVersions[currentProject.assetVersions.length - 1] || null;
+
+  // Immutable state updater for current project (Mục 2.4)
+  const updateCurrentProjectImmutable = useCallback(
+    (updater: (proj: DesignRequestItemDto) => DesignRequestItemDto) => {
+      if (!currentProject) return;
+      const targetId = currentProject.id;
+      setRequests((prev) => prev.map((r) => (r.id === targetId ? updater({ ...r }) : r)));
+    },
+    [currentProject],
+  );
 
   // Selected Photo
   const selectedPhoto = currentProject?.photos.find((p) => p.selected) || currentProject?.photos[0] || null;
@@ -210,21 +250,28 @@ export function AiDesignWorkspace() {
 
   const handleMouseMoveCanvas = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      if (!draggingHandle || !canvasContainerRef.current) return;
+      if (!canvasContainerRef.current) return;
       const rect = canvasContainerRef.current.getBoundingClientRect();
       const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
       const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
 
+      if (draggingCompare) {
+        setCompareSplit(Number(x.toFixed(1)));
+        return;
+      }
+
+      if (!draggingHandle) return;
       setQuad((prev) => ({
         ...prev,
         [draggingHandle]: { x: Number(x.toFixed(1)), y: Number(y.toFixed(1)) },
       }));
     },
-    [draggingHandle]
+    [draggingHandle, draggingCompare]
   );
 
   const handleMouseUpCanvas = useCallback(() => {
     setDraggingHandle(null);
+    setDraggingCompare(false);
   }, []);
 
   // Check PII on prompt typing
@@ -262,22 +309,20 @@ export function AiDesignWorkspace() {
         idempotencyKey: `chat-design-${currentProject.id}-v${currentProject.assetVersions.length + 1}-${Date.now()}`,
       };
 
-      const res = await fetch(`/api/v1/design/${currentProject.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const json = await res.json();
-      if (!res.ok || json.error) {
-        throw new Error(json.error?.message || 'Yêu cầu chỉnh sửa AI thất bại.');
-      }
+      const data = await apiRequest<{ versionNumber: number; versionId?: number }>(
+        `/api/v1/design/${currentProject.id}`,
+        {
+          method: 'PATCH',
+          csrfToken: user?.csrfToken,
+          body: payload,
+        },
+      );
 
       setChatPrompt('');
-      setSuccessToast(`Bản nháp mới (v${json.data.versionNumber}) đã được thêm vào thư viện.`);
+      setSuccessToast(`Bản nháp mới (v${data.versionNumber}) đã được thêm vào thư viện.`);
       await loadData();
-      if (json.data.versionId) {
-        setSelectedVersionId(json.data.versionId);
+      if (data.versionId) {
+        setSelectedVersionId(data.versionId);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Lỗi gửi yêu cầu AI.');
@@ -292,23 +337,18 @@ export function AiDesignWorkspace() {
     setSavingFinal(true);
     setError(null);
     try {
-      const res = await fetch(`/api/v1/design/${currentProject.id}`, {
+      await apiRequest(`/api/v1/design/${currentProject.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        csrfToken: user?.csrfToken,
+        body: {
           action: 'save_finished',
           expectedVersion: currentProject.version,
           versionId: currentVersion.id,
           note: 'Phê duyệt bản thiết kế hoàn thiện từ Studio AI',
-        }),
+        },
       });
 
-      const json = await res.json();
-      if (!res.ok || json.error) {
-        throw new Error(json.error?.message || 'Không thể lưu bản hoàn thiện.');
-      }
-
-      setSuccessToast('Đã lưu bản thiết kế hoàn thiện thành công.');
+      setSuccessToast('Đã lưu bản thiết kế hoàn thiện và thông báo cho NVKD.');
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Lỗi lưu bản hoàn thiện.');
@@ -359,22 +399,17 @@ export function AiDesignWorkspace() {
               quality: 'draft',
             };
 
-      const res = await fetch('/api/v1/design', {
+      const data = await apiRequest<{ id: number }>('/api/v1/design', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        csrfToken: user?.csrfToken,
+        body: payload,
       });
 
-      const json = await res.json();
-      if (!res.ok || json.error) {
-        throw new Error(json.error?.message || 'Tạo dự án mới thất bại.');
-      }
-
       setShowCreateModal(false);
-      setSuccessToast(`Đã tạo dự án #${json.data.id} thành công.`);
+      setSuccessToast(`Đã tạo dự án #${data.id} thành công.`);
       await loadData();
-      if (json.data.id) {
-        setSelectedId(json.data.id);
+      if (data.id) {
+        setSelectedId(data.id);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Lỗi tạo dự án mới.');
@@ -387,16 +422,14 @@ export function AiDesignWorkspace() {
   const handleRenameProject = async () => {
     if (!currentProject || !renameValue.trim()) return;
     try {
-      const res = await fetch(`/api/v1/design/${currentProject.id}`, {
+      await apiRequest(`/api/v1/design/${currentProject.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        csrfToken: user?.csrfToken,
+        body: {
           action: 'update_project',
           projectName: renameValue.trim(),
-        }),
+        },
       });
-      const json = await res.json();
-      if (!res.ok || json.error) throw new Error(json.error?.message || 'Đổi tên thất bại.');
       setEditingName(false);
       await loadData();
     } catch (err) {
@@ -413,19 +446,17 @@ export function AiDesignWorkspace() {
     reader.onload = async () => {
       const b64 = (reader.result as string).split(',')[1];
       try {
-        const res = await fetch(`/api/v1/design/${currentProject.id}`, {
+        await apiRequest(`/api/v1/design/${currentProject.id}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+          csrfToken: user?.csrfToken,
+          body: {
             action: 'add_photo',
             photoName: file.name,
             fileName: file.name,
             mimeType: file.type || 'image/jpeg',
             base64Data: b64,
-          }),
+          },
         });
-        const json = await res.json();
-        if (!res.ok || json.error) throw new Error(json.error?.message || 'Tải ảnh thất bại.');
         setSuccessToast('Đã tải ảnh hiện trạng mới lên dự án.');
         await loadData();
       } catch (err) {
@@ -523,258 +554,507 @@ export function AiDesignWorkspace() {
           <button
             onClick={handleSaveFinished}
             disabled={!currentProject || savingFinal}
-            className="flex items-center space-x-1.5 rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-blue-700 disabled:opacity-50"
+            className="flex items-center space-x-1.5 rounded-lg bg-[#1E3A8A] px-3 sm:px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#2563EB] disabled:opacity-50"
             title="Lưu bản thiết kế này làm phiên bản hoàn thiện chính thức"
           >
             <Check className="h-3.5 w-3.5" />
-            <span>{savingFinal ? 'Đang lưu...' : 'Lưu bản hoàn thiện'}</span>
+            <span className="hidden sm:inline">{savingFinal ? 'Đang lưu...' : 'Lưu bản hoàn thiện'}</span>
+          </button>
+
+          {/* Tablet Slide-out Assistant Trigger (768px - 1279px) */}
+          <button
+            type="button"
+            onClick={() => setTabletAssistantOpen((v) => !v)}
+            className="hidden md:inline-flex xl:hidden items-center space-x-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-[#1E3A8A] hover:bg-blue-100 transition"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-[#2563EB]" />
+            <span>Trợ lý AI</span>
           </button>
         </div>
       </div>
 
-      {/* 2. MAIN 3-PANEL STUDIO LAYOUT */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* ================= LEFT PANEL: 280px ================= */}
-        <div className="flex w-72 shrink-0 flex-col border-r border-slate-200 bg-white p-3.5 overflow-y-auto">
-          {/* Header & Create Project */}
-          <div className="mb-2.5 flex items-center justify-between">
-            <h2 className="text-sm font-bold text-slate-900">Dự án thiết kế</h2>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 shadow-xs"
-              title="Tạo dự án mới"
-            >
-              <Plus className="h-4 w-4" />
-            </button>
-          </div>
+      {/* Mobile Segmented 3-Tab Switcher (< 768px): [Dự án] | [Phối cảnh Canvas] | [Trợ lý AI] */}
+      <div className="md:hidden grid grid-cols-3 gap-1 bg-white border-b border-slate-200 px-3 py-1.5 shrink-0 text-xs font-bold">
+        {[
+          { id: 'projects' as const, label: 'Dự án & Ảnh' },
+          { id: 'canvas' as const, label: 'Phối cảnh Canvas' },
+          { id: 'assistant' as const, label: 'Trợ lý AI' },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setMobilePane(tab.id)}
+            className={`py-1.5 rounded-lg text-center transition ${
+              mobilePane === tab.id
+                ? 'bg-[#1E3A8A] text-white shadow-2xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-          {/* Search Project */}
-          <div className="mb-3">
-            <input
-              type="text"
-              placeholder="Q Tìm kiếm dự án..."
-              value={searchProject}
-              onChange={(e) => setSearchProject(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none"
-            />
-          </div>
-
-          {/* Project List */}
-          <div className="mb-3.5 space-y-1.5 max-h-48 overflow-y-auto pr-1">
-            {filteredProjects.map((proj) => {
-              const isSelected = proj.id === selectedId;
-              const photoThumb = resolveAssetUrl(proj.photos[0]?.url || proj.sitePhotoDownloadUrl);
-              return (
-                <button
-                  key={proj.id}
-                  onClick={() => {
-                    setSelectedId(proj.id);
-                    if (proj.placementQuad) setQuad(proj.placementQuad);
-                    if (proj.assetVersions.length > 0) {
-                      setSelectedVersionId(proj.assetVersions[proj.assetVersions.length - 1].id);
-                    }
-                    if (proj.designType === 'banner') {
-                      setCenterTab('banner');
-                    } else {
-                      setCenterTab('perspective');
-                    }
-                  }}
-                  className={`flex w-full items-center justify-between rounded-xl border p-2 text-left transition ${
-                    isSelected
-                      ? 'border-blue-600 bg-blue-50/70 shadow-xs ring-1 ring-blue-500/30'
-                      : 'border-slate-200 bg-white hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="flex items-center space-x-2.5 truncate">
-                    <div className="relative h-9 w-12 shrink-0 overflow-hidden rounded-md bg-slate-800 border border-slate-200">
-                      <img src={photoThumb} alt={proj.projectName} className="h-full w-full object-cover" />
-                    </div>
-                    <div className="truncate">
-                      <div className="truncate text-xs font-bold text-slate-800">{proj.projectName}</div>
-                      <div className="text-[11px] text-slate-400 truncate">
-                        {proj.designType === 'banner' ? 'Banner độc lập' : proj.leadCode ? `Lead: ${proj.leadCode}` : 'Phối cảnh 3D'}
-                      </div>
-                    </div>
-                  </div>
-                  {isSelected && <Check className="h-4 w-4 shrink-0 text-blue-600" />}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Project Details Box */}
-          {currentProject && (
-            <div className="mb-3.5 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-xs space-y-2">
-              <div className="flex items-center justify-between font-bold text-slate-800">
-                <span>Thông tin dự án</span>
-                <button
-                  onClick={() => {
-                    setRenameValue(currentProject.projectName);
-                    setEditingName(true);
-                  }}
-                  className="text-slate-400 hover:text-blue-600 flex items-center space-x-1"
-                  title="Đổi tên dự án"
-                >
-                  <Edit2 className="h-3 w-3" />
-                  <span className="text-[10px]">Sửa</span>
-                </button>
-              </div>
-              <div className="space-y-1 text-slate-600">
-                <div>
-                  <span className="text-slate-400">Tên: </span>
-                  <span className="font-semibold text-slate-800">{currentProject.projectName}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400">Người liên hệ: </span>
-                  <span>{currentProject.contactName || 'Chưa cập nhật'}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400">Ghi chú: </span>
-                  <span className="line-clamp-2">{currentProject.notes || 'Thiết kế phối cảnh màn hình LED.'}</span>
-                </div>
-              </div>
+      {/* 2. MAIN 3-PANEL STUDIO LAYOUT (Zero Dead-Space & Responsive 3-Tier) */}
+      <div className="relative flex flex-1 min-h-0 overflow-hidden">
+        {/* ================= LEFT PANEL: Col-Span-3 / 288px (Zero Bottom Blank Space) ================= */}
+        <div
+          className={`${
+            mobilePane === 'projects' ? 'flex w-full' : 'hidden'
+          } md:flex md:w-72 xl:w-80 shrink-0 flex-col h-full min-h-0 border-r border-slate-200 bg-white p-3.5 overflow-hidden`}
+        >
+          {/* Top Fixed Search & Create Project */}
+          <div className="shrink-0">
+            <div className="mb-2.5 flex items-center justify-between">
+              <h2 className="text-sm font-bold text-slate-900">Dự án thiết kế ({filteredProjects.length})</h2>
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="flex h-7 px-2.5 items-center gap-1 rounded-lg bg-[#1E3A8A] text-white text-[11px] font-bold transition hover:bg-[#2563EB] shadow-2xs"
+                title="Tạo dự án mới"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Mới</span>
+              </button>
             </div>
-          )}
 
-          {/* Source Photos Section: Only shown for 3D Perspective */}
-          {!isBannerProject && (
-            <div className="flex-1 flex flex-col min-h-0">
-              <div className="mb-1 flex items-center justify-between">
-                <div className="text-xs font-bold text-slate-900">
-                  Ảnh hiện trạng <span className="text-red-500">*</span>
-                </div>
-              </div>
-              <div className="mb-2 text-[11px] text-slate-400">Ảnh mặt bằng gốc để dựng LED</div>
+            <div className="mb-3">
+              <input
+                type="text"
+                placeholder="Tìm kiếm dự án, mã Lead..."
+                value={searchProject}
+                onChange={(e) => setSearchProject(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:border-[#2563EB] focus:bg-white focus:outline-none"
+              />
+            </div>
+          </div>
 
-              {/* Photos Grid */}
-              <div className="grid grid-cols-2 gap-2 mb-3 overflow-y-auto">
-                {currentProject?.photos.map((photo) => {
-                  const resolvedSrc = resolveAssetUrl(photo.url);
-                  return (
-                    <div
-                      key={photo.id}
-                      onClick={() => {
-                        if (currentProject) {
-                          currentProject.photos.forEach((p) => (p.selected = p.id === photo.id));
-                          setRequests([...requests]);
-                        }
-                      }}
-                      className={`group relative cursor-pointer overflow-hidden rounded-lg border transition ${
-                        photo.selected ? 'border-blue-600 ring-2 ring-blue-500/20' : 'border-slate-200 hover:border-slate-300'
-                      }`}
-                    >
-                      <div className="relative aspect-video w-full bg-slate-800">
-                        <img src={resolvedSrc} alt={photo.name} className="h-full w-full object-cover" />
-                        {photo.selected && (
-                          <div className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-blue-600 text-white shadow">
-                            <Check className="h-2.5 w-2.5" />
-                          </div>
-                        )}
-                      </div>
-                      <div className="p-1.5 bg-white text-[10px]">
-                        <div className="truncate font-medium text-slate-700">{photo.name}</div>
-                        <div className="mt-1 flex items-center justify-between text-[9px] text-slate-400">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const newName = prompt('Đổi tên ảnh hiện trạng:', photo.name);
-                              if (newName) {
-                                photo.name = newName;
-                                setRequests([...requests]);
-                              }
-                            }}
-                            className="hover:text-blue-600"
+          {/* Middle Flexible Scrollable Region (flex-1 min-h-0 overflow-y-auto) */}
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1">
+            {/* Compact Project List with Full CRUD (Create / Inline Edit / Hover Delete — Enhancement 6) */}
+            <div className="space-y-1.5">
+              {filteredProjects.map((proj) => {
+                const isSelected = proj.id === selectedId;
+                const isInlineEditing = inlineEditProjId === proj.id;
+                const photoThumb = resolveAssetUrl(proj.photos[0]?.url || proj.sitePhotoDownloadUrl);
+                const createdDateStr = proj.createdAt
+                  ? new Date(proj.createdAt).toLocaleDateString('vi-VN', {
+                      day: '2-digit',
+                      month: '2-digit',
+                    })
+                  : 'Hôm nay';
+
+                return (
+                  <div
+                    key={proj.id}
+                    onClick={() => {
+                      if (isInlineEditing) return;
+                      setSelectedId(proj.id);
+                      if (proj.placementQuad) setQuad(proj.placementQuad);
+                      if (proj.assetVersions.length > 0) {
+                        setSelectedVersionId(proj.assetVersions[proj.assetVersions.length - 1].id);
+                      }
+                      if (proj.designType === 'banner') {
+                        setCenterTab('banner');
+                      } else {
+                        setCenterTab('perspective');
+                      }
+                      setMobilePane('canvas');
+                    }}
+                    className={`group relative flex w-full items-center justify-between rounded-xl border p-2.5 text-left transition cursor-pointer ${
+                      isSelected
+                        ? 'border-[#2563EB] bg-blue-50/70 shadow-2xs ring-1 ring-[#2563EB]/25'
+                        : 'border-slate-200/90 bg-white hover:bg-slate-50'
+                    }`}
+                  >
+                    {isInlineEditing ? (
+                      <div
+                        className="w-full space-y-2 text-xs"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="text"
+                          value={inlineNameDraft}
+                          onChange={(e) => setInlineNameDraft(e.target.value)}
+                          placeholder="Tên dự án..."
+                          className="w-full h-7 px-2 rounded border border-blue-300 bg-white text-xs font-bold text-slate-900 focus:outline-none"
+                          autoFocus
+                        />
+                        <div className="flex items-center justify-between gap-1.5">
+                          <select
+                            value={inlineAspectDraft}
+                            onChange={(e) => setInlineAspectDraft(e.target.value)}
+                            className="h-7 px-1.5 rounded border border-slate-200 bg-white text-[11px] font-semibold text-slate-700"
                           >
-                            Đổi tên
-                          </button>
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              if (!currentProject) return;
-                              if (confirm(`Bạn có chắc muốn xóa "${photo.name}"?`)) {
+                            <option value="16:9">Tỷ lệ 16:9</option>
+                            <option value="4:3">Tỷ lệ 4:3</option>
+                            <option value="21:9">Tỷ lệ 21:9</option>
+                            <option value="1:1">Tỷ lệ 1:1</option>
+                          </select>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setInlineEditProjId(null)}
+                              className="h-6 px-2 rounded border border-slate-200 bg-white text-[10px] font-semibold text-slate-600"
+                            >
+                              Hủy
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const trimmed = inlineNameDraft.trim();
+                                if (!trimmed) return;
                                 try {
-                                  await fetch(`/api/v1/design/${currentProject.id}?photoId=${photo.id}`, {
-                                    method: 'DELETE',
+                                  await apiRequest(`/api/v1/design/${proj.id}`, {
+                                    method: 'PATCH',
+                                    csrfToken: user?.csrfToken,
+                                    body: {
+                                      action: 'update_project',
+                                      projectName: trimmed,
+                                    },
                                   });
-                                  await loadData();
+                                  setRequests((prev) =>
+                                    prev.map((r) =>
+                                      r.id === proj.id
+                                        ? {
+                                            ...r,
+                                            projectName: trimmed,
+                                            aspectRatio: inlineAspectDraft,
+                                          }
+                                        : r,
+                                    ),
+                                  );
+                                  setInlineEditProjId(null);
+                                  setSuccessToast(`Đã cập nhật dự án "${trimmed}" (${inlineAspectDraft}).`);
                                 } catch (err) {
-                                  alert('Không thể xóa ảnh.');
+                                  setError(
+                                    err instanceof Error ? err.message : 'Lỗi cập nhật dự án.',
+                                  );
                                 }
-                              }
-                            }}
-                            className="hover:text-red-600"
-                          >
-                            Xóa
-                          </button>
+                              }}
+                              className="h-6 px-2.5 rounded bg-[#1E3A8A] text-white text-[10px] font-bold"
+                            >
+                              Lưu
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    ) : (
+                      <>
+                        <div className="flex items-center space-x-2.5 min-w-0 flex-1">
+                          {/* Neat 48x48px Thumbnail */}
+                          <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-800 border border-slate-200">
+                            <img
+                              src={photoThumb}
+                              alt={proj.projectName}
+                              className="h-full w-full object-cover"
+                            />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-xs font-bold text-slate-900">
+                              {proj.projectName}
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                              <span className="px-1.5 py-0.2 rounded bg-blue-50 border border-blue-200 text-[#1E3A8A] font-mono font-bold">
+                                {proj.leadCode || (proj.designType === 'banner' ? 'BANNER' : `PRJ-${proj.id}`)}
+                              </span>
+                              <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-semibold">
+                                {proj.aspectRatio || '16:9'}
+                              </span>
+                              <span className="text-slate-400">{createdDateStr}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Hover CRUD Actions: Inline Edit + Quick Trash Confirmation */}
+                        <div
+                          className="flex items-center gap-1 shrink-0 ml-1"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setInlineEditProjId(proj.id);
+                              setInlineNameDraft(proj.projectName);
+                              setInlineAspectDraft(proj.aspectRatio || '16:9');
+                            }}
+                            title="Đổi tên dự án & tỷ lệ khung hình"
+                            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-slate-400 hover:text-[#2563EB] hover:bg-blue-50 transition"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (
+                                !confirm(
+                                  `Bạn có chắc chắn muốn xóa dự án "${proj.projectName}"?`,
+                                )
+                              ) {
+                                return;
+                              }
+                              try {
+                                await apiRequest(`/api/v1/design/${proj.id}`, {
+                                  method: 'DELETE',
+                                  csrfToken: user?.csrfToken,
+                                });
+                                setRequests((prev) => prev.filter((r) => r.id !== proj.id));
+                                setSuccessToast(`Đã xóa dự án "${proj.projectName}".`);
+                                await loadData();
+                              } catch (err) {
+                                setError(
+                                  err instanceof Error ? err.message : 'Không thể xóa dự án.',
+                                );
+                              }
+                            }}
+                            title="Xóa dự án"
+                            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                          {isSelected && (
+                            <Check className="h-4 w-4 shrink-0 text-[#2563EB] group-hover:hidden" />
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Source Photos Section for 3D Perspective */}
+            {!isBannerProject && (
+              <div className="pt-2 border-t border-slate-100">
+                <div className="mb-1 flex items-center justify-between">
+                  <div className="text-xs font-bold text-slate-900">
+                    Ảnh hiện trạng mặt bằng <span className="text-red-500">*</span>
+                  </div>
+                </div>
+                <div className="mb-2 text-[11px] text-slate-400">Chọn hoặc tải thêm góc chụp công trình</div>
+
+                <div className="grid grid-cols-2 gap-2 mb-2.5">
+                  {currentProject?.photos.map((photo) => {
+                    const resolvedSrc = resolveAssetUrl(photo.url);
+                    return (
+                      <div
+                        key={photo.id}
+                        onClick={() => {
+                          updateCurrentProjectImmutable((proj) => ({
+                            ...proj,
+                            photos: proj.photos.map((p) => ({ ...p, selected: p.id === photo.id })),
+                          }));
+                        }}
+                        className={`group relative cursor-pointer overflow-hidden rounded-lg border transition ${
+                          photo.selected
+                            ? 'border-[#2563EB] ring-2 ring-blue-500/20'
+                            : 'border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="relative aspect-video w-full bg-slate-800">
+                          <img src={resolvedSrc} alt={photo.name} className="h-full w-full object-cover" />
+                          {photo.selected && (
+                            <div className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#2563EB] text-white shadow">
+                              <Check className="h-2.5 w-2.5" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="p-1.5 bg-white text-[10px]">
+                          <div className="truncate font-medium text-slate-700">{photo.name}</div>
+                          <div className="mt-1 flex items-center justify-between text-[9px] text-slate-400">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const newName = prompt('Đổi tên ảnh hiện trạng:', photo.name);
+                                if (newName) {
+                                  updateCurrentProjectImmutable((proj) => ({
+                                    ...proj,
+                                    photos: proj.photos.map((p) =>
+                                      p.id === photo.id ? { ...p, name: newName } : p,
+                                    ),
+                                  }));
+                                }
+                              }}
+                              className="hover:text-[#2563EB]"
+                            >
+                              Đổi tên
+                            </button>
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if (!currentProject) return;
+                                if (confirm(`Bạn có chắc muốn xóa "${photo.name}"?`)) {
+                                  try {
+                                    await apiRequest(
+                                      `/api/v1/design/${currentProject.id}?photoId=${photo.id}`,
+                                      {
+                                        method: 'DELETE',
+                                        csrfToken: user?.csrfToken,
+                                      },
+                                    );
+                                    await loadData();
+                                  } catch {
+                                    alert('Không thể xóa ảnh.');
+                                  }
+                                }
+                              }}
+                              className="hover:text-red-600"
+                            >
+                              Xóa
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <label className="flex cursor-pointer items-center justify-center space-x-1.5 rounded-lg border border-dashed border-slate-300 bg-slate-50 py-2 text-xs font-semibold text-slate-600 transition hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700">
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Thêm ảnh hiện trạng</span>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="hidden"
+                    onChange={handleUploadPhoto}
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+
+          {/* Bottom Pinned Card (Zero Dead-Space): Project Summary & LED Aspect Ratio / Dimensions */}
+          {currentProject && (
+            <div className="mt-auto pt-3 border-t border-slate-200 shrink-0 space-y-2.5 text-xs">
+              <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-2.5 space-y-1.5">
+                <div className="flex items-center justify-between font-bold text-slate-800">
+                  <span className="truncate">{currentProject.projectName}</span>
+                  <button
+                    onClick={() => {
+                      setRenameValue(currentProject.projectName);
+                      setEditingName(true);
+                    }}
+                    className="text-slate-400 hover:text-[#2563EB] flex items-center space-x-1 shrink-0"
+                    title="Đổi tên dự án"
+                  >
+                    <Edit2 className="h-3 w-3" />
+                    <span className="text-[10px]">Đổi tên</span>
+                  </button>
+                </div>
+                <div className="text-[11px] text-slate-500 flex items-center justify-between">
+                  <span>Khách: {currentProject.contactName || 'Nội bộ'}</span>
+                  <span className="font-mono font-semibold text-[#1E3A8A]">
+                    {currentProject.productSpec?.pixelPitch || 'P2.5'}
+                  </span>
+                </div>
               </div>
 
-              {/* Upload Photo Button */}
-              <label className="flex cursor-pointer items-center justify-center space-x-1.5 rounded-lg border border-dashed border-slate-300 bg-slate-50 py-2 text-xs font-semibold text-slate-600 transition hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700">
-                <Plus className="h-3.5 w-3.5" />
-                <span>Thêm ảnh hiện trạng</span>
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  className="hidden"
-                  onChange={handleUploadPhoto}
-                />
-              </label>
-            </div>
-          )}
-
-          {/* Banner Project Settings: Shown when Banner project is selected */}
-          {isBannerProject && (
-            <div className="flex-1 flex flex-col min-h-0 space-y-3 text-xs">
-              <div className="font-bold text-slate-900">Cấu hình Banner LED</div>
-              <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-                <div>
-                  <label className="block text-slate-500 mb-1">Tỷ lệ khung hình:</label>
+              {/* Pinned LED Aspect Ratio & Dimension Quick Controls */}
+              <div className="rounded-xl border border-blue-200/80 bg-blue-50/40 p-2.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-[#1E3A8A] text-[11px]">
+                    {isBannerProject ? 'Tỷ lệ & Kích thước Banner' : 'Tỷ lệ & Khung Màn hình LED'}
+                  </span>
                   <select
-                    value={currentProject?.aspectRatio || '16:9'}
+                    value={currentProject.aspectRatio || '16:9'}
                     onChange={(e) => {
-                      if (currentProject) {
-                        currentProject.aspectRatio = e.target.value;
-                        setRequests([...requests]);
-                      }
+                      const val = e.target.value;
+                      updateCurrentProjectImmutable((proj) => ({ ...proj, aspectRatio: val }));
                     }}
-                    className="w-full rounded border border-slate-200 bg-white p-1.5 text-xs text-slate-800"
+                    className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] font-semibold text-slate-800"
                   >
-                    <option value="16:9">16:9 (Chuẩn màn hình LED ngang)</option>
-                    <option value="9:16">9:16 (Màn hình LED dọc / Poster)</option>
-                    <option value="1:1">1:1 (Banner Vuông)</option>
-                    <option value="21:9">21:9 (Màn hình siêu dài)</option>
+                    <option value="16:9">16:9</option>
+                    <option value="9:16">9:16</option>
+                    <option value="1:1">1:1</option>
+                    <option value="21:9">21:9</option>
                   </select>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-slate-500 mb-0.5">Rộng (px):</label>
-                    <input
-                      type="number"
-                      defaultValue={currentProject?.bannerWidthPx || 1920}
-                      className="w-full rounded border border-slate-200 p-1.5 text-xs text-slate-800"
-                    />
+
+                {isBannerProject ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] text-slate-500">Rộng (px)</label>
+                      <input
+                        type="number"
+                        value={currentProject.bannerWidthPx || 1920}
+                        onChange={(e) => {
+                          const val = Number(e.target.value) || 1920;
+                          updateCurrentProjectImmutable((proj) => ({ ...proj, bannerWidthPx: val }));
+                        }}
+                        className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-500">Cao (px)</label>
+                      <input
+                        type="number"
+                        value={currentProject.bannerHeightPx || 1080}
+                        onChange={(e) => {
+                          const val = Number(e.target.value) || 1080;
+                          updateCurrentProjectImmutable((proj) => ({ ...proj, bannerHeightPx: val }));
+                        }}
+                        className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs font-mono"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-slate-500 mb-0.5">Cao (px):</label>
-                    <input
-                      type="number"
-                      defaultValue={currentProject?.bannerHeightPx || 1080}
-                      className="w-full rounded border border-slate-200 p-1.5 text-xs text-slate-800"
-                    />
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] text-slate-500">Ngang (m)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={currentProject.screenWidthM || 4.8}
+                        onChange={(e) => {
+                          const nextW = Number(e.target.value) || 4.8;
+                          updateCurrentProjectImmutable((proj) => ({
+                            ...proj,
+                            screenWidthM: nextW,
+                            productSpec: proj.productSpec
+                              ? {
+                                  ...proj.productSpec,
+                                  areaM2: Number((nextW * (proj.screenHeightM || 2.7)).toFixed(2)),
+                                }
+                              : proj.productSpec,
+                          }));
+                        }}
+                        className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-500">Cao (m)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={currentProject.screenHeightM || 2.7}
+                        onChange={(e) => {
+                          const nextH = Number(e.target.value) || 2.7;
+                          updateCurrentProjectImmutable((proj) => ({
+                            ...proj,
+                            screenHeightM: nextH,
+                            productSpec: proj.productSpec
+                              ? {
+                                  ...proj.productSpec,
+                                  areaM2: Number(((proj.screenWidthM || 4.8) * nextH).toFixed(2)),
+                                }
+                              : proj.productSpec,
+                          }));
+                        }}
+                        className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs font-mono"
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
           )}
         </div>
 
         {/* ================= CENTER PANEL: FLEXIBLE CANVAS ================= */}
-        <div className="flex flex-1 flex-col overflow-hidden bg-slate-100">
+        <div
+          className={`${
+            mobilePane === 'canvas' ? 'flex' : 'hidden md:flex'
+          } flex-1 flex-col overflow-hidden bg-slate-100`}
+        >
           {/* Sub-bar: Status Toast + View Mode Toggle */}
           <div className="flex h-10 shrink-0 items-center justify-between bg-white px-4 border-b border-slate-200">
             {/* Status notice */}
@@ -972,7 +1252,15 @@ export function AiDesignWorkspace() {
                     style={{ left: `${compareSplit}%` }}
                     className="pointer-events-none absolute inset-y-0 w-0.5 bg-white shadow-2xl"
                   >
-                    <div className="pointer-events-auto absolute top-1/2 -ml-3.5 -mt-3.5 flex h-7 w-7 cursor-ew-resize items-center justify-center rounded-full bg-white shadow-lg text-xs font-bold text-slate-700">
+                    <div
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setDraggingCompare(true);
+                      }}
+                      className="pointer-events-auto absolute top-1/2 -ml-3.5 -mt-3.5 flex h-7 w-7 cursor-ew-resize items-center justify-center rounded-full bg-white shadow-lg text-xs font-bold text-slate-700 hover:scale-110 transition-transform"
+                      title="Kéo để so sánh trước/sau"
+                    >
                       ↔
                     </div>
                   </div>
@@ -1114,8 +1402,24 @@ export function AiDesignWorkspace() {
           </div>
         </div>
 
-        {/* ================= RIGHT PANEL: 340px ================= */}
-        <div className="flex w-84 shrink-0 flex-col border-l border-slate-200 bg-white">
+        {/* ================= RIGHT PANEL: Desktop Col-3 / Tablet Slide-over Drawer / Mobile Tab ================= */}
+        {tabletAssistantOpen && (
+          <button
+            type="button"
+            aria-label="Đóng trợ lý"
+            onClick={() => setTabletAssistantOpen(false)}
+            className="hidden md:block xl:hidden fixed inset-0 z-30 bg-slate-900/30 backdrop-blur-2xs"
+          />
+        )}
+        <div
+          className={`${
+            mobilePane === 'assistant' ? 'flex w-full' : 'hidden'
+          } ${
+            tabletAssistantOpen
+              ? 'md:flex md:fixed md:inset-y-16 md:right-0 md:z-40 md:w-84 md:shadow-2xl'
+              : 'xl:flex'
+          } xl:static xl:w-84 shrink-0 flex-col border-l border-slate-200 bg-white`}
+        >
           {/* Header with Tabs */}
           <div className="flex h-11 shrink-0 items-center justify-between border-b border-slate-200 px-4">
             <div className="flex items-center space-x-1.5 text-sm font-bold text-slate-900">
@@ -1267,9 +1571,12 @@ export function AiDesignWorkspace() {
                   onChange={(e) => {
                     const id = Number(e.target.value);
                     const opt = productOptions.find((p) => p.id === id);
-                    if (opt && currentProject) {
-                      currentProject.productName = opt.name;
-                      setRequests([...requests]);
+                    if (opt) {
+                      updateCurrentProjectImmutable((proj) => ({
+                        ...proj,
+                        productId: opt.id,
+                        productName: opt.name,
+                      }));
                     }
                   }}
                   className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-800"
@@ -1289,7 +1596,20 @@ export function AiDesignWorkspace() {
                   <input
                     type="number"
                     step="0.1"
-                    defaultValue={currentProject?.screenWidthM || 4.8}
+                    value={currentProject?.screenWidthM || 4.8}
+                    onChange={(e) => {
+                      const nextW = Number(e.target.value) || 4.8;
+                      updateCurrentProjectImmutable((proj) => ({
+                        ...proj,
+                        screenWidthM: nextW,
+                        productSpec: proj.productSpec
+                          ? {
+                              ...proj.productSpec,
+                              areaM2: Number((nextW * (proj.screenHeightM || 2.7)).toFixed(2)),
+                            }
+                          : proj.productSpec,
+                      }));
+                    }}
                     className="w-full rounded border border-slate-200 p-1.5 text-xs text-slate-800"
                   />
                 </div>
@@ -1298,7 +1618,20 @@ export function AiDesignWorkspace() {
                   <input
                     type="number"
                     step="0.1"
-                    defaultValue={currentProject?.screenHeightM || 2.7}
+                    value={currentProject?.screenHeightM || 2.7}
+                    onChange={(e) => {
+                      const nextH = Number(e.target.value) || 2.7;
+                      updateCurrentProjectImmutable((proj) => ({
+                        ...proj,
+                        screenHeightM: nextH,
+                        productSpec: proj.productSpec
+                          ? {
+                              ...proj.productSpec,
+                              areaM2: Number(((proj.screenWidthM || 4.8) * nextH).toFixed(2)),
+                            }
+                          : proj.productSpec,
+                      }));
+                    }}
                     className="w-full rounded border border-slate-200 p-1.5 text-xs text-slate-800"
                   />
                 </div>
@@ -1344,8 +1677,26 @@ export function AiDesignWorkspace() {
 
               {/* Apply Specs Button */}
               <button
-                onClick={() => {
-                  setSuccessToast('Đã áp dụng thông số vào phối cảnh AI.');
+                onClick={async () => {
+                  if (currentProject) {
+                    try {
+                      await apiRequest(`/api/v1/design/${currentProject.id}`, {
+                        method: 'PATCH',
+                        csrfToken: user?.csrfToken,
+                        body: {
+                          action: 'update_project',
+                          expectedVersion: currentProject.version,
+                          placementQuad: quad,
+                          notes: currentProject.notes,
+                          projectName: currentProject.projectName,
+                        },
+                      });
+                      await loadData();
+                    } catch {
+                      // fallback to local toast if unchanged
+                    }
+                  }
+                  setSuccessToast('Đã lưu và áp dụng thông số vào phối cảnh AI.');
                   setRightTab('request');
                 }}
                 className="w-full rounded-xl bg-blue-600 py-2.5 text-xs font-semibold text-white shadow hover:bg-blue-700 transition"

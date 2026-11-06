@@ -68,7 +68,12 @@ test('changed context updates the input hash in a newly generated packet', t => 
 test('output directory symlink cannot escape the repo', t => {
   const root = fixture(t); const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'toantrung-outside-'));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
-  fs.symlinkSync(outside, path.join(root, '.ai-context'), 'dir');
+  try {
+    fs.symlinkSync(outside, path.join(root, '.ai-context'), 'dir');
+  } catch (err) {
+    if (err && err.code === 'EPERM') return t.skip('Windows symlink requires elevated privileges');
+    throw err;
+  }
   exit(generate(root, ['--module', '01-leads', '--out', '.ai-context/escape.md']), 2);
   assert.ok(!fs.existsSync(path.join(outside, 'escape.md')));
 });
@@ -76,7 +81,13 @@ test('a required input symlink outside the repo is rejected', t => {
   const root = fixture(t); const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'toantrung-input-'));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
   fs.writeFileSync(path.join(outside, 'rules.md'), 'EXTERNAL_RULES');
-  fs.unlinkSync(path.join(root, 'AGENTS.md')); fs.symlinkSync(path.join(outside, 'rules.md'), path.join(root, 'AGENTS.md'));
+  fs.unlinkSync(path.join(root, 'AGENTS.md'));
+  try {
+    fs.symlinkSync(path.join(outside, 'rules.md'), path.join(root, 'AGENTS.md'));
+  } catch (err) {
+    if (err && err.code === 'EPERM') return t.skip('Windows symlink requires elevated privileges');
+    throw err;
+  }
   exit(generate(root, ['--module', '01-leads']), 2);
 });
 
@@ -84,7 +95,12 @@ test('a dangling output symlink is rejected before it can create an external tar
   const root = fixture(t); const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'toantrung-dangling-'));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, '.ai-context'));
-  fs.symlinkSync(path.join(outside, 'missing.md'), path.join(root, '.ai-context/dangling.md'));
+  try {
+    fs.symlinkSync(path.join(outside, 'missing.md'), path.join(root, '.ai-context/dangling.md'));
+  } catch (err) {
+    if (err && err.code === 'EPERM') return t.skip('Windows symlink requires elevated privileges');
+    throw err;
+  }
   exit(generate(root, ['--module', '01-leads', '--out', '.ai-context/dangling.md']), 2);
   assert.ok(!fs.existsSync(path.join(outside, 'missing.md')));
 });

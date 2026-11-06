@@ -72,7 +72,11 @@ function git(root, args) {
 }
 function assertGitRoot(root) {
   const top = git(root, ['rev-parse', '--show-toplevel']).trim();
-  if (fs.realpathSync(top) !== fs.realpathSync(root)) throw new InputError('Thư mục hiện tại phải là root Git của dự án.');
+  const realTop = (fs.realpathSync.native ? fs.realpathSync.native(top) : fs.realpathSync(top));
+  const realRoot = (fs.realpathSync.native ? fs.realpathSync.native(root) : fs.realpathSync(root));
+  if (process.platform === 'win32' ? realTop.toLowerCase() !== realRoot.toLowerCase() : realTop !== realRoot) {
+    throw new InputError('Thư mục hiện tại phải là root Git của dự án.');
+  }
 }
 function commitRef(root, ref) {
   if (typeof ref !== 'string' || !ref || /[\0\r\n]/.test(ref)) throw new InputError('Git ref không hợp lệ.');

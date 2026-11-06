@@ -37,6 +37,8 @@ model DesignRequest {
   aiUsageLogs         AiUsageLog[]
 
   @@index([leadId])
+  @@index([assignedDesignerId])
+  @@index([requestedBySalesId])
   @@index([assignedDesignerId, designStatus])
   @@index([requestType, designStatus])
   @@map("design_requests")

@@ -1,6 +1,6 @@
 # Toàn Trung V2 — Hệ thống nội bộ Marketing và Kinh doanh
 
-Monorepo Next.js + Prisma. Core (đăng nhập, phân quyền 8 vai trò BA, tài khoản, hồ sơ, thông báo, cài đặt thương hiệu) đã chạy; 5 module nghiệp vụ đang trống chờ 5 nhóm.
+Monorepo Next.js + Prisma. Toàn bộ Core (đăng nhập, phân quyền 8 vai trò BA, tài khoản, hồ sơ, thông báo, cài đặt thương hiệu) và **5 module nghiệp vụ (`01-leads` → `05-ai-design`)** đã được triển khai hoàn chỉnh theo đặc tả BA.
 
 ## Chạy nhanh
 

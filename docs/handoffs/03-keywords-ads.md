@@ -10,7 +10,7 @@ Kho mã nguồn GitHub: `https://github.com/truongvanlong1905/ToanTrungMar` (nh�
 ## 1. Hiện trạng & Nguồn nghiệp vụ chuẩn
 - Đã tiếp nhận và phân tích toàn diện **Tài liệu đặc tả BA: UC05 (Nội dung SEO tích hợp AI)**.
 - Chi tiết đặc tả nghiệp vụ đầy đủ đã được ghi nhận tại [docs/modules/03-keywords-ads.md](../modules/03-keywords-ads.md).
-- Khung thư mục mã nguồn đã sẵn sàng: `apps/web/src/modules/03-keywords-ads/`, `apps/api/src/modules/03-keywords-ads/`, `packages/contracts/src/03-keywords-ads/`.
+- Mã nguồn hiện tại: Đã triển khai hoàn chỉnh (`apps/web/src/modules/03-keywords-ads/SeoKeywordsWorkspace.tsx`, `apps/api/src/modules/03-keywords-ads/service.ts`, `packages/contracts/src/03-keywords-ads/index.ts`), bao gồm tổng hợp chiến dịch `grain = 'campaign'`, tính toán Derived Cache từ khóa từ kho D3, trình soạn thảo/duyệt/rút duyệt/đăng bài chuẩn SEO bằng AI trên 3 website Toàn Trung và xuất Excel `.xlsx`.
 
 ---
 

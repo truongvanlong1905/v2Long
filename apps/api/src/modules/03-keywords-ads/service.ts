@@ -55,20 +55,47 @@ function mapArticleStatusToDto(status: string, hasError: boolean): SeoArticleSta
   return 'DRAFT';
 }
 
-export async function refreshKeywordDerivedCacheFromCanonicalMetrics() {
-  const keywords = await prisma.seoKeyword.findMany();
+const KEYWORD_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+export async function refreshKeywordDerivedCacheFromCanonicalMetrics(options?: { force?: boolean }) {
   const now = new Date();
+  const staleThreshold = new Date(now.getTime() - KEYWORD_CACHE_TTL_MS);
+
+  const keywords = await prisma.seoKeyword.findMany({
+    where: options?.force
+      ? undefined
+      : {
+          OR: [
+            { cacheRefreshedAt: null },
+            { cacheRefreshedAt: { lt: staleThreshold } },
+          ],
+        },
+  });
+
+  if (keywords.length === 0) return;
+
   const startStr = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const endStr = now.toISOString().slice(0, 10);
+  const norms = keywords.map((k) => k.keywordNorm).filter(Boolean);
+
+  const allMetrics = norms.length > 0
+    ? await prisma.platformDailyMetric.findMany({
+        where: {
+          keywordTextNorm: { in: norms },
+          metricDate: { gte: startStr, lte: endStr },
+        },
+      })
+    : [];
+
+  const metricsByNorm = new Map<string, typeof allMetrics>();
+  for (const m of allMetrics) {
+    const arr = metricsByNorm.get(m.keywordTextNorm) || [];
+    arr.push(m);
+    metricsByNorm.set(m.keywordTextNorm, arr);
+  }
 
   for (const kw of keywords) {
-    const metrics = await prisma.platformDailyMetric.findMany({
-      where: {
-        keywordTextNorm: kw.keywordNorm,
-        metricDate: { gte: startStr, lte: endStr },
-      },
-    });
-
+    const metrics = metricsByNorm.get(kw.keywordNorm) || [];
     if (metrics.length > 0) {
       const adsClicks = metrics
         .filter((m) => m.platform === 'google_ads')
@@ -92,12 +119,18 @@ export async function refreshKeywordDerivedCacheFromCanonicalMetrics() {
           cacheRefreshedAt: now,
         },
       });
+    } else {
+      await prisma.seoKeyword.update({
+        where: { id: kw.id },
+        data: { cacheRefreshedAt: now },
+      });
     }
   }
 }
 
 export async function listKeywordsAndArticlesForUser(user: SessionUserDto): Promise<AdsWorkspacePayloadDto> {
-  await refreshKeywordDerivedCacheFromCanonicalMetrics();
+  // Only refresh if cache is missing or older than 30 minutes
+  await refreshKeywordDerivedCacheFromCanonicalMetrics({ force: false });
 
   const [keywordRows, campaignRows, dailyMetricRows] = await Promise.all([
     prisma.seoKeyword.findMany({
@@ -111,14 +144,17 @@ export async function listKeywordsAndArticlesForUser(user: SessionUserDto): Prom
     }),
     prisma.platformDailyMetric.findMany({
       where: {
-        platform: { in: ['google_ads', 'facebook', 'facebook_ads', 'search_console'] },
+        grain: 'campaign',
+        platform: { in: ['google_ads', 'facebook', 'facebook_ads'] },
       },
       orderBy: { metricDate: 'desc' },
     }),
   ]);
 
-  const adsMetrics = dailyMetricRows.filter((m) =>
-    ['google_ads', 'facebook', 'facebook_ads'].includes(m.platform),
+  const adsMetrics = dailyMetricRows.filter(
+    (m) =>
+      m.grain === 'campaign' &&
+      ['google_ads', 'facebook', 'facebook_ads'].includes(m.platform),
   );
 
   const totalImpressions = adsMetrics.reduce((sum, m) => sum + m.impressions, 0);

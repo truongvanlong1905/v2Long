@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   AlertTriangle,
   ArrowUpRight,
+  BarChart3,
   Bell,
   Check,
   CheckCheck,
@@ -13,25 +14,30 @@ import {
   Info,
   ShieldCheck,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 import type { NotificationDto } from '@toantrung/contracts';
 import { apiRequest } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
 
-type FilterTab = 'all' | 'unread' | 'read';
+type FilterTab = 'all' | 'unread' | 'leads' | 'price_alerts' | 'reports';
 
 function getCategoryVisual(category: string, isRead: boolean) {
   const normalized = category.trim().toLowerCase();
-  if (normalized.includes('cảnh báo') || normalized.includes('warning')) {
+  if (
+    normalized.includes('cảnh báo') ||
+    normalized.includes('dò giá') ||
+    normalized.includes('warning')
+  ) {
     return {
       Icon: AlertTriangle,
       badgeClass: 'bg-amber-50 border border-amber-200 text-amber-800',
       iconBoxClass: 'bg-amber-50 text-amber-600 border border-amber-200/80',
     };
   }
-  if (normalized.includes('bảo mật')) {
+  if (normalized.includes('báo cáo') || normalized.includes('report')) {
     return {
-      Icon: ShieldCheck,
+      Icon: BarChart3,
       badgeClass: 'bg-emerald-50 border border-emerald-200 text-emerald-800',
       iconBoxClass: isRead
         ? 'bg-slate-100 text-slate-500 border border-slate-200/70'
@@ -41,13 +47,13 @@ function getCategoryVisual(category: string, isRead: boolean) {
   if (normalized.includes('lead') || normalized.includes('kinh doanh')) {
     return {
       Icon: FileSpreadsheet,
-      badgeClass: 'bg-brand-soft border border-brand-border text-brand',
+      badgeClass: 'bg-blue-50 border border-blue-200 text-[#1E3A8A]',
       iconBoxClass: isRead
         ? 'bg-slate-100 text-slate-500 border border-slate-200/70'
-        : 'bg-brand-soft text-brand border border-brand-border',
+        : 'bg-blue-50 text-[#2563EB] border border-blue-200',
     };
   }
-  if (normalized.includes('cập nhật')) {
+  if (normalized.includes('thiết kế') || normalized.includes('ai')) {
     return {
       Icon: Sparkles,
       badgeClass: 'bg-violet-50 border border-violet-200 text-violet-700',
@@ -61,7 +67,7 @@ function getCategoryVisual(category: string, isRead: boolean) {
     badgeClass: 'bg-slate-100 border border-slate-200 text-slate-700',
     iconBoxClass: isRead
       ? 'bg-slate-100 text-slate-500 border border-slate-200/70'
-      : 'bg-brand-soft text-brand border border-brand-border',
+      : 'bg-blue-50 text-[#2563EB] border border-blue-200',
   };
 }
 
@@ -71,7 +77,12 @@ export default function NotificationsPage() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [filter, setFilter] = useState<FilterTab>('all');
   const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState<number | 'all' | null>(null);
+  const [busyId, setBusyId] = useState<number | 'all' | 'batch' | null>(null);
+
+  // Batch selection & Mobile swipe-to-dismiss state (Step 4.2)
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [dismissedIds, setDismissedIds] = useState<number[]>([]);
+  const touchStartXRef = useRef<Record<number, number>>({});
 
   const loadNotifications = useCallback(async () => {
     try {
@@ -112,40 +123,87 @@ export default function NotificationsPage() {
     }
   };
 
-  const filteredItems = items.filter((item) => {
+  const handleDeleteSelected = async () => {
+    if (selectedIds.length === 0) return;
+    setBusyId('batch');
+    try {
+      // Mark selected unread items as read on server & dismiss locally
+      for (const id of selectedIds) {
+        const target = items.find((i) => i.id === id);
+        if (target && !target.isRead && user) {
+          await apiRequest('/api/v1/notifications', {
+            method: 'PATCH',
+            csrfToken: user.csrfToken,
+            body: { notificationId: id },
+          });
+        }
+      }
+      setDismissedIds((prev) => [...new Set([...prev, ...selectedIds])]);
+      setSelectedIds([]);
+      await loadNotifications();
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const visibleItems = items.filter((item) => !dismissedIds.includes(item.id));
+
+  const filteredItems = visibleItems.filter((item) => {
+    const cat = `${item.category} ${item.title}`.toLowerCase();
     if (filter === 'unread') return !item.isRead;
-    if (filter === 'read') return item.isRead;
+    if (filter === 'leads') return cat.includes('lead') || cat.includes('kinh doanh');
+    if (filter === 'price_alerts')
+      return cat.includes('cảnh báo') || cat.includes('dò giá') || cat.includes('quá hạn');
+    if (filter === 'reports') return cat.includes('báo cáo') || cat.includes('đồng bộ');
     return true;
   });
 
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  };
+
   return (
     <div className="space-y-6">
-      {/* Header — No decorative "Không gian làm việc" eyebrow */}
+      {/* Header & Batch Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="font-display text-2xl sm:text-3xl font-bold text-ink tracking-tight">
-            Thông báo
+          <h1 className="font-display text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">
+            Trung tâm Thông báo
           </h1>
-          <p className="text-[13px] text-ink-muted mt-1">
-            Cập nhật công việc và hệ thống thuộc phạm vi tài khoản của bạn.
+          <p className="text-[13px] text-slate-500 mt-1">
+            Cập nhật Lead mới, cảnh báo dò giá và báo cáo phân quyền thuộc tài khoản của bạn.
           </p>
         </div>
 
-        <button
-          type="button"
-          disabled={busyId !== null || unreadCount === 0}
-          onClick={() => void handleMarkRead(undefined, true)}
-          className="self-start sm:self-auto h-10 px-4 rounded-xl bg-brand hover:bg-brand-deep text-white text-xs font-bold inline-flex items-center gap-2 shadow-sm transition-colors disabled:opacity-50"
-        >
-          <CheckCheck className="w-4 h-4" />
-          <span>
-            {busyId === 'all' ? 'Đang xử lý...' : 'Đánh dấu tất cả đã đọc'}
-          </span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          {selectedIds.length > 0 && (
+            <button
+              type="button"
+              disabled={busyId !== null}
+              onClick={() => void handleDeleteSelected()}
+              className="h-10 px-4 rounded-xl bg-red-50 border border-red-200 hover:bg-red-600 text-red-700 hover:text-white text-xs font-bold inline-flex items-center gap-1.5 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>Xóa đã chọn ({selectedIds.length})</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            disabled={busyId !== null || unreadCount === 0}
+            onClick={() => void handleMarkRead(undefined, true)}
+            className="h-10 px-4 rounded-xl bg-[#1E3A8A] hover:bg-[#2563EB] text-white text-xs font-bold inline-flex items-center gap-2 shadow-sm transition-colors disabled:opacity-50"
+          >
+            <CheckCheck className="w-4 h-4" />
+            <span>{busyId === 'all' ? 'Đang xử lý...' : 'Đánh dấu tất cả đã đọc'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Unread Summary Banner */}
-      <section className="rounded-2xl bg-gradient-to-r from-[#143B85] via-[#1E53A3] to-[#3273C2] text-white p-5 sm:p-6 flex flex-wrap items-center justify-between gap-4 shadow-card">
+      <section className="rounded-2xl bg-gradient-to-r from-[#1E3A8A] via-[#1E53A3] to-[#2563EB] text-white p-5 sm:p-6 flex flex-wrap items-center justify-between gap-4 shadow-card">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 rounded-2xl bg-white/15 border border-white/25 grid place-items-center shrink-0">
             <Bell className="w-5 h-5" />
@@ -157,16 +215,16 @@ export default function NotificationsPage() {
                 : 'Bạn đã xem hết tất cả thông báo'}
             </strong>
             <p className="text-xs text-sky-100/90 mt-1">
-              Các thông báo mới được làm nổi bật để bạn ưu tiên kiểm tra và mở nhanh tác vụ liên quan.
+              Trên điện thoại, bạn có thể vuốt ngang thẻ thông báo để ẩn nhanh hoặc chạm để mở tác vụ.
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 text-xs">
           <span className="px-3 py-1.5 rounded-xl bg-white/15 border border-white/20 font-semibold">
-            Tổng số: {items.length}
+            Hiển thị: {visibleItems.length}
           </span>
-          <span className="px-3 py-1.5 rounded-xl bg-white text-brand font-bold">
+          <span className="px-3 py-1.5 rounded-xl bg-white text-[#1E3A8A] font-bold">
             Chưa đọc: {unreadCount}
           </span>
         </div>
@@ -175,13 +233,19 @@ export default function NotificationsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Main Inbox Card */}
         <section className="lg:col-span-8 bg-white border border-slate-200/80 rounded-2xl shadow-card overflow-hidden">
-          {/* Filter Tabs ("Tất cả", "Chưa đọc", "Đã đọc") */}
-          <div className="px-5 sm:px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2" role="tablist" aria-label="Bộ lọc thông báo">
+          {/* 5 Responsive Filter Tabs: "Tất cả", "Chưa đọc", "Lead mới", "Cảnh báo giá", "Báo cáo" */}
+          <div className="px-4 sm:px-6 py-3.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+            <div
+              className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0"
+              role="tablist"
+              aria-label="Bộ lọc thông báo"
+            >
               {[
-                { id: 'all' as const, label: 'Tất cả', count: items.length },
-                { id: 'unread' as const, label: 'Chưa đọc', count: unreadCount },
-                { id: 'read' as const, label: 'Đã đọc', count: items.length - unreadCount },
+                { id: 'all' as const, label: 'Tất cả' },
+                { id: 'unread' as const, label: 'Chưa đọc' },
+                { id: 'leads' as const, label: 'Lead mới' },
+                { id: 'price_alerts' as const, label: 'Cảnh báo giá' },
+                { id: 'reports' as const, label: 'Báo cáo' },
               ].map((tab) => {
                 const active = filter === tab.id;
                 return (
@@ -191,24 +255,37 @@ export default function NotificationsPage() {
                     role="tab"
                     aria-selected={active}
                     onClick={() => setFilter(tab.id)}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-2 transition-colors ${
+                    className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${
                       active
-                        ? 'bg-brand text-white shadow-sm'
-                        : 'bg-slate-50 text-slate-600 hover:bg-slate-100 hover:text-ink'
+                        ? 'bg-[#1E3A8A] text-white shadow-xs'
+                        : 'bg-slate-50 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                     }`}
                   >
-                    <span>{tab.label}</span>
-                    <span
-                      className={`px-1.5 py-0.5 rounded-md text-[11px] ${
-                        active ? 'bg-white/20 text-white' : 'bg-white text-slate-600'
-                      }`}
-                    >
-                      {tab.count}
-                    </span>
+                    {tab.label}
                   </button>
                 );
               })}
             </div>
+
+            {filteredItems.length > 0 && (
+              <label className="inline-flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={
+                    filteredItems.length > 0 &&
+                    filteredItems.every((i) => selectedIds.includes(i.id))
+                  }
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setSelectedIds(filteredItems.map((i) => i.id));
+                    } else {
+                      setSelectedIds([]);
+                    }
+                  }}
+                />
+                <span>Chọn tất cả</span>
+              </label>
+            )}
           </div>
 
           {/* Notification Items List */}
@@ -222,12 +299,10 @@ export default function NotificationsPage() {
                 <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 grid place-items-center mx-auto mb-3">
                   <Bell className="w-5 h-5" />
                 </div>
-                <p className="text-sm font-bold text-ink">
-                  {filter === 'unread'
-                    ? 'Không còn thông báo chưa đọc'
-                    : 'Không có thông báo nào trong mục này'}
+                <p className="text-sm font-bold text-slate-800">
+                  Không có thông báo nào trong danh mục này
                 </p>
-                <p className="text-xs text-ink-muted mt-1">
+                <p className="text-xs text-slate-400 mt-1">
                   Khi có cập nhật mới liên quan đến công việc của bạn, thông báo sẽ hiển thị tại đây.
                 </p>
               </div>
@@ -237,17 +312,36 @@ export default function NotificationsPage() {
                   item.category,
                   item.isRead,
                 );
+                const checked = selectedIds.includes(item.id);
                 return (
                   <article
                     key={item.id}
-                    className={`relative px-5 sm:px-6 py-4 sm:py-5 transition-colors ${
+                    onTouchStart={(e) => {
+                      touchStartXRef.current[item.id] = e.changedTouches[0]?.clientX ?? 0;
+                    }}
+                    onTouchEnd={(e) => {
+                      const startX = touchStartXRef.current[item.id] ?? 0;
+                      const endX = e.changedTouches[0]?.clientX ?? 0;
+                      if (Math.abs(endX - startX) > 90) {
+                        setDismissedIds((prev) => [...prev, item.id]);
+                      }
+                    }}
+                    className={`relative px-4 sm:px-6 py-4 sm:py-5 transition-colors ${
                       item.isRead
                         ? 'bg-white hover:bg-slate-50/60'
-                        : 'bg-brand-soft/40 hover:bg-brand-soft/60 border-l-4 border-l-brand'
+                        : 'bg-blue-50/35 hover:bg-blue-50/60 border-l-4 border-l-[#2563EB]'
                     }`}
                   >
                     <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3.5">
-                      <div className="flex items-start gap-3.5 min-w-0 flex-1">
+                      <div className="flex items-start gap-3 min-w-0 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleSelect(item.id)}
+                          aria-label={`Chọn thông báo ${item.title}`}
+                          className="mt-2.5 rounded border-slate-300 text-[#2563EB]"
+                        />
+
                         {/* Category Icon */}
                         <div
                           className={`w-10 h-10 rounded-xl grid place-items-center shrink-0 mt-0.5 ${iconBoxClass}`}
@@ -261,14 +355,14 @@ export default function NotificationsPage() {
                             {!item.isRead && (
                               <span
                                 aria-label="Chưa đọc"
-                                className="w-2.5 h-2.5 rounded-full bg-brand ring-4 ring-brand/15 shrink-0"
+                                className="w-2.5 h-2.5 rounded-full bg-[#2563EB] ring-4 ring-blue-500/15 shrink-0"
                               />
                             )}
                             <h2
                               className={`text-sm leading-snug break-words ${
                                 item.isRead
                                   ? 'font-semibold text-slate-700'
-                                  : 'font-bold text-ink'
+                                  : 'font-bold text-slate-900'
                               }`}
                             >
                               {item.title}
@@ -312,7 +406,7 @@ export default function NotificationsPage() {
                                     void handleMarkRead(item.id, false);
                                   }
                                 }}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-brand-border text-brand hover:bg-brand hover:text-white text-[11px] font-bold transition-colors shadow-sm"
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-blue-200 text-[#1E3A8A] hover:bg-[#1E3A8A] hover:text-white text-[11px] font-bold transition-colors shadow-2xs"
                               >
                                 <span>{item.actionLabel}</span>
                                 <ArrowUpRight className="w-3.5 h-3.5" />
@@ -323,13 +417,13 @@ export default function NotificationsPage() {
                       </div>
 
                       {/* Mark as Read Action */}
-                      <div className="flex sm:flex-col items-center sm:items-end justify-end gap-2 shrink-0 pl-13 sm:pl-0">
+                      <div className="flex sm:flex-col items-center sm:items-end justify-end gap-2 shrink-0 pl-10 sm:pl-0">
                         {!item.isRead ? (
                           <button
                             type="button"
                             disabled={busyId !== null}
                             onClick={() => void handleMarkRead(item.id, false)}
-                            className="h-8 px-3 rounded-lg bg-white border border-brand-border hover:bg-brand-soft text-brand text-[11px] font-bold inline-flex items-center gap-1.5 transition-colors shadow-sm disabled:opacity-50"
+                            className="h-8 px-3 rounded-lg bg-white border border-blue-200 hover:bg-blue-50 text-[#1E3A8A] text-[11px] font-bold inline-flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
                           >
                             <Check className="w-3.5 h-3.5" />
                             <span>Đánh dấu đã đọc</span>
@@ -352,11 +446,13 @@ export default function NotificationsPage() {
         {/* Right Side Info Cards */}
         <aside className="lg:col-span-4 space-y-4">
           <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-card">
-            <div className="w-9 h-9 rounded-xl bg-brand-soft text-brand grid place-items-center mb-3">
+            <div className="w-9 h-9 rounded-xl bg-blue-50 text-[#1E3A8A] grid place-items-center mb-3">
               <ShieldCheck className="w-4 h-4" />
             </div>
-            <h3 className="font-display text-sm font-bold text-ink">Phạm vi thông báo cá nhân</h3>
-            <p className="text-xs text-ink-muted mt-1.5 leading-relaxed">
+            <h3 className="font-display text-sm font-bold text-slate-900">
+              Phạm vi thông báo theo RBAC
+            </h3>
+            <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
               Mỗi tài khoản chỉ nhận và thao tác trên thông báo thuộc phạm vi công việc và vai trò{' '}
               <strong>{user?.roleName}</strong> của mình. Các liên kết mở tác vụ đều kiểm tra quyền
               truy cập trước khi hiển thị.
@@ -368,10 +464,12 @@ export default function NotificationsPage() {
               <Clock className="w-4 h-4" />
             </div>
             <div>
-              <strong className="text-xs font-bold text-ink block">Phân cấp trực quan</strong>
-              <p className="text-xs text-ink-muted mt-1 leading-relaxed">
-                Thông báo chưa đọc có viền xanh bên trái, nền xanh nhạt và chấm tròn nhận diện rõ
-                ràng; màu cam chỉ xuất hiện khi dữ liệu thực sự là trạng thái cảnh báo.
+              <strong className="text-xs font-bold text-slate-900 block">
+                Thao tác hàng loạt & Cử chỉ di động
+              </strong>
+              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                Tích chọn nhiều thông báo để xóa nhanh hoặc vuốt ngang thẻ thông báo trên màn hình
+                cảm ứng để ẩn khỏi danh sách.
               </p>
             </div>
           </div>

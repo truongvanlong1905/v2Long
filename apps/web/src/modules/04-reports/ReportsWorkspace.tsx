@@ -23,6 +23,7 @@ import {
   Users,
 } from 'lucide-react';
 import { useSession } from '@/core/session/SessionContext';
+import { ReportDocComposer } from './ReportDocComposer';
 
 const PRESET_OPTIONS: Array<{ value: ReportPreset; label: string }> = [
   { value: '7d', label: '7 ngày qua' },
@@ -39,6 +40,7 @@ export function ReportsWorkspace() {
   const [data, setData] = useState<ReportsDashboardDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reportViewMode, setReportViewMode] = useState<'dashboard' | 'doc_composer'>('dashboard');
 
   const canExport = Boolean(user && hasBaPermission(user.roleCode, 'EXPORT_DATA'));
 
@@ -188,6 +190,32 @@ export function ReportsWorkspace() {
             <span>Làm mới</span>
           </button>
 
+          {/* Switcher between Dashboard Analytics and A4 Word/Docs Composer (Step 5) */}
+          <div className="inline-flex p-1 rounded-xl bg-slate-100 border border-slate-200/80">
+            <button
+              type="button"
+              onClick={() => setReportViewMode('dashboard')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                reportViewMode === 'dashboard'
+                  ? 'bg-[#1E3A8A] text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Dashboard D1–D6
+            </button>
+            <button
+              type="button"
+              onClick={() => setReportViewMode('doc_composer')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                reportViewMode === 'doc_composer'
+                  ? 'bg-[#1E3A8A] text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Soạn Báo cáo A4 (Docs/RBAC)
+            </button>
+          </div>
+
           {canExport && (
             <>
               <button
@@ -227,7 +255,11 @@ export function ReportsWorkspace() {
         </div>
       )}
 
-      {data && (
+      {data && reportViewMode === 'doc_composer' && (
+        <ReportDocComposer user={user} data={data} />
+      )}
+
+      {data && reportViewMode === 'dashboard' && (
         <>
           {/* Freshness & Small Sample Alerts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -384,7 +416,15 @@ export function ReportsWorkspace() {
                         key={q.leadId}
                         className={q.isOverdue7Days ? 'bg-rose-50/60' : 'hover:bg-slate-50/70'}
                       >
-                        <td className="py-3 px-4 font-mono font-bold text-brand">{q.leadCode}</td>
+                        <td className="py-3 px-4 font-mono font-bold text-brand">
+                          <a
+                            href={`/leads?highlight=${q.leadId}`}
+                            className="hover:underline"
+                            title="Mở hồ sơ Lead để cập nhật phản hồi báo giá"
+                          >
+                            {q.leadCode}
+                          </a>
+                        </td>
                         <td className="py-3 px-4 font-semibold text-ink">{q.companyOrContact}</td>
                         <td className="py-3 px-4 font-mono">{q.phone}</td>
                         <td className="py-3 px-4">{q.assignedSalesName}</td>

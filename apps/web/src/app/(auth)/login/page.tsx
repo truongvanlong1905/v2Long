@@ -8,6 +8,7 @@ import { useSession } from '@/core/session/SessionContext';
 import type { SessionUserDto } from '@toantrung/contracts';
 
 const REMEMBER_USER_KEY = 'tt_v2_remembered_identifier';
+const DEFAULT_HERO_IMAGE = '/brand/login-hero-led-building.jpg';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -80,57 +81,102 @@ export default function LoginPage() {
     }
   };
 
+  const isCustomHero =
+    Boolean(branding.loginHero.url) &&
+    !branding.loginHero.isDefault &&
+    branding.loginHero.url !== '/brand/showroom-toan-trung.webp';
+
+  const heroImageUrl =
+    isCustomHero && branding.loginHero.url ? branding.loginHero.url : DEFAULT_HERO_IMAGE;
+
   const crop = branding.loginHero.crop || { zoom: 1, offsetX: 0, offsetY: 0, frameScale: 1 };
   const effectiveZoom = Math.max(1, crop.zoom / Math.max(0.6, crop.frameScale || 1));
   const posX = Math.max(0, Math.min(100, 50 - crop.offsetX));
   const posY = Math.max(0, Math.min(100, 50 - crop.offsetY));
 
   return (
-    <div className="min-h-screen w-full relative overflow-hidden flex flex-col justify-between bg-slate-950">
-      {/* Full-Page Login Background Image */}
-      <div aria-hidden="true" className="fixed inset-0 z-0 overflow-hidden">
-        <img
-          src={branding.loginHero.url || '/brand/showroom-toan-trung.webp'}
-          alt={branding.loginHero.altText || 'Hình nền trang đăng nhập'}
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).src = '/brand/showroom-toan-trung.webp';
-          }}
-          style={{
-            objectPosition: `${posX}% ${posY}%`,
-            transform: `scale(${effectiveZoom.toFixed(3)})`,
-            transformOrigin: `${posX}% ${posY}%`,
-          }}
-          className="w-full h-full object-cover select-none"
-        />
-        {/* Subtle readability overlay */}
-        <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-[1.5px]" />
-        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/40 via-transparent to-slate-950/60" />
-      </div>
+    <div className="relative min-h-screen w-full flex flex-col lg:flex-row bg-white overflow-hidden select-none">
+      {/* Subtle Decorative Corner Curves on the Right White Canvas */}
+      <div
+        aria-hidden="true"
+        className="hidden lg:block pointer-events-none absolute -top-24 -right-24 w-72 h-72 rounded-full border border-blue-100/80 bg-gradient-to-br from-blue-50/40 to-transparent z-0"
+      />
+      <div
+        aria-hidden="true"
+        className="hidden lg:block pointer-events-none absolute -bottom-28 -right-16 w-96 h-96 rounded-full bg-gradient-to-tl from-blue-50/70 via-slate-50/40 to-transparent z-0"
+      />
 
-      {/* Single Logo Placement at Top-Left of Screen */}
-      <header className="relative z-10 w-full px-5 sm:px-9 pt-5 sm:pt-7 flex items-center justify-start">
-        <div className="inline-flex items-center bg-white/95 backdrop-blur-md px-4 py-2.5 rounded-2xl shadow-lg border border-white/60">
+      {/* LEFT SECTION: Architectural LED Building Hero with Slanted Diagonal Split */}
+      <section className="relative w-full lg:w-[62%] h-72 sm:h-96 lg:h-screen shrink-0 overflow-hidden bg-white z-10">
+        <div
+          className="relative w-full h-full overflow-hidden"
+          style={
+            isCustomHero
+              ? {
+                  clipPath: 'polygon(0 0, 98% 0, 77.2% 100%, 0 100%)',
+                }
+              : undefined
+          }
+        >
           <img
-            src={branding.logo.url || '/brand/logo-toan-trung.png'}
-            alt={branding.logo.altText || 'Logo'}
+            src={heroImageUrl}
+            alt={branding.loginHero.altText || 'Toàn Trung LED Display Solutions'}
             onError={(e) => {
-              (e.currentTarget as HTMLImageElement).src = '/brand/logo-toan-trung.png';
+              (e.currentTarget as HTMLImageElement).src = DEFAULT_HERO_IMAGE;
             }}
-            className="h-9 sm:h-10 w-auto max-w-[200px] object-contain"
+            style={
+              isCustomHero
+                ? {
+                    objectPosition: `${posX}% ${posY}%`,
+                    transform: `scale(${effectiveZoom.toFixed(3)})`,
+                    transformOrigin: `${posX}% ${posY}%`,
+                  }
+                : {
+                    objectPosition: 'left center',
+                  }
+            }
+            className="w-full h-full object-cover transition-transform duration-300"
           />
-        </div>
-      </header>
 
-      {/* Compact Login Form Centered on Full-Page Background (No duplicate logo or top image strip) */}
-      <main className="relative z-10 flex-1 flex items-center justify-center px-4 py-8">
-        <div className="w-full max-w-[436px] bg-white/95 backdrop-blur-md border border-white/80 rounded-2xl shadow-2xl p-7 sm:p-9">
-          {/* Heading & Essential Instruction */}
-          <div className="mb-6">
-            <h1 className="font-display text-2xl sm:text-[28px] font-bold text-ink tracking-tight">
+          {/* Overlay Brand Identity Badge only when Admin uploads a custom photo without embedded logo */}
+          {isCustomHero && (
+            <>
+              <div className="absolute inset-0 bg-gradient-to-tr from-slate-900/20 via-transparent to-blue-900/15 pointer-events-none" />
+              <div className="absolute top-8 left-8 sm:top-10 sm:left-12 z-20 flex items-center gap-3.5">
+                <div className="flex items-center gap-3 bg-white/90 backdrop-blur-md px-4 py-2.5 rounded-2xl shadow-md">
+                  <img
+                    src={branding.logo.url || '/brand/logo-toan-trung.png'}
+                    alt={branding.logo.altText || 'Logo Toàn Trung'}
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).src = '/brand/logo-toan-trung.png';
+                    }}
+                    className="h-8 w-auto object-contain"
+                  />
+                  <div className="pl-3 border-l border-slate-200">
+                    <strong className="font-display text-sm font-extrabold tracking-wide text-[#0B3B8C] block uppercase leading-none">
+                      TOÀN TRUNG
+                    </strong>
+                    <span className="text-[9px] font-semibold tracking-[0.2em] text-slate-600 block uppercase mt-1">
+                      LED DISPLAY SOLUTIONS
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+
+      {/* RIGHT SECTION: Clean White Authentication Form */}
+      <main className="relative z-20 w-full lg:w-[44%] lg:-ml-[6%] flex-1 lg:h-screen flex flex-col justify-center items-center px-6 sm:px-12 lg:pl-6 lg:pr-16 py-10 overflow-y-auto select-text">
+        <div className="w-full max-w-[380px] mx-auto">
+          {/* Heading & Subtitle */}
+          <div className="mb-8">
+            <h1 className="font-display text-[30px] sm:text-[34px] font-bold text-[#0F172A] tracking-tight leading-tight">
               Đăng nhập
             </h1>
-            <p className="text-[13px] text-ink-muted mt-1.5 leading-relaxed">
-              Vui lòng nhập thông tin tài khoản để tiếp tục
+            <p className="text-[14px] text-slate-500 mt-1.5 font-normal">
+              Chào mừng bạn quay trở lại hệ thống
             </p>
           </div>
 
@@ -138,23 +184,23 @@ export default function LoginPage() {
           {errorMessage && (
             <div
               role="alert"
-              className="mb-5 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium leading-relaxed"
+              className="mb-5 px-4 py-3 rounded-[10px] bg-red-50 border border-red-200 text-red-700 text-xs font-medium leading-relaxed"
             >
               {errorMessage}
             </div>
           )}
 
           {/* Login Form */}
-          <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4" noValidate>
+          <form onSubmit={(e) => void handleSubmit(e)} className="space-y-5" noValidate>
             <div>
               <label
                 htmlFor="login-identifier"
-                className="block text-[13px] font-semibold text-ink mb-2"
+                className="block text-[13px] font-semibold text-slate-700 mb-2"
               >
                 Email hoặc tên đăng nhập
               </label>
-              <div className="flex items-center gap-3 h-12 px-3.5 rounded-xl border border-slate-200 bg-white focus-within:border-brand focus-within:ring-4 focus-within:ring-brand/10 transition-all">
-                <User className="w-4 h-4 text-slate-400 shrink-0" />
+              <div className="flex items-center gap-3 h-12 px-4 rounded-[10px] border border-slate-200 bg-white focus-within:border-[#0B3B8C] focus-within:ring-4 focus-within:ring-[#0B3B8C]/10 transition-all">
+                <User className="w-[18px] h-[18px] text-slate-400 shrink-0 stroke-[1.75]" />
                 <input
                   id="login-identifier"
                   name="identifier"
@@ -163,8 +209,8 @@ export default function LoginPage() {
                   required
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder="Nhập email hoặc tên đăng nhập"
-                  className="w-full h-full bg-transparent text-sm text-ink placeholder:text-slate-400 focus:outline-none"
+                  placeholder="Nhập tài khoản của bạn"
+                  className="w-full h-full bg-transparent text-[14px] text-slate-900 placeholder:text-slate-400 focus:outline-none"
                 />
               </div>
             </div>
@@ -172,12 +218,12 @@ export default function LoginPage() {
             <div>
               <label
                 htmlFor="login-password"
-                className="block text-[13px] font-semibold text-ink mb-2"
+                className="block text-[13px] font-semibold text-slate-700 mb-2"
               >
                 Mật khẩu
               </label>
-              <div className="flex items-center gap-3 h-12 px-3.5 rounded-xl border border-slate-200 bg-white focus-within:border-brand focus-within:ring-4 focus-within:ring-brand/10 transition-all">
-                <Lock className="w-4 h-4 text-slate-400 shrink-0" />
+              <div className="flex items-center gap-3 h-12 px-4 rounded-[10px] border border-slate-200 bg-white focus-within:border-[#0B3B8C] focus-within:ring-4 focus-within:ring-[#0B3B8C]/10 transition-all">
+                <Lock className="w-[18px] h-[18px] text-slate-400 shrink-0 stroke-[1.75]" />
                 <input
                   id="login-password"
                   name="password"
@@ -187,31 +233,31 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Nhập mật khẩu"
-                  className="w-full h-full bg-transparent text-sm text-ink placeholder:text-slate-400 focus:outline-none"
+                  className="w-full h-full bg-transparent text-[14px] text-slate-900 placeholder:text-slate-400 focus:outline-none"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((prev) => !prev)}
                   aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
-                  className="p-1 text-slate-400 hover:text-brand rounded-lg transition-colors"
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg transition-colors"
                 >
                   {showPassword ? (
-                    <EyeOff className="w-4 h-4" />
+                    <Eye className="w-[18px] h-[18px] stroke-[1.75]" />
                   ) : (
-                    <Eye className="w-4 h-4" />
+                    <EyeOff className="w-[18px] h-[18px] stroke-[1.75]" />
                   )}
                 </button>
               </div>
             </div>
 
-            {/* Remember Username & Forgot Password Guidance */}
-            <div className="flex items-center justify-between pt-0.5 text-xs">
-              <label className="inline-flex items-center gap-2 text-slate-600 cursor-pointer select-none">
+            {/* Checkbox "Ghi nhớ đăng nhập" & Link "Quên mật khẩu?" */}
+            <div className="flex items-center justify-between pt-0.5 text-[13px]">
+              <label className="inline-flex items-center gap-2.5 text-slate-600 cursor-pointer select-none font-medium">
                 <input
                   type="checkbox"
                   checked={rememberUsername}
                   onChange={(e) => setRememberUsername(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-300 text-brand focus:ring-brand"
+                  className="w-4 h-4 rounded border-slate-300 text-[#0B3B8C] focus:ring-[#0B3B8C]"
                 />
                 <span>Ghi nhớ đăng nhập</span>
               </label>
@@ -219,17 +265,17 @@ export default function LoginPage() {
               <button
                 type="button"
                 onClick={() => setShowForgotHelp((v) => !v)}
-                className="font-semibold text-brand hover:underline inline-flex items-center gap-1"
+                className="font-semibold text-[#1E40AF] hover:underline"
               >
-                <span>Quên mật khẩu?</span>
+                Quên mật khẩu?
               </button>
             </div>
 
             {showForgotHelp && (
-              <div className="p-3.5 rounded-xl bg-brand-soft/70 border border-brand-border text-xs text-slate-700 leading-relaxed flex items-start gap-2.5">
-                <HelpCircle className="w-4 h-4 text-brand shrink-0 mt-0.5" />
+              <div className="p-3.5 rounded-[10px] bg-blue-50/80 border border-blue-200 text-xs text-slate-700 leading-relaxed flex items-start gap-2.5">
+                <HelpCircle className="w-4 h-4 text-[#0B3B8C] shrink-0 mt-0.5" />
                 <div>
-                  <strong className="font-semibold text-ink block mb-0.5">
+                  <strong className="font-bold text-slate-900 block mb-0.5">
                     Cấp lại mật khẩu
                   </strong>
                   Vui lòng liên hệ Quản trị viên hệ thống để được xác minh và đặt lại mật khẩu.
@@ -237,21 +283,32 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Submit Button */}
+            {/* Primary Button: "Đăng nhập →" */}
             <button
               type="submit"
               disabled={submitting}
-              className="w-full h-12 rounded-xl bg-brand hover:bg-brand-deep text-white font-semibold text-sm inline-flex items-center justify-center gap-2 shadow-md shadow-brand/20 transition-all disabled:opacity-60"
+              className="w-full h-12 rounded-[10px] bg-[#0B3B8C] hover:bg-[#082F70] text-white font-semibold text-[15px] inline-flex items-center justify-center gap-2.5 shadow-md shadow-[#0B3B8C]/20 transition-all disabled:opacity-60"
             >
               <span>{submitting ? 'Đang xác thực...' : 'Đăng nhập'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
+
+          {/* Divider "Hoặc" */}
+          <div className="relative my-7 flex items-center justify-center">
+            <div className="w-full border-t border-slate-100" />
+            <span className="relative bg-white px-4 text-[12px] text-slate-400 font-normal">
+              Hoặc
+            </span>
+            <div className="w-full border-t border-slate-100" />
+          </div>
+
+          {/* Footer */}
+          <footer className="text-center text-[12px] text-slate-400 font-normal">
+            © 2026 Toàn Trung. All rights reserved.
+          </footer>
         </div>
       </main>
-
-      {/* Bottom spacer for balanced vertical centering */}
-      <div aria-hidden="true" className="h-6 sm:h-10 relative z-10" />
     </div>
   );
 }

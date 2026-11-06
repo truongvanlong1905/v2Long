@@ -63,6 +63,7 @@ model MarketingTracking {
   @@index([marketingSource])
   @@index([campaignId])
   @@index([gclid])
+  @@index([isUnknownCampaign, trackedAt])
   @@index([trackedAt])
   @@map("marketing_tracking")
 }
@@ -108,7 +109,9 @@ model PlatformDailyMetric {
 
   @@unique([platform, accountPropertyId, metricDate, grain, campaignExternalId, keywordMatchType, keywordTextNorm, pagePathNorm], name: "uq_platform_metric_scope")
   @@index([platform, metricDate, grain])
+  @@index([platform, grain, metricDate])
   @@index([campaignId, metricDate])
+  @@index([campaignId, grain])
   @@index([keywordTextNorm, metricDate])
   @@map("platform_daily_metrics")
 }

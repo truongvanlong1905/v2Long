@@ -10,7 +10,7 @@ Kho mã nguồn GitHub: `https://github.com/truongvanlong1905/ToanTrungMar` (nh�
 ## 1. Hiện trạng & Nguồn nghiệp vụ chuẩn
 - Đã tiếp nhận và phân tích toàn diện **Tài liệu đặc tả BA: UC03 (Tracking nguồn và đồng bộ dữ liệu đa kênh)**.
 - Chi tiết đặc tả nghiệp vụ đầy đủ đã được ghi nhận tại [docs/modules/02-tracking-sync.md](../modules/02-tracking-sync.md).
-- Khung thư mục mã nguồn đã sẵn sàng: `apps/web/src/modules/02-tracking-sync/`, `apps/api/src/modules/02-tracking-sync/`, `packages/contracts/src/02-tracking-sync/`.
+- Mã nguồn hiện tại: Đã triển khai hoàn chỉnh (`apps/web/src/modules/02-tracking-sync/TrackingWorkspace.tsx`, `apps/api/src/modules/02-tracking-sync/service.ts`, `packages/contracts/src/02-tracking-sync/index.ts`), bao gồm bóc tách tín hiệu `gclid > UTM > Referrer`, chờ tra lại `gclid` (A2), đồng bộ kho D3, phễu L1/L2/L3, đối soát Google Lead Form (Luồng D) và trình mô phỏng kịch bản Webhook.
 
 ---
 

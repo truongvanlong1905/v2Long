@@ -1,11 +1,14 @@
 import { CreateManualLeadSchema } from '@toantrung/contracts';
+import { prisma } from '@toantrung/database';
 import { jsonError, jsonSuccess } from '../../../../core/http';
 import {
+  requireAuthenticatedSession,
   requirePermissionSession,
 } from '../../../../core/permissions';
 import {
   createManualLead,
   listLeadsForUser,
+  setSalesReceivingStatus,
 } from '../../../../modules/01-leads/service';
 
 export async function GET(req: Request) {
@@ -18,18 +21,47 @@ export async function GET(req: Request) {
     const search = url.searchParams.get('search') || undefined;
     const includeSpam = url.searchParams.get('includeSpam') === 'true';
 
-    const payload = await listLeadsForUser(auth.user, {
-      status,
-      search,
-      includeSpam,
-    });
+    const [payload, currentUserRecord] = await Promise.all([
+      listLeadsForUser(auth.user, {
+        status,
+        search,
+        includeSpam,
+      }),
+      prisma.user.findUnique({
+        where: { id: auth.user.id },
+        select: { isReceivingLeads: true },
+      }),
+    ]);
 
-    return jsonSuccess(payload);
+    return jsonSuccess({
+      ...payload,
+      isReceivingLeads: currentUserRecord?.isReceivingLeads ?? true,
+    });
   } catch (err) {
     return jsonError(
       'LEAD_LIST_FAILED',
       err instanceof Error ? err.message : 'Không thể tải danh sách hồ sơ Lead.',
       500,
+    );
+  }
+}
+
+export async function PATCH(req: Request) {
+  const auth = await requireAuthenticatedSession(req);
+  if (!auth.ok) return auth.response;
+
+  try {
+    const raw = (await req.json()) as Record<string, unknown>;
+    if (raw.action === 'set_receiving_status') {
+      const updated = await setSalesReceivingStatus(auth.user, Boolean(raw.isReceivingLeads));
+      return jsonSuccess(updated);
+    }
+    return jsonError('INVALID_ACTION', 'Thao tác không hợp lệ.', 400);
+  } catch (err) {
+    return jsonError(
+      'UPDATE_RECEIVING_STATUS_FAILED',
+      err instanceof Error ? err.message : 'Không thể cập nhật trạng thái nhận Lead.',
+      400,
     );
   }
 }

@@ -10,7 +10,7 @@ Kho mã nguồn GitHub: `https://github.com/truongvanlong1905/ToanTrungMar` (nh�
 ## 1. Hiện trạng & Nguồn nghiệp vụ chuẩn
 - Đã tiếp nhận và phân tích toàn diện **Tài liệu đặc tả BA: UC04 (Xem Dashboard)** kèm Sơ đồ hoạt động, Sơ đồ tuần tự và BPMN As-is/To-be.
 - Chi tiết đặc tả nghiệp vụ đầy đủ đã được ghi nhận tại [docs/modules/04-reports.md](../modules/04-reports.md).
-- Khung thư mục mã nguồn đã sẵn sàng: `apps/web/src/modules/04-reports/`, `apps/api/src/modules/04-reports/`, `packages/contracts/src/04-reports/`.
+- Mã nguồn hiện tại: Đã triển khai hoàn chỉnh (`apps/web/src/modules/04-reports/ReportsWorkspace.tsx`, `apps/api/src/modules/04-reports/service.ts`, `packages/contracts/src/04-reports/index.ts`), đồng bộ công thức L1/L2/L3 với M02, áp dụng bộ lọc thời gian (`7d`/`30d`/`custom`) trên toàn bộ nguồn dữ liệu, cảnh báo báo giá quá hạn >7 ngày và xuất Excel `.xlsx` / Google Sheets CSV.
 
 ---
 

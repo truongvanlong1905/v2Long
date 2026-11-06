@@ -18,13 +18,14 @@ export interface XlsxColumn {
   header: string;
   key: string;
   width?: number;
-  type?: 'string' | 'number' | 'currency' | 'date';
+  type?: 'string' | 'number' | 'currency' | 'percent' | 'date';
 }
 
 export interface XlsxSheet {
   name: string;
   title?: string;
   metadata?: Array<{ label: string; value: string }>;
+  kpiSummary?: Array<{ label: string; value: string | number }>;
   columns: XlsxColumn[];
   rows: Array<Record<string, unknown>>;
 }
@@ -171,16 +172,22 @@ class ZipArchive {
 function buildStylesXml(): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <fonts count="3">
+  <numFmts count="2">
+    <numFmt numFmtId="164" formatCode="#,##0"/>
+    <numFmt numFmtId="165" formatCode="0.00%"/>
+  </numFmts>
+  <fonts count="4">
     <font><sz val="11"/><name val="Segoe UI"/><color rgb="FF1E293B"/></font>
     <font><b/><sz val="14"/><name val="Segoe UI"/><color rgb="FF1E3A8A"/></font>
     <font><b/><sz val="11"/><name val="Segoe UI"/><color rgb="FFFFFFFF"/></font>
+    <font><b/><sz val="11"/><name val="Segoe UI"/><color rgb="FF1E3A8A"/></font>
   </fonts>
-  <fills count="4">
+  <fills count="5">
     <fill><patternFill patternType="none"/></fill>
     <fill><patternFill patternType="gray125"/></fill>
     <fill><patternFill patternType="solid"><fgColor rgb="FF1E3A8A"/></patternFill></fill>
     <fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/></patternFill></fill>
   </fills>
   <borders count="2">
     <border><left/><right/><top/><bottom/><diagonal/></border>
@@ -194,7 +201,7 @@ function buildStylesXml(): string {
   <cellStyleXfs count="1">
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
   </cellStyleXfs>
-  <cellXfs count="6">
+  <cellXfs count="8">
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
     <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0"/>
     <xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">
@@ -206,8 +213,14 @@ function buildStylesXml(): string {
     <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1">
       <alignment vertical="center"/>
     </xf>
-    <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1">
+    <xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1">
       <alignment horizontal="right" vertical="center"/>
+    </xf>
+    <xf numFmtId="165" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1">
+      <alignment horizontal="right" vertical="center"/>
+    </xf>
+    <xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">
+      <alignment horizontal="center" vertical="center"/>
     </xf>
   </cellXfs>
 </styleSheet>`;
@@ -239,6 +252,18 @@ function buildSheetXml(sheet: XlsxSheet): string {
     }
   }
 
+  // Top KPI Summary Banner Row (Step 6.2)
+  if (sheet.kpiSummary && sheet.kpiSummary.length > 0) {
+    const kpiCells = sheet.kpiSummary
+      .map((kpi, idx) => {
+        const colLetter = colToLetter(idx);
+        return `<c r="${colLetter}${currentRow}" s="7" t="inlineStr"><is><t>${escapeXml(kpi.label)}: ${escapeXml(kpi.value)}</t></is></c>`;
+      })
+      .join('');
+    rowsXml.push(`<row r="${currentRow}" ht="26" customHeight="1">${kpiCells}</row>`);
+    currentRow++;
+  }
+
   // Empty separator row
   currentRow++;
 
@@ -246,15 +271,23 @@ function buildSheetXml(sheet: XlsxSheet): string {
   const colCount = sheet.columns.length;
   const lastColLetter = colToLetter(colCount - 1);
 
-  // Column definitions (widths)
+  // Auto-calculated column widths with padding to prevent ### cutoffs
   const colsXml: string[] = ['<cols>'];
   sheet.columns.forEach((col, idx) => {
-    const width = col.width || 18;
-    colsXml.push(`<col min="${idx + 1}" max="${idx + 1}" width="${width}" customWidth="1"/>`);
+    let maxLen = col.header.length;
+    for (let r = 0; r < Math.min(sheet.rows.length, 200); r++) {
+      const val = sheet.rows[r]?.[col.key];
+      if (val != null) {
+        const strLen = String(val).length;
+        if (strLen > maxLen) maxLen = strLen;
+      }
+    }
+    const autoWidth = Math.min(60, Math.max(col.width || 12, maxLen + 5));
+    colsXml.push(`<col min="${idx + 1}" max="${idx + 1}" width="${autoWidth}" customWidth="1"/>`);
   });
   colsXml.push('</cols>');
 
-  // Header row with Toan Trung Navy Blue styling (s="2")
+  // Header row with Toan Trung Navy Blue styling (#1E3A8A, s="2", row height 32px)
   const headerCells = sheet.columns
     .map((col, idx) => {
       const colLetter = colToLetter(idx);
@@ -262,7 +295,7 @@ function buildSheetXml(sheet: XlsxSheet): string {
     })
     .join('');
 
-  rowsXml.push(`<row r="${headerRowIndex}" ht="26" customHeight="1">${headerCells}</row>`);
+  rowsXml.push(`<row r="${headerRowIndex}" ht="32" customHeight="1">${headerCells}</row>`);
   currentRow++;
 
   const firstDataRow = currentRow;
@@ -282,11 +315,12 @@ function buildSheetXml(sheet: XlsxSheet): string {
           return `<c r="${cellRef}" s="${defaultStyle}"/>`;
         }
 
-        // Numeric or currency
-        if (col.type === 'number' || col.type === 'currency') {
+        // Numeric, currency (#,##0) or percent (0.00%)
+        if (col.type === 'number' || col.type === 'currency' || col.type === 'percent') {
           const num = typeof rawVal === 'number' ? rawVal : Number(rawVal);
           if (!isNaN(num)) {
-            return `<c r="${cellRef}" s="5"><v>${num}</v></c>`;
+            const numStyle = col.type === 'percent' ? 6 : 5;
+            return `<c r="${cellRef}" s="${numStyle}"><v>${num}</v></c>`;
           }
         }
 

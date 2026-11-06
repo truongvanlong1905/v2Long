@@ -18,6 +18,7 @@ export async function apiRequest<T>(
     body?: unknown;
     csrfToken?: string;
     isFormData?: boolean;
+    signal?: AbortSignal;
   } = {},
 ): Promise<T> {
   const method = options.method || 'GET';
@@ -35,6 +36,7 @@ export async function apiRequest<T>(
     method,
     headers,
     credentials: 'include',
+    signal: options.signal,
     body: options.isFormData
       ? (options.body as FormData)
       : options.body !== undefined

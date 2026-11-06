@@ -198,6 +198,10 @@ test('Rehearsal 2 (Representative Existing DB Copy): upgrades intermediate 18-ta
       );
     `);
   }
+  await rawSetup.$executeRawUnsafe(`
+    INSERT OR IGNORE INTO "system_settings" ("key", "value", "updated_at")
+    VALUES ('heroCropJson', '{"zoom":1}', CURRENT_TIMESTAMP);
+  `);
   await rawSetup.$disconnect();
 
   // Run non-destructive reconciliation & backfill on the disposable copy

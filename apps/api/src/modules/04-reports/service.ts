@@ -4,6 +4,8 @@ import {
   CONTACT_CHANNEL_LABELS,
   PIPELINE_STATUS_LABELS,
   ReportQuerySchema,
+  isL2Valid,
+  isL3Effective,
   toMonetaryAmountDto,
   type ContactChannel,
   type DetailedReportLeadRowDto,
@@ -114,6 +116,8 @@ export async function getScopedReportsDashboard(
   const parsed = ReportQuerySchema.safeParse(rawQuery ?? {});
   const query = parsed.success ? parsed.data : { preset: '30d' as const };
   const { fromDate, toDate } = resolveDateRange(query.preset, query.fromDate, query.toDate);
+  const fromDateStr = fromDate.toISOString().slice(0, 10);
+  const toDateStr = toDate.toISOString().slice(0, 10);
   const { scopeRole, scopeDescription } = getScopeInfo(user);
   const anonymized = isAnonymizedViewerRole(user.roleCode);
 
@@ -163,32 +167,51 @@ export async function getScopedReportsDashboard(
       }),
       prisma.platformDailyMetric.findMany({
         where: {
-          platform: { in: ['google_ads', 'facebook_ads'] },
+          platform: { in: ['google_ads', 'facebook', 'facebook_ads'] },
           grain: 'campaign',
+          metricDate: {
+            gte: fromDateStr,
+            lte: toDateStr,
+          },
         },
       }),
-      prisma.seoArticle.findMany(),
+      prisma.seoArticle.findMany({
+        where: {
+          createdAt: {
+            gte: fromDate,
+            lte: toDate,
+          },
+        },
+      }),
       prisma.designRequest.findMany({
-        where:
-          user.roleCode === 'SALES'
+        where: {
+          createdAt: {
+            gte: fromDate,
+            lte: toDate,
+          },
+          ...(user.roleCode === 'SALES'
             ? { requestedBySalesId: user.id }
             : user.roleCode === 'DESIGNER'
-            ? { assignedDesignerId: user.id }
-            : undefined,
+              ? { assignedDesignerId: user.id }
+              : {}),
+        },
       }),
       prisma.aiUsageLog.findMany({
         where: {
           moduleCode: '05-ai-design',
+          createdAt: {
+            gte: fromDate,
+            lte: toDate,
+          },
         },
       }),
     ]);
 
   const totalLeadsL1 = leads.length;
-  const validLeads = leads.filter((l) => !l.isSpam);
+  const validLeads = leads.filter(isL2Valid);
   const validLeadsL2 = validLeads.length;
-  const effectiveLeads = validLeads.filter((l) =>
-    ['quoting', 'quote_sent', 'won'].includes(l.pipelineStatus)
-  );
+  // UC03 BR6: L3 = L1 trừ Spam tự động & Spam đã xác nhận (đồng bộ 100% với M02 qua helper chung)
+  const effectiveLeads = leads.filter(isL3Effective);
   const effectiveLeadsL3 = effectiveLeads.length;
 
   const newLeadCount = validLeads.filter((l) => l.pipelineStatus === 'new_lead').length;
@@ -357,7 +380,7 @@ export async function getScopedReportsDashboard(
     };
   });
 
-  const isSmallSample = totalLeadsL1 < 5;
+  const isSmallSample = totalLeadsL1 < 30;
 
   return {
     scopeRole,
@@ -367,7 +390,7 @@ export async function getScopedReportsDashboard(
     toDate: toDate.toISOString(),
     isSmallSample,
     smallSampleNotice: isSmallSample
-      ? 'Lưu ý mẫu dữ liệu nhỏ (< 5 Lead trong kỳ lọc): Tỷ lệ chốt (Win Rate) và CPL chỉ mang tính tham khảo.'
+      ? 'Lưu ý mẫu dữ liệu nhỏ (< 30 Lead trong kỳ lọc theo UC04): Tỷ lệ chốt (Win Rate) và CPL chỉ mang tính tham khảo.'
       : null,
     todayPreliminaryNotice:
       'Số liệu phát sinh trong ngày hôm nay là số liệu sơ bộ (Realtime/Light Sync 11:00 & 17:00), được chốt đối soát chính thức sau phiên đồng bộ 02:00 sáng hôm sau.',

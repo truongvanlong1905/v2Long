@@ -28,6 +28,7 @@ import {
   type UpdateDesignProjectDto,
 } from '@toantrung/contracts';
 import { savePrivateBusinessFile } from '../../core/storage/private-files.service';
+import { notifyLeadSalesOnDesignCompleted } from '../01-leads/service';
 import {
   AiDesignProviderFactory,
   type ProviderStatusInfo,
@@ -175,8 +176,23 @@ export async function listDesignRequestsForUser(user: SessionUserDto): Promise<{
   productOptions: Array<{ id: number; code: string; name: string; categoryGroup: string }>;
   providerStatus: ProviderStatusInfo;
 }> {
+  const isAnonymizedLead = ['MKT_STAFF', 'MKT_LEAD', 'ADS'].includes(user.roleCode);
+  const requestScopeWhere =
+    user.roleCode === 'SALES'
+      ? {
+          OR: [
+            { requestedBySalesId: user.id },
+            { lead: { assignedSalesId: user.id } },
+          ],
+        }
+      : user.roleCode === 'DESIGNER'
+        ? { assignedDesignerId: user.id }
+        : undefined;
+
   const [rows, leads, products] = await Promise.all([
     prisma.designRequest.findMany({
+      where: requestScopeWhere,
+      take: 100,
       include: {
         lead: true,
         requestedBySales: true,
@@ -192,7 +208,12 @@ export async function listDesignRequestsForUser(user: SessionUserDto): Promise<{
       orderBy: { createdAt: 'desc' },
     }),
     prisma.lead.findMany({
-      where: { isSpam: false },
+      where: {
+        isSpam: false,
+        ...(user.roleCode === 'SALES'
+          ? { OR: [{ assignedSalesId: user.id }, { createdByUserId: user.id }] }
+          : {}),
+      },
       orderBy: { createdAt: 'desc' },
       take: 50,
     }),
@@ -292,13 +313,19 @@ export async function listDesignRequestsForUser(user: SessionUserDto): Promise<{
       id: r.id,
       version: r.version,
       projectName,
-      contactName: meta.contactName ?? (r.lead?.contactName || 'Chưa cập nhật'),
+      contactName: isAnonymizedLead
+        ? 'Khách hàng ẩn danh (UC01)'
+        : meta.contactName ?? (r.lead?.contactName || 'Chưa cập nhật'),
       installationInfo: meta.installationInfo || 'Tường bên phải showroom, cách sàn 1.2m',
       notes: r.notes,
       leadId: r.leadId,
       leadCode: r.lead?.leadCode ?? null,
       leadProjectLabel: r.lead
-        ? `${r.lead.leadCode} — ${r.lead.companyName || r.lead.contactName || 'Dự án LED'}`
+        ? `${r.lead.leadCode} — ${
+            isAnonymizedLead
+              ? r.lead.projectName || 'Dự án LED (Ẩn danh)'
+              : r.lead.companyName || r.lead.contactName || 'Dự án LED'
+          }`
         : null,
       productId: null,
       productName: r.ledCategory,
@@ -343,7 +370,9 @@ export async function listDesignRequestsForUser(user: SessionUserDto): Promise<{
     leadOptions: leads.map((l) => ({
       id: l.id,
       leadCode: l.leadCode,
-      label: `${l.leadCode} · ${l.companyName || l.contactName || 'Khách hàng'} (${l.projectName || 'Dự án LED'})`,
+      label: isAnonymizedLead
+        ? `${l.leadCode} · Khách hàng ẩn danh (${l.projectName || 'Dự án LED'})`
+        : `${l.leadCode} · ${l.companyName || l.contactName || 'Khách hàng'} (${l.projectName || 'Dự án LED'})`,
     })),
     productOptions: products.map((p) => ({
       id: p.id,
@@ -937,6 +966,31 @@ export async function deleteProjectPhoto(
   return { ok: true, remainingCount: updatedPhotos.length };
 }
 
+export async function deleteDesignProject(
+  actor: SessionUserDto,
+  requestId: number,
+) {
+  const existing = await prisma.designRequest.findUnique({ where: { id: requestId } });
+  if (!existing) throw new Error('Không tìm thấy dự án thiết kế cần xóa.');
+
+  await prisma.$transaction([
+    prisma.designAssetVersion.deleteMany({ where: { designRequestId: requestId } }),
+    prisma.designRequest.delete({ where: { id: requestId } }),
+    prisma.auditLog.create({
+      data: {
+        actorUserId: actor.id,
+        action: 'DESIGN_PROJECT_DELETED',
+        targetType: 'DesignRequest',
+        targetId: String(requestId),
+        detailsJson: JSON.stringify({ deletedRequestId: requestId }),
+      },
+    }),
+  ]);
+
+  return { ok: true, deletedId: requestId };
+}
+
+
 export async function approveDesignAssetVersion(
   actor: SessionUserDto,
   requestId: number,
@@ -990,6 +1044,16 @@ export async function approveDesignAssetVersion(
       },
     }),
   ]);
+
+  if (existing.leadId) {
+    await notifyLeadSalesOnDesignCompleted({
+      leadId: existing.leadId,
+      designRequestId: requestId,
+      versionNumber: targetVer.versionNumber,
+      actor,
+      note: input.note || undefined,
+    });
+  }
 
   return {
     requestId,
@@ -1077,6 +1141,16 @@ export async function uploadDesignerFinalRender(
       version: { increment: 1 },
     },
   });
+
+  if (existing.leadId) {
+    await notifyLeadSalesOnDesignCompleted({
+      leadId: existing.leadId,
+      designRequestId: requestId,
+      versionNumber: finalVer.versionNumber,
+      actor,
+      note: params.note,
+    });
+  }
 
   return {
     requestId,

@@ -659,6 +659,54 @@ export function TrackingWorkspace() {
             <p className="text-slate-500">
               Khóa chống trùng: <code className="font-mono">(intakeSourceProvider, intakeSourceAccountKey, externalSubmissionId)</code>. Gửi lặp cùng Submission ID trên cùng 1 website sẽ được deduplicate an toàn; cùng Submission ID trên website khác vẫn tạo Lead hợp lệ.
             </p>
+            <div className="flex flex-wrap items-center gap-2 pb-1">
+              <span className="font-bold text-slate-600">Chọn nhanh kịch bản mẫu:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setWhWebsite('toantrung.com.vn');
+                  setWhSubmissionId(`WEB-GADS-${Date.now().toString().slice(-4)}`);
+                  setWhPhone('0909345678');
+                  setWhCompany('Công ty TNHH Điện tử Á Châu');
+                  setWhGclid(`EAIaIQobChMI_std_${Date.now().toString().slice(-4)}`);
+                  setWhUtmSource('google');
+                  setWhUtmCampaign('led_indoor_p25_q4');
+                }}
+                className="px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-brand font-semibold hover:bg-blue-100"
+              >
+                1. Lead chuẩn Google Ads
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setWhWebsite('bangled.vn');
+                  setWhSubmissionId(`WEB-DELAY-${Date.now().toString().slice(-4)}`);
+                  setWhPhone('0918223344');
+                  setWhCompany('Bệnh viện Đa khoa Tỉnh');
+                  setWhGclid(`EAIaIQobChMI_delayed_${Date.now().toString().slice(-4)}`);
+                  setWhUtmSource('');
+                  setWhUtmCampaign('');
+                }}
+                className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 font-semibold hover:bg-amber-100"
+              >
+                2. GCLID trễ Campaign (Chờ A2 tra lại)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setWhWebsite('manhinhled.net.vn');
+                  setWhSubmissionId(`WEB-BR4-${Date.now().toString().slice(-4)}`);
+                  setWhPhone('0987654321');
+                  setWhCompany('Trung tâm Hội nghị Quốc tế');
+                  setWhGclid(`EAIaIQobChMI_br4_${Date.now().toString().slice(-4)}`);
+                  setWhUtmSource('facebook');
+                  setWhUtmCampaign('fb_retargeting_q4');
+                }}
+                className="px-2.5 py-1 rounded-lg bg-purple-50 border border-purple-200 text-purple-900 font-semibold hover:bg-purple-100"
+              >
+                3. UTM lệch GCLID (Cờ BR4)
+              </button>
+            </div>
             <form
               onSubmit={(e) => void handleSimulateWebhook(e)}
               className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3"

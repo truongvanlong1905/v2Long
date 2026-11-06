@@ -1,12 +1,30 @@
 import { z } from 'zod';
 
 export const TARGET_WEBSITES = [
-  'toantrung.vn',
-  'ledtoantrung.vn',
-  'manhinhledtoantrung.vn',
+  'toantrung.com.vn',
+  'bangled.vn',
 ] as const;
 
 export type TargetWebsite = (typeof TARGET_WEBSITES)[number];
+
+export interface TargetWebsiteConfigDto {
+  domain: TargetWebsite;
+  connectionStatus: 'SIMULATED' | 'CONNECTED';
+  label: string;
+}
+
+export const DEFAULT_TARGET_WEBSITE_CONFIGS: readonly TargetWebsiteConfigDto[] = [
+  {
+    domain: 'toantrung.com.vn',
+    connectionStatus: 'SIMULATED',
+    label: 'toantrung.com.vn (Chế độ giả lập - Chưa kết nối thật)',
+  },
+  {
+    domain: 'bangled.vn',
+    connectionStatus: 'SIMULATED',
+    label: 'bangled.vn (Chế độ giả lập - Chưa kết nối thật)',
+  },
+] as const;
 
 export const SEO_ARTICLE_STATUSES = [
   'DRAFT',
@@ -140,7 +158,7 @@ export const CreateSeoKeywordSchema = z.object({
   keywordText: z.string().trim().min(2, 'Từ khóa tối thiểu 2 ký tự.').max(150),
   topicCluster: z.string().trim().max(120).optional().nullable(),
   searchIntent: z.enum(['COMMERCIAL', 'INFORMATIONAL', 'TRANSACTIONAL']).default('COMMERCIAL'),
-  targetWebsite: z.enum(TARGET_WEBSITES).default('toantrung.vn'),
+  targetWebsite: z.enum(TARGET_WEBSITES).default('toantrung.com.vn'),
 });
 
 export type CreateSeoKeywordDto = z.infer<typeof CreateSeoKeywordSchema>;

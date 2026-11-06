@@ -10,7 +10,7 @@ Kho mã nguồn GitHub: `https://github.com/truongvanlong1905/ToanTrungMar` (nh�
 ## 1. Hiện trạng & Nguồn nghiệp vụ chuẩn
 - Đã tiếp nhận và phân tích toàn diện **Tài liệu đặc tả BA (UC01, UC02, Sơ đồ tuần tự, Sơ đồ hoạt động, Sơ đồ BPMN As-is/To-be)**.
 - Chi tiết đặc tả nghiệp vụ đầy đủ đã được ghi nhận tại [docs/modules/01-leads.md](../modules/01-leads.md).
-- Mã nguồn hiện tại: Khung workspace đã sẵn sàng (`apps/web/src/modules/01-leads/`, `apps/api/src/modules/01-leads/`, `packages/contracts/src/01-leads/`), hiển thị trạng thái phát triển ban đầu.
+- Mã nguồn hiện tại: Đã triển khai hoàn chỉnh cả 4 lớp (`packages/database/prisma/models/01-leads.prisma`, `packages/contracts/src/01-leads/index.ts`, `apps/api/src/modules/01-leads/service.ts`, `apps/web/src/modules/01-leads/LeadsWorkspace.tsx`), bao gồm chế độ xem Bảng CRM & Kanban 5 bước, bộ lọc quá hạn >7 ngày, kiểm soát phạm vi sở hữu Lead, liên kết tạo Phối cảnh 3D AI và xuất Excel `.xlsx`.
 
 ---
 

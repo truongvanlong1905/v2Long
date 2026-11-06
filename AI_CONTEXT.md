@@ -1,6 +1,6 @@
 # Bối cảnh ngắn của dự án
 
-Cập nhật: 06/11/2026. Core đã chạy: đăng nhập (scrypt, session HttpOnly, CSRF), 8 vai trò/12 quyền BA, quản lý tài khoản (khóa/mở, xóa mềm), hồ sơ/avatar, thông báo, cài đặt thương hiệu (logo, nền đăng nhập, banner Dashboard). **5 module nghiệp vụ còn trống**, hiển thị "Module đang được phát triển". DB local SQLite; production dự kiến PostgreSQL. CI GitHub Actions chạy check:docs, test:tooling, test:core, typecheck.
+Cập nhật: 06/11/2026. Core đã chạy: đăng nhập (scrypt, session HttpOnly, CSRF), 8 vai trò/12 quyền BA, quản lý tài khoản (khóa/mở, xóa mềm), hồ sơ/avatar, thông báo, cài đặt thương hiệu (logo, nền đăng nhập, banner Dashboard). **Cả 5 module nghiệp vụ (`01-leads` → `05-ai-design`) đã được triển khai hoàn chỉnh** (DB, Contracts, API Services, Next.js Route Handlers và Giao diện Workspace). DB local SQLite; production dự kiến PostgreSQL. CI GitHub Actions chạy check:docs, test:tooling, test:core, typecheck.
 
 ## Kiến trúc và phân công
 

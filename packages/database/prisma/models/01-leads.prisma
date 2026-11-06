@@ -88,6 +88,7 @@ model Lead {
   @@index([email])
   @@index([normalizedLookupKey])
   @@index([pipelineStatus, isSpam])
+  @@index([isSpam, spamAdsExclusionStatus])
   @@index([assignedSalesId, pipelineStatus])
   @@index([createdAt])
   @@map("leads")

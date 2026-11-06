@@ -8,7 +8,7 @@ export const APP_CONFIG = {
   maxHeroSizeBytes: 5 * 1024 * 1024, // 5 MB
   maxAttachmentSizeBytes: 10 * 1024 * 1024, // 10 MB technical guard (Q06 tracked)
   defaultLogoUrl: '/brand/logo-toan-trung.png',
-  defaultHeroUrl: '/brand/showroom-toan-trung.webp',
+  defaultHeroUrl: '/brand/login-hero-led-building.jpg',
   getStorageRoot(): string {
     const raw = process.env.STORAGE_ROOT || './storage_independent_v2';
     if (path.isAbsolute(raw)) return raw;
