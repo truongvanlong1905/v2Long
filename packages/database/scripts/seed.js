@@ -4,13 +4,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const defaultDbFile = path.resolve(__dirname, '../prisma/dev.db').replace(/\\/g, '/');
-process.env.DATABASE_URL = `file:${defaultDbFile}`;
+const defaultDbUrl = defaultDbFile.startsWith('/') ? `file://${defaultDbFile}` : `file:${defaultDbFile}`;
+process.env.DATABASE_URL = defaultDbUrl;
 const { PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient({
   datasources: {
     db: {
-      url: `file:${defaultDbFile}`,
+      url: defaultDbUrl,
     },
   },
 });

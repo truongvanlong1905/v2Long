@@ -50,7 +50,8 @@ function createDisposableDbUrl(t, prefix) {
     }
   });
   const dbFile = path.join(tmpDir, 'disposable.db').replace(/\\/g, '/');
-  return { tmpDir, dbFile, dbUrl: `file:${dbFile}` };
+  const dbUrl = dbFile.startsWith('/') ? `file://${dbFile}` : `file:${dbFile}`;
+  return { tmpDir, dbFile, dbUrl };
 }
 
 function splitSqlStatements(sqlText) {

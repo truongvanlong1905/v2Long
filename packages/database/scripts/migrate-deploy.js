@@ -10,7 +10,7 @@ if (
     process.env.DATABASE_URL === 'file:./dev.db')
 ) {
   const defaultDbFile = path.resolve(__dirname, '../prisma/independent_v2.db').replace(/\\/g, '/');
-  process.env.DATABASE_URL = `file:${defaultDbFile}`;
+  process.env.DATABASE_URL = defaultDbFile.startsWith('/') ? `file://${defaultDbFile}` : `file:${defaultDbFile}`;
 }
 
 const { PrismaClient } = require('@prisma/client');

@@ -8,7 +8,8 @@ const { PrismaClient } = require('@prisma/client');
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 const INDEP_DB_PATH = path.join(REPO_ROOT, 'packages/database/prisma/independent_v2.db');
-const INDEP_DB_URL = `file:${INDEP_DB_PATH.replace(/\\/g, '/')}`;
+const INDEP_DB_NORM = INDEP_DB_PATH.replace(/\\/g, '/');
+const INDEP_DB_URL = INDEP_DB_NORM.startsWith('/') ? `file://${INDEP_DB_NORM}` : `file:${INDEP_DB_NORM}`;
 
 // Helper: PII checker implementation identical to contract
 function containsCustomerPiiInPrompt(text) {

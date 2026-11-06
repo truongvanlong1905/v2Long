@@ -14,7 +14,8 @@ const {
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 const INDEP_DB_PATH = path.join(REPO_ROOT, 'packages/database/prisma/independent_v2.db');
-const INDEP_DB_URL = `file:${INDEP_DB_PATH.replace(/\\/g, '/')}`;
+const INDEP_DB_NORM = INDEP_DB_PATH.replace(/\\/g, '/');
+const INDEP_DB_URL = INDEP_DB_NORM.startsWith('/') ? `file://${INDEP_DB_NORM}` : `file:${INDEP_DB_NORM}`;
 
 test('Cross-Module 1 (M01 + M02): Seeded shared database has 8 BA roles, 25 authoritative LED/Board products, L1/L2/L3 leads, and 7-day overdue quote alert', async (t) => {
   assert.ok(fs.existsSync(INDEP_DB_PATH), 'independent_v2.db must exist');
