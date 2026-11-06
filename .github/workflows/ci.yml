@@ -43,7 +43,9 @@ jobs:
           cp packages/database/prisma/dev.db packages/database/prisma/independent_v2.db
 
       - name: Run Core security & RBAC unit tests
-        run: npm run test:core || (echo "=== TEST FAILURE LOGS ===" && node --test --test-reporter spec apps/api/src/core/__tests__/*.test.js)
+        run: |
+          set -e
+          node --test --test-concurrency=1 apps/api/src/core/__tests__/*.test.js
 
       - name: Run TypeScript typecheck across workspaces
         run: npm run typecheck

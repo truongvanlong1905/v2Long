@@ -14,7 +14,7 @@
     "db:migrate:deploy": "npm --workspace @toantrung/database run db:migrate:deploy",
     "db:push": "npm --workspace @toantrung/database run db:push",
     "db:seed": "npm --workspace @toantrung/database run db:seed",
-    "test:core": "node --test apps/api/src/core/__tests__/*.test.js",
+    "test:core": "node --test --test-concurrency=1 apps/api/src/core/__tests__/*.test.js",
     "check:scope": "node scripts/check-scope.js",
     "context:task": "node scripts/prepare-context.js",
     "check:docs": "node scripts/check-docs.js",
