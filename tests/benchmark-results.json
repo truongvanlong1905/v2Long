@@ -1,0 +1,27 @@
+{
+  "dbQueries": {
+    "leadsFetchMs": 16.74,
+    "metricsAggregationMs": 1.46,
+    "overdueScanMs": 2.07
+  },
+  "idempotencyBenchmark": {
+    "totalTimeMs": 71.15,
+    "iterations": 50,
+    "avgPerCallMs": 1.423,
+    "throughputRps": 702.8,
+    "dedupAccuracyPct": 100
+  },
+  "concurrencyStress": {
+    "parallelAttempts": 10,
+    "durationMs": 5701.41,
+    "successCount": 1,
+    "conflictCount": 9,
+    "concurrencyProtected": true
+  },
+  "memoryUsage": {
+    "rssMb": 68.04,
+    "heapUsedMb": 8.63,
+    "heapTotalMb": 9.91,
+    "externalMb": 2.33
+  }
+}

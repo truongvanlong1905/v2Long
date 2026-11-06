@@ -1,0 +1,550 @@
+import { prisma } from '@toantrung/database';
+import { buildStandardXlsxBuffer } from '../../core/export/xlsx-builder';
+import {
+  CONTACT_CHANNEL_LABELS,
+  PIPELINE_STATUS_LABELS,
+  ReportQuerySchema,
+  toMonetaryAmountDto,
+  type ContactChannel,
+  type DetailedReportLeadRowDto,
+  type PipelineStatus,
+  type ProductInsightRowDto,
+  type ReportsDashboardDto,
+  type SalesPerformanceRowDto,
+  type SessionUserDto,
+  type UnansweredQuoteItemDto,
+} from '@toantrung/contracts';
+import { shouldAnonymizeLeadForRole } from '../01-leads/service';
+
+function isAnonymizedViewerRole(roleCode: SessionUserDto['roleCode']): boolean {
+  return shouldAnonymizeLeadForRole(roleCode) || roleCode === 'DESIGNER';
+}
+
+function maskPhoneForReport(phone: string | null): string {
+  if (!phone || phone.length < 7) return '***';
+  return `${phone.slice(0, 4)}***${phone.slice(-3)}`;
+}
+
+function maskCustomerCompanyForReport(text: string): string {
+  if (!text) return 'Khách hàng ẩn danh';
+  return 'Khách hàng ẩn danh (Bảo mật kinh doanh)';
+}
+
+function mapProductCategory(group: string): ProductInsightRowDto['category'] {
+  if (group === 'led_screen') return 'MAN_HINH_LED';
+  if (group === 'electronic_board') return 'BANG_DIEN_TU';
+  return 'KHAC';
+}
+
+function getScopeInfo(user: SessionUserDto): { scopeRole: string; scopeDescription: string } {
+  switch (user.roleCode) {
+    case 'BOD':
+    case 'ADMIN':
+      return {
+        scopeRole: user.roleCode,
+        scopeDescription: 'Phạm vi Toàn công ty (Ban Giám đốc / Admin — xem đầy đủ tất cả phòng ban)',
+      };
+    case 'SALES_LEAD':
+      return {
+        scopeRole: user.roleCode,
+        scopeDescription: 'Phạm vi Phòng Kinh doanh (Trưởng nhóm Sales — toàn bộ nhân viên Sales)',
+      };
+    case 'SALES':
+      return {
+        scopeRole: user.roleCode,
+        scopeDescription: `Phạm vi Cá nhân Sales (${user.fullName} — chỉ hiển thị Lead được phân bổ)`,
+      };
+    case 'MKT_LEAD':
+    case 'MKT_STAFF':
+    case 'ADS':
+      return {
+        scopeRole: user.roleCode,
+        scopeDescription:
+          'Phạm vi Phòng Marketing & Ads (Thống kê nguồn Lead, hiệu quả chiến dịch & SEO; ẩn danh PII khách hàng theo UC01/Q03)',
+      };
+    case 'DESIGNER':
+      return {
+        scopeRole: user.roleCode,
+        scopeDescription: 'Phạm vi Phòng Thiết kế & Phối cảnh 3D LED (Hiệu suất thiết kế & sử dụng AI)',
+      };
+    default:
+      return {
+        scopeRole: user.roleCode,
+        scopeDescription: 'Phạm vi mặc định theo vai trò',
+      };
+  }
+}
+
+function resolveDateRange(
+  preset: '7d' | '30d' | 'all' | 'custom',
+  fromStr?: string,
+  toStr?: string
+): {
+  fromDate: Date;
+  toDate: Date;
+} {
+  const now = new Date();
+  const toDate = toStr ? new Date(toStr) : new Date(now);
+  toDate.setHours(23, 59, 59, 999);
+
+  if (preset === '7d') {
+    const fromDate = new Date(now.getTime() - 7 * 24 * 3600 * 1000);
+    fromDate.setHours(0, 0, 0, 0);
+    return { fromDate, toDate };
+  }
+  if (preset === '30d') {
+    const fromDate = new Date(now.getTime() - 30 * 24 * 3600 * 1000);
+    fromDate.setHours(0, 0, 0, 0);
+    return { fromDate, toDate };
+  }
+  if (preset === 'custom' && fromStr) {
+    const fromDate = new Date(fromStr);
+    fromDate.setHours(0, 0, 0, 0);
+    return { fromDate, toDate };
+  }
+
+  const fromDate = new Date('2025-01-01T00:00:00.000Z');
+  return { fromDate, toDate };
+}
+
+export async function getScopedReportsDashboard(
+  user: SessionUserDto,
+  rawQuery: unknown
+): Promise<ReportsDashboardDto> {
+  const parsed = ReportQuerySchema.safeParse(rawQuery ?? {});
+  const query = parsed.success ? parsed.data : { preset: '30d' as const };
+  const { fromDate, toDate } = resolveDateRange(query.preset, query.fromDate, query.toDate);
+  const { scopeRole, scopeDescription } = getScopeInfo(user);
+  const anonymized = isAnonymizedViewerRole(user.roleCode);
+
+  const leadWhere: Record<string, unknown> = {
+    createdAt: {
+      gte: fromDate,
+      lte: toDate,
+    },
+  };
+
+  if (user.roleCode === 'SALES') {
+    leadWhere.assignedSalesId = user.id;
+  }
+
+  const [leads, salesUsers, allProducts, latestSync, metrics, seoArticles, designRequests, aiLogs] =
+    await Promise.all([
+      prisma.lead.findMany({
+        where: leadWhere,
+        include: {
+          assignedSales: true,
+          tracking: true,
+          leadProducts: {
+            include: {
+              product: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.user.findMany({
+        where: {
+          isActive: true,
+          role: {
+            roleCode: { in: ['SALES', 'SALES_LEAD'] },
+          },
+        },
+        include: { role: true },
+        orderBy: { id: 'asc' },
+      }),
+      prisma.product.findMany({
+        where: { isActive: true },
+        orderBy: { id: 'asc' },
+      }),
+      prisma.platformSyncLog.findFirst({
+        where: { status: 'success' },
+        orderBy: { completedAt: 'desc' },
+      }),
+      prisma.platformDailyMetric.findMany({
+        where: {
+          platform: { in: ['google_ads', 'facebook_ads'] },
+          grain: 'campaign',
+        },
+      }),
+      prisma.seoArticle.findMany(),
+      prisma.designRequest.findMany({
+        where:
+          user.roleCode === 'SALES'
+            ? { requestedBySalesId: user.id }
+            : user.roleCode === 'DESIGNER'
+            ? { assignedDesignerId: user.id }
+            : undefined,
+      }),
+      prisma.aiUsageLog.findMany({
+        where: {
+          moduleCode: '05-ai-design',
+        },
+      }),
+    ]);
+
+  const totalLeadsL1 = leads.length;
+  const validLeads = leads.filter((l) => !l.isSpam);
+  const validLeadsL2 = validLeads.length;
+  const effectiveLeads = validLeads.filter((l) =>
+    ['quoting', 'quote_sent', 'won'].includes(l.pipelineStatus)
+  );
+  const effectiveLeadsL3 = effectiveLeads.length;
+
+  const newLeadCount = validLeads.filter((l) => l.pipelineStatus === 'new_lead').length;
+  const quotingCount = validLeads.filter((l) => l.pipelineStatus === 'quoting').length;
+  const quoteSentCount = validLeads.filter((l) => l.pipelineStatus === 'quote_sent').length;
+  const wonCount = validLeads.filter((l) => l.pipelineStatus === 'won').length;
+  const lostCount = validLeads.filter((l) => l.pipelineStatus === 'lost').length;
+
+  const nowMs = Date.now();
+  const unansweredQuotes: UnansweredQuoteItemDto[] = [];
+  for (const lead of validLeads) {
+    if (lead.pipelineStatus === 'quote_sent' && lead.firstQuoteSentAt && !lead.quoteRespondedAt) {
+      const daysWaiting = Math.max(
+        0,
+        Math.floor((nowMs - lead.firstQuoteSentAt.getTime()) / (24 * 3600 * 1000))
+      );
+      const isOverdue7Days = daysWaiting >= 7;
+      const rawName = lead.companyName || lead.contactName || `Lead #${lead.leadCode}`;
+      unansweredQuotes.push({
+        leadId: lead.id,
+        leadCode: lead.leadCode,
+        companyOrContact: anonymized ? maskCustomerCompanyForReport(rawName) : rawName,
+        phone: anonymized ? maskPhoneForReport(lead.phone) : lead.phone || 'Chưa cập nhật',
+        assignedSalesName: lead.assignedSales?.fullName || 'Chưa phân bổ',
+        quoteSentAt: lead.firstQuoteSentAt.toISOString(),
+        daysWaiting,
+        isOverdue7Days,
+        productSummary:
+          lead.leadProducts.map((lp) => lp.product.productName).join(', ') ||
+          'Chưa chọn dòng sản phẩm LED',
+      });
+    }
+  }
+
+  unansweredQuotes.sort((a, b) => b.daysWaiting - a.daysWaiting);
+  const overdue7DaysQuoteCount = unansweredQuotes.filter((q) => q.isOverdue7Days).length;
+
+  const closedCount = wonCount + lostCount;
+  const winRateText =
+    closedCount > 0 ? `${((wonCount / closedCount) * 100).toFixed(1)}%` : '0.0%';
+
+  const channelCounts = new Map<string, number>();
+  for (const lead of validLeads) {
+    channelCounts.set(lead.contactChannel, (channelCounts.get(lead.contactChannel) ?? 0) + 1);
+  }
+  const byChannel = Array.from(channelCounts.entries()).map(([channel, count]) => ({
+    channel,
+    label: CONTACT_CHANNEL_LABELS[channel as ContactChannel] ?? channel,
+    count,
+  }));
+
+  const scopedSalesUsers =
+    user.roleCode === 'SALES' ? salesUsers.filter((s) => s.id === user.id) : salesUsers;
+
+  const salesPerformance: SalesPerformanceRowDto[] = scopedSalesUsers.map((s) => {
+    const sLeads = validLeads.filter((l) => l.assignedSalesId === s.id);
+    const sWon = sLeads.filter((l) => l.pipelineStatus === 'won').length;
+    const sLost = sLeads.filter((l) => l.pipelineStatus === 'lost').length;
+    const sClosed = sWon + sLost;
+    const sOverdue = unansweredQuotes.filter(
+      (q) => sLeads.some((l) => l.id === q.leadId) && q.isOverdue7Days
+    ).length;
+
+    return {
+      salesUserId: s.id,
+      salesFullName: s.fullName,
+      isOnline: s.isOnline,
+      isReceivingLeads: s.isReceivingLeads,
+      totalLeads: sLeads.length,
+      newLeads: sLeads.filter((l) => l.pipelineStatus === 'new_lead').length,
+      quotingLeads: sLeads.filter((l) => l.pipelineStatus === 'quoting').length,
+      quoteSentLeads: sLeads.filter((l) => l.pipelineStatus === 'quote_sent').length,
+      wonLeads: sWon,
+      lostLeads: sLost,
+      unansweredOverdue7d: sOverdue,
+      winRateText: sClosed > 0 ? `${((sWon / sClosed) * 100).toFixed(1)}%` : '0.0%',
+    };
+  });
+
+  const productMap = new Map<number, { inquiryCount: number; wonCount: number }>();
+  for (const lead of validLeads) {
+    for (const lp of lead.leadProducts) {
+      const current = productMap.get(lp.productId) ?? { inquiryCount: 0, wonCount: 0 };
+      current.inquiryCount += 1;
+      if (lead.pipelineStatus === 'won') {
+        current.wonCount += 1;
+      }
+      productMap.set(lp.productId, current);
+    }
+  }
+
+  const productInsights: ProductInsightRowDto[] = allProducts
+    .map((p) => {
+      const counts = productMap.get(p.id) ?? { inquiryCount: 0, wonCount: 0 };
+      return {
+        productId: p.id,
+        productCode: p.productCode,
+        productName: p.productName,
+        category: mapProductCategory(p.categoryGroup),
+        inquiryCount: counts.inquiryCount,
+        wonCount: counts.wonCount,
+      };
+    })
+    .filter((p) => p.inquiryCount > 0)
+    .sort((a, b) => b.inquiryCount - a.inquiryCount);
+
+  const totalAdsSpendMicros = metrics.reduce(
+    (acc, m) => acc + (m.spendMicros ?? 0n),
+    0n
+  );
+  const effectiveLeadsFromAds = effectiveLeads.filter((l) =>
+    ['Google Ads', 'Facebook Ads'].includes(l.tracking?.marketingSource ?? '')
+  ).length;
+  const cplEffectiveMicros =
+    effectiveLeadsFromAds > 0
+      ? totalAdsSpendMicros / BigInt(effectiveLeadsFromAds)
+      : null;
+
+  const publishedSeoArticles = seoArticles.filter((a) => a.status === 'published').length;
+  const optimizationNeededArticles = seoArticles.filter((a) => a.needsOptimization).length;
+
+  const completed3dCount = designRequests.filter(
+    (d) => d.requestType === '3d_perspective' && d.designStatus === 'completed'
+  ).length;
+  const completedBannerCount = designRequests.filter(
+    (d) => d.requestType === 'banner' && d.designStatus === 'completed'
+  ).length;
+  const withDuration = designRequests.filter((d) => d.processingTimeMs != null);
+  const avgProcessingSec =
+    withDuration.length > 0
+      ? withDuration.reduce((sum, d) => sum + (d.processingTimeMs ?? 0) / 1000, 0) /
+        withDuration.length
+      : 0;
+
+  const totalAiTokens = aiLogs.reduce((sum, l) => sum + (l.totalTokens ?? 0), 0);
+  const totalAiCostMicros = aiLogs.reduce(
+    (sum, l) => sum + (l.costMicros ?? 0n),
+    0n
+  );
+
+  const detailedLeads: DetailedReportLeadRowDto[] = leads.map((lead, idx) => {
+    const rawCompanyOrContact =
+      [lead.companyName, lead.contactName].filter(Boolean).join(' — ') ||
+      `Khách hàng #${lead.leadCode}`;
+    const receivedDate = lead.receivedAt ?? lead.contactedAt ?? lead.createdAt;
+    return {
+      stt: idx + 1,
+      leadCode: lead.leadCode,
+      receivedAt: receivedDate.toISOString(),
+      assignedSalesName: lead.assignedSales?.fullName || 'Chưa phân bổ',
+      companyOrCustomer: anonymized
+        ? maskCustomerCompanyForReport(rawCompanyOrContact)
+        : rawCompanyOrContact,
+      phone: anonymized ? maskPhoneForReport(lead.phone) : lead.phone || 'Chưa có SĐT',
+      contactChannel:
+        CONTACT_CHANNEL_LABELS[lead.contactChannel as ContactChannel] ?? lead.contactChannel,
+      marketingSource: lead.tracking?.marketingSource ?? lead.selfReportedSource ?? 'Nhập tay',
+      productsText:
+        lead.leadProducts.map((lp) => lp.product.productName).join(', ') ||
+        'Chưa chọn dòng sản phẩm LED',
+      pipelineStatusLabel: lead.isSpam
+        ? 'Spam / Loại trừ'
+        : PIPELINE_STATUS_LABELS[lead.pipelineStatus as PipelineStatus] ?? lead.pipelineStatus,
+      noteOrReason: lead.lostReason || lead.spamReason || lead.projectName || '—',
+      isAnonymized: anonymized,
+    };
+  });
+
+  const isSmallSample = totalLeadsL1 < 5;
+
+  return {
+    scopeRole,
+    scopeDescription,
+    preset: query.preset,
+    fromDate: fromDate.toISOString(),
+    toDate: toDate.toISOString(),
+    isSmallSample,
+    smallSampleNotice: isSmallSample
+      ? 'Lưu ý mẫu dữ liệu nhỏ (< 5 Lead trong kỳ lọc): Tỷ lệ chốt (Win Rate) và CPL chỉ mang tính tham khảo.'
+      : null,
+    todayPreliminaryNotice:
+      'Số liệu phát sinh trong ngày hôm nay là số liệu sơ bộ (Realtime/Light Sync 11:00 & 17:00), được chốt đối soát chính thức sau phiên đồng bộ 02:00 sáng hôm sau.',
+    lastSyncedAt: latestSync?.completedAt ? latestSync.completedAt.toISOString() : null,
+    overview: {
+      totalLeadsL1,
+      validLeadsL2,
+      effectiveLeadsL3,
+      newLeadCount,
+      quotingCount,
+      quoteSentCount,
+      wonCount,
+      lostCount,
+      unansweredQuoteCount: unansweredQuotes.length,
+      overdue7DaysQuoteCount,
+      winRateText,
+    },
+    byChannel,
+    salesPerformance,
+    productInsights,
+    unansweredQuotes,
+    marketingSummary: {
+      totalAdsSpend: toMonetaryAmountDto(totalAdsSpendMicros, 'VND', 'micros'),
+      effectiveLeadsFromAds,
+      cplEffective:
+        cplEffectiveMicros != null
+          ? toMonetaryAmountDto(cplEffectiveMicros, 'VND', 'micros')
+          : null,
+      publishedSeoArticles,
+      optimizationNeededArticles,
+    },
+    designSummary: {
+      totalRequests: designRequests.length,
+      completed3dCount,
+      completedBannerCount,
+      avgProcessingSecText: `${avgProcessingSec.toFixed(1)} giây`,
+      totalAiTokens,
+      totalAiCost: toMonetaryAmountDto(totalAiCostMicros, 'USD', 'micros'),
+    },
+    detailedLeads,
+  };
+}
+
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function escapeCsvCell(val: string | number): string {
+  const s = String(val ?? '');
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+export async function generateScopedReportExportBuffer(
+  user: SessionUserDto,
+  rawQuery: unknown,
+  format: 'xlsx' | 'csv' = 'xlsx'
+): Promise<{ buffer: Buffer; fileName: string; mimeType: string }> {
+  const dashboard = await getScopedReportsDashboard(user, rawQuery);
+  const dateStamp = new Date().toISOString().slice(0, 10);
+
+  await prisma.auditLog.create({
+    data: {
+      actorUserId: user.id,
+      action: 'REPORT_EXPORTED',
+      targetType: 'ReportExport',
+      targetId: `${dashboard.scopeRole}_${dashboard.preset}_${format}`,
+      detailsJson: JSON.stringify({
+        scopeRole: dashboard.scopeRole,
+        preset: dashboard.preset,
+        format,
+        leadCount: dashboard.detailedLeads.length,
+      }),
+    },
+  });
+
+  if (format === 'csv') {
+    const lines: string[] = [
+      `BAO CAO HE THONG TOAN TRUNG V2 - ${dashboard.scopeDescription}`,
+      `Ky bao cao,${dashboard.fromDate.slice(0, 10)} den ${dashboard.toDate.slice(0, 10)}`,
+      `Tong Lead L1,${dashboard.overview.totalLeadsL1},Lead Hop le L2,${dashboard.overview.validLeadsL2},Lead Hieu qua L3,${dashboard.overview.effectiveLeadsL3},Win Rate,${dashboard.overview.winRateText}`,
+      '',
+      [
+        'STT',
+        'Ma Lead',
+        'Ngay tiep nhan',
+        'Sales phu trach',
+        'Khach hang / Cong ty',
+        'So dien thoai',
+        'Kenh lien he',
+        'Nguon Marketing',
+        'San pham LED quan tam',
+        'Trang thai Pipeline',
+        'Ghi chu / Ly do',
+      ]
+        .map(escapeCsvCell)
+        .join(','),
+    ];
+
+    for (const row of dashboard.detailedLeads) {
+      lines.push(
+        [
+          row.stt,
+          row.leadCode,
+          row.receivedAt.slice(0, 16).replace('T', ' '),
+          row.assignedSalesName,
+          row.companyOrCustomer,
+          row.phone,
+          row.contactChannel,
+          row.marketingSource,
+          row.productsText,
+          row.pipelineStatusLabel,
+          row.noteOrReason,
+        ]
+          .map(escapeCsvCell)
+          .join(',')
+      );
+    }
+
+    const csvContent = '\uFEFF' + lines.join('\r\n');
+    return {
+      buffer: Buffer.from(csvContent, 'utf8'),
+      fileName: `BaoCao_ToanTrung_${dashboard.scopeRole}_${dateStamp}.csv`,
+      mimeType: 'text/csv; charset=utf-8',
+    };
+  }
+
+  const xlsxBuffer = buildStandardXlsxBuffer([
+    {
+      name: 'ChiTietLead',
+      title: `BÁO CÁO HỆ THỐNG TOÀN TRUNG — ${dashboard.scopeDescription}`,
+      metadata: [
+        { label: 'Kỳ báo cáo', value: `${dashboard.fromDate.slice(0, 10)} đến ${dashboard.toDate.slice(0, 10)}` },
+        { label: 'Tổng Lead L1', value: String(dashboard.overview.totalLeadsL1) },
+        { label: 'Lead Hợp lệ L2', value: String(dashboard.overview.validLeadsL2) },
+        { label: 'Lead Hiệu quả L3', value: String(dashboard.overview.effectiveLeadsL3) },
+        { label: 'Tỷ lệ chốt (Win Rate)', value: dashboard.overview.winRateText },
+      ],
+      columns: [
+        { header: 'STT', key: 'stt', width: 8, type: 'number' },
+        { header: 'Mã Lead', key: 'leadCode', width: 14, type: 'string' },
+        { header: 'Ngày tiếp nhận', key: 'receivedAt', width: 20, type: 'string' },
+        { header: 'Sales phụ trách', key: 'assignedSalesName', width: 22, type: 'string' },
+        { header: 'Khách hàng / Công ty', key: 'companyOrCustomer', width: 32, type: 'string' },
+        { header: 'Số điện thoại', key: 'phone', width: 16, type: 'string' },
+        { header: 'Kênh liên hệ', key: 'contactChannel', width: 16, type: 'string' },
+        { header: 'Nguồn Marketing', key: 'marketingSource', width: 18, type: 'string' },
+        { header: 'Sản phẩm LED quan tâm', key: 'productsText', width: 30, type: 'string' },
+        { header: 'Trạng thái Pipeline', key: 'pipelineStatusLabel', width: 22, type: 'string' },
+        { header: 'Ghi chú / Lý do', key: 'noteOrReason', width: 35, type: 'string' },
+      ],
+      rows: dashboard.detailedLeads.map((r) => ({
+        stt: r.stt,
+        leadCode: r.leadCode,
+        receivedAt: r.receivedAt.slice(0, 16).replace('T', ' '),
+        assignedSalesName: r.assignedSalesName,
+        companyOrCustomer: r.companyOrCustomer,
+        phone: r.phone,
+        contactChannel: r.contactChannel,
+        marketingSource: r.marketingSource,
+        productsText: r.productsText,
+        pipelineStatusLabel: r.pipelineStatusLabel,
+        noteOrReason: r.noteOrReason,
+      })),
+    },
+  ]);
+
+  return {
+    buffer: xlsxBuffer,
+    fileName: `BaoCao_ToanTrung_${dashboard.scopeRole}_${dateStamp}.xlsx`,
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  };
+}

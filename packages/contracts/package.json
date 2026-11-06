@@ -1,0 +1,19 @@
+{
+  "name": "@toantrung/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/common/index.ts",
+  "types": "./src/common/index.ts",
+  "exports": {
+    ".": "./src/common/index.ts",
+    "./common": "./src/common/index.ts",
+    "./01-leads": "./src/01-leads/index.ts",
+    "./02-tracking-sync": "./src/02-tracking-sync/index.ts",
+    "./03-keywords-ads": "./src/03-keywords-ads/index.ts",
+    "./04-reports": "./src/04-reports/index.ts",
+    "./05-ai-design": "./src/05-ai-design/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

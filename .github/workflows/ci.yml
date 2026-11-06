@@ -1,0 +1,48 @@
+name: ToanTrung V2 CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  verify-core-and-governance:
+    name: Governance, Typecheck & Core Security Tests
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "file:./dev.db"
+      SESSION_SECRET: "ci-ephemeral-session-secret-minimum-32-chars-2026"
+      STORAGE_ROOT: "./storage"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Verify documentation & links
+        run: npm run check:docs
+
+      - name: Run governance tooling tests
+        run: npm run test:tooling
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client & Push local test schema
+        run: |
+          npm run db:generate
+          npm run db:push
+
+      - name: Run Core security & RBAC unit tests
+        run: npm run test:core
+
+      - name: Run TypeScript typecheck across workspaces
+        run: npm run typecheck
+
