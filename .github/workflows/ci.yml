@@ -11,7 +11,7 @@ jobs:
     name: Governance, Typecheck & Core Security Tests
     runs-on: ubuntu-latest
     env:
-      DATABASE_URL: "file:./dev.db"
+      DATABASE_URL: "file:./independent_v2.db"
       SESSION_SECRET: "ci-ephemeral-session-secret-minimum-32-chars-2026"
       STORAGE_ROOT: "./storage"
     steps:
@@ -40,7 +40,7 @@ jobs:
           npm run db:generate
           npm run db:push
           npm run db:seed
-          cp packages/database/prisma/dev.db packages/database/prisma/independent_v2.db
+          cp packages/database/prisma/independent_v2.db packages/database/prisma/dev.db
 
       - name: Run Core security & RBAC unit tests
         run: |

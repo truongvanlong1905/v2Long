@@ -34,7 +34,9 @@ const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 const PRISMA_DIR = path.join(REPO_ROOT, 'packages/database/prisma');
 const WORKING_DEV_DB = fs.existsSync(path.join(PRISMA_DIR, 'dev.db'))
   ? path.join(PRISMA_DIR, 'dev.db')
-  : path.resolve(REPO_ROOT, '../ToanTrungMar/packages/database/prisma/dev.db');
+  : fs.existsSync(path.join(PRISMA_DIR, 'independent_v2.db'))
+    ? path.join(PRISMA_DIR, 'independent_v2.db')
+    : path.resolve(REPO_ROOT, '../ToanTrungMar/packages/database/prisma/dev.db');
 
 function sha256File(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
