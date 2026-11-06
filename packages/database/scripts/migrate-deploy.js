@@ -15,6 +15,27 @@ const targetDbUrl =
 
 process.env.DATABASE_URL = targetDbUrl;
 
+// Ensure .env exists on fresh deployment containers (e.g. Render) where gitignored .env files are absent
+const repoRoot = path.resolve(__dirname, '../../..');
+const envLocations = [
+  path.join(repoRoot, '.env'),
+  path.join(repoRoot, 'packages', 'database', '.env'),
+  path.join(repoRoot, 'apps', 'web', '.env'),
+];
+for (const envFile of envLocations) {
+  if (!fs.existsSync(envFile)) {
+    try {
+      fs.writeFileSync(
+        envFile,
+        `DATABASE_URL="${targetDbUrl}"\nSESSION_SECRET="${process.env.SESSION_SECRET || 'toantrung-v2-production-default-secret-key-2026'}"\nSTORAGE_ROOT="./storage_independent_v2"\n`,
+        'utf8',
+      );
+    } catch {
+      // Ignore read-only filesystem errors if any
+    }
+  }
+}
+
 const { PrismaClient } = require('@prisma/client');
 
 function splitSqlStatements(sql) {

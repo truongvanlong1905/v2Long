@@ -169,12 +169,9 @@ export async function listKeywordsAndArticlesForUser(user: SessionUserDto): Prom
     totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) + '%' : '0.00%';
   const cplVndText =
     totalConversions > 0
-      ? Math.round(totalSpendVnd / totalConversions).toLocaleString('vi-VN') + ' đ'
+      ? Math.round(totalSpendVnd / totalConversions).toLocaleString('vi-VN') + ' ₫'
       : 'Chưa có';
-  const totalSpendVndText =
-    totalSpendVnd >= 1_000_000
-      ? (totalSpendVnd / 1_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) + ' tr VND'
-      : totalSpendVnd.toLocaleString('vi-VN') + ' VND';
+  const totalSpendVndText = totalSpendVnd.toLocaleString('vi-VN') + ' ₫';
 
   const kpis = {
     totalImpressions,
