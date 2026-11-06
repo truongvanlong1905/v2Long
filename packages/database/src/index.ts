@@ -10,21 +10,27 @@ function resolveIndependentSqliteUrl(): string {
     path.resolve(cwd, 'prisma', 'independent_v2.db'),
   ];
   for (const candidate of candidates) {
-    if (fs.existsSync(path.dirname(candidate))) {
+    if (fs.existsSync(candidate)) {
+      return `file:${candidate.replace(/\\/g, '/')}`;
+    }
+  }
+  for (const candidate of candidates) {
+    const parent = path.dirname(candidate);
+    if (fs.existsSync(parent)) {
       return `file:${candidate.replace(/\\/g, '/')}`;
     }
   }
   return `file:${candidates[0].replace(/\\/g, '/')}`;
 }
 
-if (
-  process.env.NODE_ENV !== 'production' &&
-  (!process.env.DATABASE_URL ||
-    process.env.DATABASE_URL === 'file:./independent_v2.db' ||
-    process.env.DATABASE_URL === 'file:./dev.db')
-) {
-  process.env.DATABASE_URL = resolveIndependentSqliteUrl();
-}
+const resolvedDbUrl =
+  process.env.DATABASE_URL &&
+  process.env.DATABASE_URL !== 'file:./independent_v2.db' &&
+  process.env.DATABASE_URL !== 'file:./dev.db'
+    ? process.env.DATABASE_URL
+    : resolveIndependentSqliteUrl();
+
+process.env.DATABASE_URL = resolvedDbUrl;
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
@@ -33,6 +39,11 @@ const globalForPrisma = globalThis as unknown as {
 export const prisma: PrismaClient =
   globalForPrisma.prisma ??
   new PrismaClient({
+    datasources: {
+      db: {
+        url: resolvedDbUrl,
+      },
+    },
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
   });
 

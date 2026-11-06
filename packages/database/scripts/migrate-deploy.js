@@ -3,15 +3,17 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-if (
-  process.env.NODE_ENV !== 'production' &&
-  (!process.env.DATABASE_URL ||
-    process.env.DATABASE_URL === 'file:./independent_v2.db' ||
-    process.env.DATABASE_URL === 'file:./dev.db')
-) {
-  const defaultDbFile = path.resolve(__dirname, '../prisma/independent_v2.db').replace(/\\/g, '/');
-  process.env.DATABASE_URL = defaultDbFile.startsWith('/') ? `file://${defaultDbFile}` : `file:${defaultDbFile}`;
-}
+const defaultDbFile = path.resolve(__dirname, '../prisma/independent_v2.db').replace(/\\/g, '/');
+const defaultDbUrl = defaultDbFile.startsWith('/') ? `file://${defaultDbFile}` : `file:${defaultDbFile}`;
+
+const targetDbUrl =
+  process.env.DATABASE_URL &&
+  process.env.DATABASE_URL !== 'file:./independent_v2.db' &&
+  process.env.DATABASE_URL !== 'file:./dev.db'
+    ? process.env.DATABASE_URL
+    : defaultDbUrl;
+
+process.env.DATABASE_URL = targetDbUrl;
 
 const { PrismaClient } = require('@prisma/client');
 
@@ -24,7 +26,13 @@ function splitSqlStatements(sql) {
 }
 
 async function deployCoordinatedMigrations() {
-  const prisma = new PrismaClient();
+  const prisma = new PrismaClient({
+    datasources: {
+      db: {
+        url: targetDbUrl,
+      },
+    },
+  });
   const migrationsRoot = path.resolve(__dirname, '../prisma/migrations');
 
   try {

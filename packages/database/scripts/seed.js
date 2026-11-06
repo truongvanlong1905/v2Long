@@ -3,15 +3,21 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const defaultDbFile = path.resolve(__dirname, '../prisma/dev.db').replace(/\\/g, '/');
+const defaultDbFile = path.resolve(__dirname, '../prisma/independent_v2.db').replace(/\\/g, '/');
 const defaultDbUrl = defaultDbFile.startsWith('/') ? `file://${defaultDbFile}` : `file:${defaultDbFile}`;
-process.env.DATABASE_URL = defaultDbUrl;
+const targetDbUrl =
+  process.env.DATABASE_URL &&
+  process.env.DATABASE_URL !== 'file:./dev.db' &&
+  process.env.DATABASE_URL !== 'file:./independent_v2.db'
+    ? process.env.DATABASE_URL
+    : defaultDbUrl;
+process.env.DATABASE_URL = targetDbUrl;
 const { PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient({
   datasources: {
     db: {
-      url: defaultDbUrl,
+      url: targetDbUrl,
     },
   },
 });
