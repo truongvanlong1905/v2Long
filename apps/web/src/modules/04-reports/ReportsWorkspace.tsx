@@ -372,7 +372,7 @@ export function ReportsWorkspace() {
               <div className="mt-2">
                 <div className="text-sm text-slate-600">
                   CPL Hiệu quả (L3):{' '}
-                  <strong className="font-mono text-ink">
+                  <strong className="tabular-nums text-ink">
                     {formatMoney(data.marketingSummary.cplEffective, { emptyText: 'Chưa phát sinh' })}
                   </strong>
                 </div>
@@ -400,21 +400,22 @@ export function ReportsWorkspace() {
                   Hỗ trợ Trưởng nhóm Sales và Ban Giám đốc đôn đốc các hồ sơ đã gửi báo giá nhưng khách chưa phản hồi
                 </p>
               </div>
-              <span className="px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold">
-                {data.unansweredQuotes.length} hồ sơ chờ phản hồi
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold whitespace-nowrap">
+                <Clock className="w-3.5 h-3.5 text-amber-600" />
+                <span>{data.unansweredQuotes.length} hồ sơ chờ phản hồi</span>
               </span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
-                  <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                    <th className="py-3 px-4 font-bold">Mã Lead</th>
-                    <th className="py-3 px-4 font-bold">Khách hàng / Đơn vị</th>
-                    <th className="py-3 px-4 font-bold">Số điện thoại</th>
-                    <th className="py-3 px-4 font-bold">Sales phụ trách</th>
-                    <th className="py-3 px-4 font-bold">Sản phẩm báo giá</th>
-                    <th className="py-3 px-4 font-bold">Thời điểm gửi</th>
-                    <th className="py-3 px-4 font-bold">Số ngày chờ</th>
+                  <tr className="bg-slate-50/90 text-slate-600 border-b border-slate-200 text-xs uppercase tracking-wider">
+                    <th className="py-3.5 px-4 font-bold whitespace-nowrap">Mã Lead</th>
+                    <th className="py-3.5 px-4 font-bold min-w-[220px]">Khách hàng / Đơn vị</th>
+                    <th className="py-3.5 px-4 font-bold whitespace-nowrap">Số điện thoại</th>
+                    <th className="py-3.5 px-4 font-bold whitespace-nowrap">Sales phụ trách</th>
+                    <th className="py-3.5 px-4 font-bold min-w-[180px]">Sản phẩm báo giá</th>
+                    <th className="py-3.5 px-4 font-bold whitespace-nowrap">Thời điểm gửi</th>
+                    <th className="py-3.5 px-4 font-bold text-right whitespace-nowrap">Số ngày chờ</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -428,9 +429,13 @@ export function ReportsWorkspace() {
                     data.unansweredQuotes.map((q) => (
                       <tr
                         key={q.leadId}
-                        className={q.isOverdue7Days ? 'bg-rose-50/60' : 'hover:bg-slate-50/70'}
+                        className={
+                          q.isOverdue7Days
+                            ? 'bg-rose-50/50 hover:bg-rose-50/80 transition-colors'
+                            : 'hover:bg-slate-50/80 transition-colors'
+                        }
                       >
-                        <td className="py-3 px-4 font-mono font-bold text-brand">
+                        <td className="py-3.5 px-4 tabular-nums font-bold text-brand whitespace-nowrap">
                           <a
                             href={`/leads?highlight=${q.leadId}`}
                             className="hover:underline"
@@ -439,22 +444,35 @@ export function ReportsWorkspace() {
                             {q.leadCode}
                           </a>
                         </td>
-                        <td className="py-3 px-4 font-semibold text-ink">{q.companyOrContact}</td>
-                        <td className="py-3 px-4 font-mono">{q.phone}</td>
-                        <td className="py-3 px-4">{q.assignedSalesName}</td>
-                        <td className="py-3 px-4 text-slate-600">{q.productSummary}</td>
-                        <td className="py-3 px-4 text-slate-500">
+                        <td className="py-3.5 px-4 font-semibold text-ink">
+                          {q.companyOrContact.replace(/\s*\(Dữ liệu tổng hợp\)/gi, '')}
+                        </td>
+                        <td className="py-3.5 px-4 tabular-nums font-medium text-slate-700 whitespace-nowrap">
+                          {q.phone}
+                        </td>
+                        <td className="py-3.5 px-4 font-medium text-slate-700 whitespace-nowrap">
+                          {q.assignedSalesName}
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-600">{q.productSummary}</td>
+                        <td className="py-3.5 px-4 tabular-nums text-slate-500 whitespace-nowrap">
                           {new Date(q.quoteSentAt).toLocaleDateString('vi-VN')}
                         </td>
-                        <td className="py-3 px-4">
+                        <td className="py-3.5 px-4 text-right whitespace-nowrap">
                           <span
-                            className={`px-2.5 py-1 rounded-full font-bold text-xs ${
+                            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-bold text-xs whitespace-nowrap ${
                               q.isOverdue7Days
-                                ? 'bg-rose-600 text-white'
-                                : 'bg-amber-100 text-amber-800'
+                                ? 'bg-rose-600 text-white shadow-2xs'
+                                : 'bg-amber-100 text-amber-800 border border-amber-200'
                             }`}
                           >
-                            {q.daysWaiting} ngày {q.isOverdue7Days ? '(Quá hạn > 7 ngày)' : ''}
+                            {q.isOverdue7Days ? (
+                              <>
+                                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                                <span>Quá hạn · {q.daysWaiting} ngày</span>
+                              </>
+                            ) : (
+                              <span>Chờ {q.daysWaiting} ngày</span>
+                            )}
                           </span>
                         </td>
                       </tr>
@@ -477,37 +495,37 @@ export function ReportsWorkspace() {
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-sm">
                   <thead>
-                    <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                      <th className="py-2.5 px-4 font-bold">Nhân sự Sales</th>
-                      <th className="py-2.5 px-3 font-bold text-center">Tổng</th>
-                      <th className="py-2.5 px-3 font-bold text-center">Đang BG</th>
-                      <th className="py-2.5 px-3 font-bold text-center">Đã gửi BG</th>
-                      <th className="py-2.5 px-3 font-bold text-center">Chốt Won</th>
-                      <th className="py-2.5 px-3 font-bold text-center">Win Rate</th>
+                    <tr className="bg-slate-50/90 text-slate-600 border-b border-slate-200 text-xs uppercase tracking-wider">
+                      <th className="py-3 px-4 font-bold whitespace-nowrap">Nhân sự Sales</th>
+                      <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Tổng</th>
+                      <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Đang BG</th>
+                      <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Đã gửi BG</th>
+                      <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Chốt Won</th>
+                      <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Win Rate</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {data.salesPerformance.map((sp) => (
-                      <tr key={sp.salesUserId} className="hover:bg-slate-50/70">
-                        <td className="py-2.5 px-4 font-semibold text-ink">
+                      <tr key={sp.salesUserId} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3 px-4 font-semibold text-ink whitespace-nowrap">
                           <div className="flex items-center gap-2">
                             <span
-                              className={`w-2 h-2 rounded-full ${
+                              className={`w-2 h-2 rounded-full shrink-0 ${
                                 sp.isOnline ? 'bg-emerald-500' : 'bg-slate-300'
                               }`}
                             />
                             <span>{sp.salesFullName}</span>
                           </div>
                         </td>
-                        <td className="py-2.5 px-3 text-center font-mono font-bold">
+                        <td className="py-3 px-3 text-center tabular-nums font-bold whitespace-nowrap">
                           {sp.totalLeads}
                         </td>
-                        <td className="py-2.5 px-3 text-center font-mono">{sp.quotingLeads}</td>
-                        <td className="py-2.5 px-3 text-center font-mono">{sp.quoteSentLeads}</td>
-                        <td className="py-2.5 px-3 text-center font-mono text-emerald-700 font-bold">
+                        <td className="py-3 px-3 text-center tabular-nums whitespace-nowrap">{sp.quotingLeads}</td>
+                        <td className="py-3 px-3 text-center tabular-nums whitespace-nowrap">{sp.quoteSentLeads}</td>
+                        <td className="py-3 px-3 text-center tabular-nums text-emerald-700 font-bold whitespace-nowrap">
                           {sp.wonLeads}
                         </td>
-                        <td className="py-2.5 px-3 text-center font-mono font-semibold text-brand">
+                        <td className="py-3 px-3 text-center tabular-nums font-semibold text-brand whitespace-nowrap">
                           {sp.winRateText}
                         </td>
                       </tr>
@@ -527,25 +545,25 @@ export function ReportsWorkspace() {
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-sm">
                   <thead>
-                    <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                      <th className="py-2.5 px-4 font-bold">Sản phẩm</th>
-                      <th className="py-2.5 px-3 font-bold text-center">Lượt hỏi</th>
-                      <th className="py-2.5 px-3 font-bold text-center">Đã chốt</th>
+                    <tr className="bg-slate-50/90 text-slate-600 border-b border-slate-200 text-xs uppercase tracking-wider">
+                      <th className="py-3 px-4 font-bold">Sản phẩm</th>
+                      <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Lượt hỏi</th>
+                      <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Đã chốt</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {data.productInsights.map((pi) => (
-                      <tr key={pi.productId} className="hover:bg-slate-50/70">
-                        <td className="py-2.5 px-4">
+                      <tr key={pi.productId} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3 px-4">
                           <div className="font-semibold text-ink">{pi.productName}</div>
-                          <div className="text-xs font-mono text-slate-400">
+                          <div className="text-xs tabular-nums text-slate-400">
                             {pi.productCode} · {pi.category}
                           </div>
                         </td>
-                        <td className="py-2.5 px-3 text-center font-mono font-bold text-brand">
+                        <td className="py-3 px-3 text-center tabular-nums font-bold text-brand whitespace-nowrap">
                           {pi.inquiryCount}
                         </td>
-                        <td className="py-2.5 px-3 text-center font-mono text-emerald-700 font-bold">
+                        <td className="py-3 px-3 text-center tabular-nums text-emerald-700 font-bold whitespace-nowrap">
                           {pi.wonCount}
                         </td>
                       </tr>
@@ -567,49 +585,133 @@ export function ReportsWorkspace() {
                   Tự động ẩn danh số điện thoại & tên công ty khách hàng nếu tài khoản thuộc nhóm Marketing / Ads / Designer
                 </p>
               </div>
-              <span className="text-xs font-mono text-slate-500">
-                Tổng: {data.detailedLeads.length} dòng
+              <span className="inline-flex items-center px-3 py-1 rounded-full bg-slate-100 text-xs font-semibold text-slate-600 tabular-nums whitespace-nowrap">
+                Tổng: {data.detailedLeads.length} hồ sơ
               </span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
-                  <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                    <th className="py-3 px-4 font-bold">STT</th>
-                    <th className="py-3 px-4 font-bold">Mã Lead</th>
-                    <th className="py-3 px-4 font-bold">Ngày nhận</th>
-                    <th className="py-3 px-4 font-bold">Sales phụ trách</th>
-                    <th className="py-3 px-4 font-bold">Khách hàng / Đơn vị</th>
-                    <th className="py-3 px-4 font-bold">Số điện thoại</th>
-                    <th className="py-3 px-4 font-bold">Kênh</th>
-                    <th className="py-3 px-4 font-bold">Nguồn Marketing</th>
-                    <th className="py-3 px-4 font-bold">Sản phẩm LED</th>
-                    <th className="py-3 px-4 font-bold">Trạng thái</th>
+                  <tr className="bg-slate-50/90 text-slate-600 border-b border-slate-200 text-xs uppercase tracking-wider">
+                    <th className="py-3.5 px-3 font-bold text-center whitespace-nowrap">STT</th>
+                    <th className="py-3.5 px-3 font-bold whitespace-nowrap">Mã Lead</th>
+                    <th className="py-3.5 px-3 font-bold whitespace-nowrap">Ngày nhận</th>
+                    <th className="py-3.5 px-3 font-bold whitespace-nowrap">Sales phụ trách</th>
+                    <th className="py-3.5 px-4 font-bold min-w-[230px]">Khách hàng / Đơn vị</th>
+                    <th className="py-3.5 px-3 font-bold whitespace-nowrap">Số điện thoại</th>
+                    <th className="py-3.5 px-3 font-bold whitespace-nowrap">Kênh</th>
+                    <th className="py-3.5 px-3 font-bold whitespace-nowrap">Nguồn Marketing</th>
+                    <th className="py-3.5 px-4 font-bold min-w-[180px]">Sản phẩm LED</th>
+                    <th className="py-3.5 px-4 font-bold text-right whitespace-nowrap">Trạng thái</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {data.detailedLeads.map((row) => (
-                    <tr key={row.leadCode} className="hover:bg-slate-50/70">
-                      <td className="py-2.5 px-4 font-mono text-slate-400">{row.stt}</td>
-                      <td className="py-2.5 px-4 font-mono font-bold text-brand">{row.leadCode}</td>
-                      <td className="py-2.5 px-4 text-slate-500">
-                        {new Date(row.receivedAt).toLocaleDateString('vi-VN')}
-                      </td>
-                      <td className="py-2.5 px-4 font-medium">{row.assignedSalesName}</td>
-                      <td className="py-2.5 px-4 font-semibold text-ink">
-                        {row.companyOrCustomer}
-                      </td>
-                      <td className="py-2.5 px-4 font-mono">{row.phone}</td>
-                      <td className="py-2.5 px-4">{row.contactChannel}</td>
-                      <td className="py-2.5 px-4">{row.marketingSource}</td>
-                      <td className="py-2.5 px-4 text-slate-600">{row.productsText}</td>
-                      <td className="py-2.5 px-4">
-                        <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold text-xs">
-                          {row.pipelineStatusLabel}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {data.detailedLeads.map((row) => {
+                    const statusText = row.pipelineStatusLabel || '';
+                    const isSpamRow = statusText.toLowerCase().includes('spam');
+                    const isWonRow = statusText.includes('Chốt thành công');
+                    const isLostRow = statusText.includes('Thất bại');
+                    const isQuoteSentRow = statusText.includes('Đã gửi báo giá');
+                    const isQuotingRow = statusText.includes('Đang soạn báo giá');
+
+                    const badgeStyle = isSpamRow
+                      ? 'bg-red-600 text-white shadow-2xs'
+                      : isWonRow
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : isLostRow
+                          ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                          : isQuoteSentRow
+                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                            : isQuotingRow
+                              ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                              : 'bg-indigo-50 text-indigo-700 border border-indigo-200';
+
+                    const dotStyle = isSpamRow
+                      ? 'bg-white'
+                      : isWonRow
+                        ? 'bg-emerald-500'
+                        : isLostRow
+                          ? 'bg-rose-500'
+                          : isQuoteSentRow
+                            ? 'bg-blue-500'
+                            : isQuotingRow
+                              ? 'bg-amber-500'
+                              : 'bg-indigo-500';
+
+                    const cleanedCustomer = row.companyOrCustomer.replace(
+                      /\s*\(Dữ liệu tổng hợp\)/gi,
+                      '',
+                    );
+                    const [primaryCustomer, secondaryContact] = cleanedCustomer.split(' — ');
+
+                    return (
+                      <tr
+                        key={row.leadCode}
+                        className={
+                          isSpamRow
+                            ? 'bg-red-50/50 hover:bg-red-50/80 transition-colors'
+                            : 'hover:bg-slate-50/80 transition-colors'
+                        }
+                      >
+                        <td className="py-3.5 px-3 text-center tabular-nums text-slate-400 font-medium whitespace-nowrap">
+                          {row.stt}
+                        </td>
+                        <td
+                          className={`py-3.5 px-3 tabular-nums font-bold whitespace-nowrap ${
+                            isSpamRow ? 'text-red-700' : 'text-brand'
+                          }`}
+                        >
+                          {row.leadCode}
+                        </td>
+                        <td className="py-3.5 px-3 tabular-nums text-slate-500 whitespace-nowrap">
+                          {new Date(row.receivedAt).toLocaleDateString('vi-VN')}
+                        </td>
+                        <td className="py-3.5 px-3 font-medium text-slate-700 whitespace-nowrap">
+                          {row.assignedSalesName}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <div className="font-bold text-ink leading-snug">{primaryCustomer}</div>
+                          {secondaryContact && (
+                            <div className="text-xs text-slate-500 mt-0.5">
+                              Liên hệ: <span className="font-medium text-slate-700">{secondaryContact}</span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-3 tabular-nums font-medium text-slate-700 whitespace-nowrap">
+                          {row.phone}
+                        </td>
+                        <td className="py-3.5 px-3 whitespace-nowrap">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-xs font-medium whitespace-nowrap">
+                            {row.contactChannel}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-3 whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${
+                              row.marketingSource === 'Google Ads'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200/70'
+                                : row.marketingSource === 'Facebook Ads'
+                                  ? 'bg-indigo-50 text-indigo-700 border border-indigo-200/70'
+                                  : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {row.marketingSource}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-600 text-xs sm:text-sm leading-snug">
+                          {row.productsText}
+                        </td>
+                        <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-bold text-xs whitespace-nowrap ${badgeStyle}`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotStyle}`} />
+                            <span>{row.pipelineStatusLabel}</span>
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

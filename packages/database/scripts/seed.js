@@ -149,6 +149,12 @@ function createSamplePngBuffer() {
 }
 
 async function seedSyntheticModuleData(usersByEmail) {
+  await prisma.$executeRawUnsafe(`
+    UPDATE "leads"
+    SET "company_name" = REPLACE("company_name", ' (Dữ liệu tổng hợp)', ''),
+        "contact_name" = TRIM("contact_name")
+    WHERE "company_name" LIKE '%(Dữ liệu tổng hợp)%' OR "contact_name" LIKE ' %'
+  `);
   const existingLeadCount = await prisma.lead.count();
   if (existingLeadCount > 0) return;
 
@@ -221,7 +227,7 @@ async function seedSyntheticModuleData(usersByEmail) {
   const lead1 = await prisma.lead.create({
     data: {
       leadCode: 'TT-20261101-0001',
-      companyName: 'Công ty CP Trung tâm Hội nghị Ánh Dương (Dữ liệu tổng hợp)',
+      companyName: 'Công ty CP Trung tâm Hội nghị Ánh Dương',
       projectName: 'Hội trường Ballroom Tầng 3',
       normalizedLookupKey: 'trung tam hoi nghi anh duong|hoi truong ballroom tang 3',
       contactName: 'Anh Minh Hoàng',
@@ -322,7 +328,7 @@ async function seedSyntheticModuleData(usersByEmail) {
   const lead2 = await prisma.lead.create({
     data: {
       leadCode: 'TT-20261102-0002',
-      companyName: 'Nhà máy Sản xuất Linh kiện Đông Á (Dữ liệu tổng hợp)',
+      companyName: 'Nhà máy Sản xuất Linh kiện Đông Á',
       projectName: 'Hệ thống 12 Bảng điện tử Năng suất & An toàn',
       normalizedLookupKey: 'nha may san xuat linh kien dong a|he thong 12 bang dien tu nang suat an toan',
       contactName: 'Chị Thanh Thảo',
@@ -332,7 +338,7 @@ async function seedSyntheticModuleData(usersByEmail) {
       selfReportedSource: 'Được đối tác giới thiệu',
       areaType: 'other_province',
       province: 'Bình Dương',
-      installationAddress: 'KCN VSIP 2, Bình Dương (Dữ liệu mẫu)',
+      installationAddress: 'KCN VSIP 2, Bình Dương',
       pipelineStatus: 'quote_sent',
       assignedSalesId: sales1.id,
       createdByUserId: sales1.id,
@@ -367,7 +373,7 @@ async function seedSyntheticModuleData(usersByEmail) {
   const lead3 = await prisma.lead.create({
     data: {
       leadCode: 'TT-20261104-0003',
-      companyName: 'Tập đoàn Bất động sản Nam Sài Gòn (Dữ liệu tổng hợp)',
+      companyName: 'Tập đoàn Bất động sản Nam Sài Gòn',
       projectName: 'Màn hình LED Outdoor Mặt tiền Tòa nhà Quận 7',
       normalizedLookupKey: 'tap doan bat dong san nam sai gon|man hinh led outdoor mat tien toa nha quan 7',
       contactName: 'Anh Quốc Tuấn',
@@ -416,10 +422,10 @@ async function seedSyntheticModuleData(usersByEmail) {
   const lead4 = await prisma.lead.create({
     data: {
       leadCode: 'TT-20261105-0004',
-      companyName: 'Bệnh viện Đa khoa Quốc tế Minh Tâm (Dữ liệu tổng hợp)',
+      companyName: 'Bệnh viện Đa khoa Quốc tế Minh Tâm',
       projectName: 'Màn hình LED Sảnh khám & Đồng hồ LED',
       normalizedLookupKey: 'benh vien da khoa quoc te minh tam|man hinh led sanh kham dong ho led',
-      contactName: ' Bác sĩ Khanh',
+      contactName: 'Bác sĩ Khanh',
       phone: '0908100204',
       email: 'khanh.bv@minhtam-synthetic.vn',
       contactChannel: 'form_web',

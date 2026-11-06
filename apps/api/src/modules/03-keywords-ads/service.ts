@@ -197,9 +197,9 @@ export async function listKeywordsAndArticlesForUser(user: SessionUserDto): Prom
     const ctrPct =
       impressions > 0 ? ((clicks / impressions) * 100).toFixed(2) + '%' : '0.00%';
     const cplText =
-      conversions > 0 ? Math.round(spendVnd / conversions).toLocaleString('vi-VN') + ' đ' : 'Chưa có';
+      conversions > 0 ? Math.round(spendVnd / conversions).toLocaleString('vi-VN') + ' ₫' : 'Chưa có';
     const dailyBudgetVndText = camp.dailyBudgetMicros
-      ? Number(camp.dailyBudgetMicros / 1_000_000n).toLocaleString('vi-VN') + ' đ'
+      ? Number(camp.dailyBudgetMicros / 1_000_000n).toLocaleString('vi-VN') + ' ₫'
       : 'Không giới hạn';
 
     return {
@@ -217,7 +217,7 @@ export async function listKeywordsAndArticlesForUser(user: SessionUserDto): Prom
       impressions,
       clicks,
       ctrPct,
-      spendVndText: spendVnd.toLocaleString('vi-VN') + ' đ',
+      spendVndText: spendVnd.toLocaleString('vi-VN') + ' ₫',
       conversions,
       cplText,
     };

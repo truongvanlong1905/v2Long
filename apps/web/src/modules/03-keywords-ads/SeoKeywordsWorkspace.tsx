@@ -94,6 +94,9 @@ export function SeoKeywordsWorkspace() {
       if (res.keywords && res.keywords.length > 0 && !selectedKeywordId) {
         setSelectedKeywordId(res.keywords[0].id);
       }
+      if (res.articles && res.articles.length > 0) {
+        setSelectedArticleId((prev) => prev ?? res.articles[0].id);
+      }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Không thể tải dữ liệu Quảng cáo & Từ khóa.');
     } finally {
@@ -650,86 +653,98 @@ export function SeoKeywordsWorkspace() {
                   Ghi nhận từ Google Ads & Facebook Ads liên kết nguồn tiếp nhận Lead
                 </p>
               </div>
-              <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-mono text-xs">
-                {campaigns.length} chiến dịch đang kích hoạt
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold text-xs whitespace-nowrap">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <span>{campaigns.length} chiến dịch đang kích hoạt</span>
               </span>
             </div>
 
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
-                  <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                    <th className="py-3 px-4 font-bold">Mã chiến dịch</th>
-                    <th className="py-3 px-4 font-bold">Tên chiến dịch</th>
-                    <th className="py-3 px-4 font-bold">Nền tảng</th>
-                    <th className="py-3 px-4 font-bold text-center">Trạng thái</th>
-                    <th className="py-3 px-4 font-bold text-right">Ngân sách/ngày</th>
-                    <th className="py-3 px-4 font-bold text-right">Lượt hiển thị</th>
-                    <th className="py-3 px-4 font-bold text-right">Lượt nhấp</th>
-                    <th className="py-3 px-4 font-bold text-center">CTR</th>
-                    <th className="py-3 px-4 font-bold text-right">Chi phí đã tiêu</th>
-                    <th className="py-3 px-4 font-bold text-center">Chuyển đổi</th>
-                    <th className="py-3 px-4 font-bold text-right">CPL</th>
+                  <tr className="bg-slate-50/90 text-slate-600 border-b border-slate-200 text-xs uppercase tracking-wider">
+                    <th className="py-3.5 px-4 font-bold min-w-[240px]">Chiến dịch</th>
+                    <th className="py-3.5 px-3 font-bold whitespace-nowrap">Nền tảng</th>
+                    <th className="py-3.5 px-3 font-bold text-center whitespace-nowrap">Trạng thái</th>
+                    <th className="py-3.5 px-3 font-bold text-right whitespace-nowrap">Ngân sách/ngày</th>
+                    <th className="py-3.5 px-3 font-bold text-right whitespace-nowrap">Lượt hiển thị</th>
+                    <th className="py-3.5 px-3 font-bold text-right whitespace-nowrap">Lượt nhấp</th>
+                    <th className="py-3.5 px-3 font-bold text-center whitespace-nowrap">CTR</th>
+                    <th className="py-3.5 px-3 font-bold text-right whitespace-nowrap">Chi phí đã tiêu</th>
+                    <th className="py-3.5 px-3 font-bold text-center whitespace-nowrap">Chuyển đổi</th>
+                    <th className="py-3.5 px-4 font-bold text-right whitespace-nowrap">CPL trung bình</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {campaigns.length === 0 ? (
                     <tr>
-                      <td colSpan={11} className="py-8 text-center text-slate-400">
+                      <td colSpan={10} className="py-8 text-center text-slate-400">
                         Chưa có chiến dịch quảng cáo nào trong hệ thống.
                       </td>
                     </tr>
                   ) : (
                     campaigns.map((camp) => (
-                      <tr key={camp.id} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="py-3 px-4 font-mono font-bold text-brand">
-                          {camp.campaignCode}
+                      <tr key={camp.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3.5 px-4">
+                          <div className="font-bold text-ink leading-snug">{camp.campaignName}</div>
+                          <div className="text-xs font-medium text-slate-400 mt-0.5 tabular-nums">
+                            Mã: <span className="text-brand/90 font-semibold">{camp.campaignCode}</span>
+                          </div>
                         </td>
-                        <td className="py-3 px-4 font-semibold text-ink">
-                          {camp.campaignName}
-                        </td>
-                        <td className="py-3 px-4">
+                        <td className="py-3.5 px-3 whitespace-nowrap">
                           <span
-                            className={`px-2.5 py-0.5 rounded font-medium text-xs ${
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-semibold text-xs whitespace-nowrap ${
                               camp.platform === 'Google Ads'
                                 ? 'bg-blue-50 text-blue-700 border border-blue-200'
                                 : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                             }`}
                           >
-                            {camp.platform}
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                camp.platform === 'Google Ads' ? 'bg-blue-600' : 'bg-indigo-600'
+                              }`}
+                            />
+                            <span>{camp.platform}</span>
                           </span>
                         </td>
-                        <td className="py-3 px-4 text-center">
+                        <td className="py-3.5 px-3 text-center whitespace-nowrap">
                           <span
-                            className={`px-2.5 py-0.5 rounded-full font-bold text-xs ${
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-bold text-xs whitespace-nowrap ${
                               camp.isActive
                                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : 'bg-slate-100 text-slate-600'
+                                : 'bg-slate-100 text-slate-600 border border-slate-200'
                             }`}
                           >
-                            {camp.isActive ? 'Đang chạy' : 'Tạm dừng'}
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                camp.isActive ? 'bg-emerald-500' : 'bg-slate-400'
+                              }`}
+                            />
+                            <span>{camp.isActive ? 'Đang chạy' : 'Tạm dừng'}</span>
                           </span>
                         </td>
-                        <td className="py-3 px-4 text-right font-mono text-slate-600">
-                          {camp.dailyBudgetVndText}
+                        <td className="py-3.5 px-3 text-right tabular-nums whitespace-nowrap text-slate-700 font-medium">
+                          {camp.dailyBudgetVndText.replace(/\s+đ$/, ' ₫')}
                         </td>
-                        <td className="py-3 px-4 text-right font-mono">
+                        <td className="py-3.5 px-3 text-right tabular-nums whitespace-nowrap text-slate-700 font-medium">
                           {camp.impressions.toLocaleString('vi-VN')}
                         </td>
-                        <td className="py-3 px-4 text-right font-mono font-bold text-brand">
+                        <td className="py-3.5 px-3 text-right tabular-nums whitespace-nowrap font-bold text-brand">
                           {camp.clicks.toLocaleString('vi-VN')}
                         </td>
-                        <td className="py-3 px-4 text-center font-mono font-semibold">
+                        <td className="py-3.5 px-3 text-center tabular-nums whitespace-nowrap font-semibold text-slate-700">
                           {camp.ctrPct}
                         </td>
-                        <td className="py-3 px-4 text-right font-mono font-bold text-ink">
-                          {camp.spendVndText}
+                        <td className="py-3.5 px-3 text-right tabular-nums whitespace-nowrap font-bold text-ink">
+                          {camp.spendVndText.replace(/\s+đ$/, ' ₫')}
                         </td>
-                        <td className="py-3 px-4 text-center font-mono font-bold text-emerald-700">
-                          {camp.conversions}
+                        <td className="py-3.5 px-3 text-center tabular-nums whitespace-nowrap">
+                          <span className="inline-flex items-center justify-center min-w-[28px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-bold text-xs">
+                            {camp.conversions}
+                          </span>
                         </td>
-                        <td className="py-3 px-4 text-right font-mono font-semibold text-slate-700">
-                          {camp.cplText}
+                        <td className="py-3.5 px-4 text-right tabular-nums whitespace-nowrap font-semibold text-slate-800">
+                          {camp.cplText.replace(/\s+đ$/, ' ₫')}
                         </td>
                       </tr>
                     ))
@@ -753,9 +768,12 @@ export function SeoKeywordsWorkspace() {
                   </h2>
                 </div>
                 {keywords[0] && (
-                  <span className="text-xs text-slate-500">
-                    Nguồn: <code className="font-mono">{keywords[0].cacheSourceAccountKey}</code> · Kỳ:{' '}
-                    {keywords[0].cacheWindowStartDate} &rarr; {keywords[0].cacheWindowEndDate}
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-xs font-medium whitespace-nowrap">
+                    <Clock className="w-3.5 h-3.5 text-slate-400" />
+                    <span>
+                      Kỳ phân tích: <strong className="text-ink tabular-nums">{keywords[0].cacheWindowStartDate}</strong> đến{' '}
+                      <strong className="text-ink tabular-nums">{keywords[0].cacheWindowEndDate}</strong>
+                    </span>
                   </span>
                 )}
               </div>
@@ -763,42 +781,58 @@ export function SeoKeywordsWorkspace() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-left border-collapse">
                   <thead>
-                    <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                      <th className="py-2.5 px-3 font-bold">Từ khóa mục tiêu</th>
-                      <th className="py-2.5 px-3 font-bold">Volume tìm kiếm</th>
-                      <th className="py-2.5 px-3 font-bold">Click Google Ads</th>
-                      <th className="py-2.5 px-3 font-bold">Click Organic (GSC)</th>
-                      <th className="py-2.5 px-3 font-bold">Vị trí TB</th>
-                      <th className="py-2.5 px-3 font-bold">Xu hướng</th>
-                      <th className="py-2.5 px-3 font-bold">Khung giờ đăng gợi ý</th>
+                    <tr className="bg-slate-50/90 text-slate-600 border-b border-slate-200 text-xs uppercase tracking-wider">
+                      <th className="py-3 px-4 font-bold min-w-[220px]">Từ khóa mục tiêu</th>
+                      <th className="py-3 px-3 font-bold text-right whitespace-nowrap">Volume tìm kiếm</th>
+                      <th className="py-3 px-3 font-bold text-right whitespace-nowrap">Click Google Ads</th>
+                      <th className="py-3 px-3 font-bold text-right whitespace-nowrap">Click Organic (GSC)</th>
+                      <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Vị trí TB</th>
+                      <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Xu hướng</th>
+                      <th className="py-3 px-4 font-bold whitespace-nowrap">Khung giờ đăng gợi ý</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {keywords.map((kw) => (
-                      <tr key={kw.id} className="hover:bg-slate-50/70">
-                        <td className="py-2.5 px-3 font-bold text-ink">{kw.keywordText}</td>
-                        <td className="py-2.5 px-3 font-mono">{kw.cachedSearchVolume}</td>
-                        <td className="py-2.5 px-3 font-mono font-bold text-brand">
-                          {kw.cachedAdsClicks}
+                      <tr key={kw.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3 px-4 font-bold text-ink">{kw.keywordText}</td>
+                        <td className="py-3 px-3 text-right tabular-nums whitespace-nowrap font-semibold text-slate-700">
+                          {kw.cachedSearchVolume.toLocaleString('vi-VN')}
                         </td>
-                        <td className="py-2.5 px-3 font-mono font-bold text-emerald-700">
-                          {kw.cachedOrganicClicks}
+                        <td className="py-3 px-3 text-right tabular-nums whitespace-nowrap font-bold text-brand">
+                          {kw.cachedAdsClicks.toLocaleString('vi-VN')}
                         </td>
-                        <td className="py-2.5 px-3 font-mono">
+                        <td className="py-3 px-3 text-right tabular-nums whitespace-nowrap font-bold text-emerald-700">
+                          {kw.cachedOrganicClicks.toLocaleString('vi-VN')}
+                        </td>
+                        <td className="py-3 px-3 text-center tabular-nums whitespace-nowrap font-semibold text-slate-700">
                           {kw.cachedAvgPosition ? `#${kw.cachedAvgPosition.toFixed(1)}` : '—'}
                         </td>
-                        <td className="py-2.5 px-3">
+                        <td className="py-3 px-3 text-center whitespace-nowrap">
                           <span
-                            className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold whitespace-nowrap ${
                               kw.trendDirection === 'UP'
                                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : 'bg-slate-100 text-slate-600'
+                                : kw.trendDirection === 'DOWN'
+                                  ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                  : 'bg-slate-100 text-slate-600 border border-slate-200'
                             }`}
                           >
-                            {kw.trendDirection === 'UP' ? 'Đang tăng trưởng ↑' : 'Ổn định'}
+                            {kw.trendDirection === 'UP' ? (
+                              <>
+                                <TrendingUp className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <span>Đang tăng trưởng</span>
+                              </>
+                            ) : kw.trendDirection === 'DOWN' ? (
+                              <>
+                                <TrendingDown className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                                <span>Đang giảm</span>
+                              </>
+                            ) : (
+                              <span>Ổn định</span>
+                            )}
                           </span>
                         </td>
-                        <td className="py-2.5 px-3 text-slate-600">{kw.suggestedPublishSlot}</td>
+                        <td className="py-3 px-4 text-slate-600 text-xs sm:text-sm">{kw.suggestedPublishSlot}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -879,8 +913,8 @@ export function SeoKeywordsWorkspace() {
                         <label className="block text-sm font-semibold text-slate-700">
                           Website đích xuất bản *
                         </label>
-                        <span className="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold">
-                          Chế độ Giả lập (Simulated)
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold whitespace-nowrap">
+                          Chế độ mô phỏng nội bộ
                         </span>
                       </div>
                       <select
@@ -890,7 +924,7 @@ export function SeoKeywordsWorkspace() {
                       >
                         {TARGET_WEBSITES.map((w) => (
                           <option key={w} value={w}>
-                            {w} (Giả lập nội bộ)
+                            {w}
                           </option>
                         ))}
                       </select>

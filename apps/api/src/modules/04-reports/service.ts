@@ -314,7 +314,8 @@ export async function getScopedReportsDashboard(
         Math.floor((nowMs - lead.firstQuoteSentAt.getTime()) / (24 * 3600 * 1000))
       );
       const isOverdue7Days = daysWaiting >= 7;
-      const rawName = lead.companyName || lead.contactName || `Lead #${lead.leadCode}`;
+      const cleanCompany = lead.companyName ? lead.companyName.replace(/\s*\(Dữ liệu tổng hợp\)/gi, '') : null;
+      const rawName = cleanCompany || lead.contactName || `Lead #${lead.leadCode}`;
       unansweredQuotes.push({
         leadId: lead.id,
         leadCode: lead.leadCode,
@@ -631,8 +632,9 @@ export async function getScopedReportsDashboard(
   }
 
   const detailedLeads: DetailedReportLeadRowDto[] = leads.map((lead, idx) => {
+    const cleanCompany = lead.companyName ? lead.companyName.replace(/\s*\(Dữ liệu tổng hợp\)/gi, '') : null;
     const rawCompanyOrContact =
-      [lead.companyName, lead.contactName].filter(Boolean).join(' — ') ||
+      [cleanCompany, lead.contactName].filter(Boolean).join(' — ') ||
       `Khách hàng #${lead.leadCode}`;
     const receivedDate = lead.receivedAt ?? lead.contactedAt ?? lead.createdAt;
     return {
