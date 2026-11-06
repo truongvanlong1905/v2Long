@@ -1226,26 +1226,23 @@ export function AiDesignWorkspace() {
     </form>
   );
 
+  const canvasRatio = (() => {
+    const [w, h] = String(currentProject?.aspectRatio || '16:9').split(':').map(Number);
+    return w > 0 && h > 0 ? w / h : 16 / 9;
+  })();
+  const aiConnected = Boolean(providerStatus?.isConfigured);
+
   return (
     <div className="flex h-full w-full flex-col bg-slate-50 font-sans text-slate-800 antialiased overflow-hidden select-none">
       {/* 1. COMPACT STUDIO TOOLBAR WITH 3 PROMINENT WORKSPACE AREAS */}
-      <div className="flex min-h-14 w-full shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-2 shadow-2xs">
+      <div className="flex h-12 w-full shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-3">
         {/* Left: Active Project Title, Type Badge & Lead Reference */}
-        <div className="flex items-center gap-2.5 min-w-0">
-          <span className="text-base font-bold text-slate-900 truncate max-w-[240px]">
-            {currentProject ? currentProject.projectName : 'Dự án thiết kế'}
-          </span>
-          <span className="rounded-lg bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700 shrink-0">
-            {currentProject ? DESIGN_TYPE_LABELS[currentProject.designType] : 'Phối cảnh 3D'}
-          </span>
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <span
-            className={`rounded-full px-2.5 py-0.5 text-xs font-semibold border shrink-0 ${
-              currentProject?.status === 'completed'
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                : 'bg-blue-50 text-[#1E3A8A] border-blue-200'
-            }`}
+            className="text-[15px] font-semibold text-slate-900 truncate max-w-[180px] xl:max-w-[320px]"
+            title={currentProject ? `${currentProject.projectName} · ${DESIGN_TYPE_LABELS[currentProject.designType]} · ${DESIGN_STATUS_LABELS[currentProject.status]}` : undefined}
           >
-            {currentProject ? DESIGN_STATUS_LABELS[currentProject.status] : 'Nháp AI'}
+            {currentProject ? currentProject.projectName : 'Dự án thiết kế'}
           </span>
           {currentProject?.leadCode && (
             <a
@@ -1262,7 +1259,7 @@ export function AiDesignWorkspace() {
         <div
           role="tablist"
           aria-label="Khu vực làm việc Studio"
-          className="flex items-center gap-1.5 rounded-xl bg-slate-100 p-1 border border-slate-200"
+          className="flex shrink-0 items-center gap-1 rounded-lg bg-slate-100 p-0.5 border border-slate-200"
         >
           <button
             type="button"
@@ -1273,7 +1270,7 @@ export function AiDesignWorkspace() {
               setActiveWorkspaceArea('perspective');
               setMobilePane('canvas');
             }}
-            className={`flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-bold transition ${
+            className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1 text-sm font-semibold transition ${
               activeWorkspaceArea === 'perspective'
                 ? 'bg-[#1E3A8A] text-white shadow-xs'
                 : 'text-slate-600 hover:bg-white hover:text-slate-900'
@@ -1293,14 +1290,14 @@ export function AiDesignWorkspace() {
               setSideDockTab('assistant');
               setMobilePane('assistant');
             }}
-            className={`flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-bold transition ${
+            className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1 text-sm font-semibold transition ${
               activeWorkspaceArea === 'assistant'
                 ? 'bg-[#1E3A8A] text-white shadow-xs'
                 : 'text-slate-600 hover:bg-white hover:text-slate-900'
             }`}
           >
             <Sparkles className="h-4 w-4" />
-            <span>Trợ lý AI</span>
+            <span>Tạo ảnh AI</span>
           </button>
 
           <button
@@ -1312,7 +1309,7 @@ export function AiDesignWorkspace() {
               setActiveWorkspaceArea('specs');
               setSideDockTab('specs');
             }}
-            className={`flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-bold transition ${
+            className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1 text-sm font-semibold transition ${
               activeWorkspaceArea === 'specs'
                 ? 'bg-[#1E3A8A] text-white shadow-xs'
                 : 'text-slate-600 hover:bg-white hover:text-slate-900'
@@ -1337,7 +1334,7 @@ export function AiDesignWorkspace() {
             }`}
           >
             {focusCanvas ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-            <span>{focusCanvas ? 'Thu nhỏ ảnh' : 'Mở rộng ảnh'}</span>
+            <span className="hidden xl:inline">{focusCanvas ? 'Thu nhỏ ảnh' : 'Mở rộng ảnh'}</span>
           </button>
           <div
             className={`hidden xl:flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold border ${
@@ -1352,7 +1349,7 @@ export function AiDesignWorkspace() {
                 providerStatus?.isConfigured ? 'bg-emerald-500' : 'bg-amber-500'
               }`}
             />
-            <span>{providerStatus?.isConfigured ? 'AI Live sẵn sàng' : 'AI Mô phỏng cục bộ'}</span>
+            <span>{aiConnected ? `AI: ${providerStatus?.providerName || 'đã kết nối'}` : 'Chưa kết nối AI · mô phỏng'}</span>
           </div>
 
           {canExport && (
@@ -1362,7 +1359,7 @@ export function AiDesignWorkspace() {
               title="Xuất báo cáo Excel Dự án & Kho ảnh (05_DuAn_AI_KhoAnh.xlsx)"
             >
               <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
-              <span>Xuất Excel</span>
+              <span className="hidden 2xl:inline">Xuất Excel</span>
             </a>
           )}
 
@@ -1374,7 +1371,7 @@ export function AiDesignWorkspace() {
             title="Tải gói ZIP Kho ảnh dự án (Ảnh kỹ thuật + Bản thiết kế)"
           >
             <FileArchive className="h-4 w-4 text-[#1E3A8A]" />
-            <span className="hidden sm:inline">Tải ZIP</span>
+            <span className="hidden 2xl:inline">Tải ZIP</span>
           </button>
 
           {canUseAiDesign && (
@@ -1438,7 +1435,7 @@ export function AiDesignWorkspace() {
           <div className="flex flex-col min-h-0 basis-1/2 border-b border-slate-200 p-3.5">
             <div className="mb-2.5 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-slate-900">Dự án</h2>
+                <h2 className="text-base font-semibold text-slate-900 whitespace-nowrap">Dự án</h2>
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">
                   {filteredProjects.length}
                 </span>
@@ -1462,7 +1459,7 @@ export function AiDesignWorkspace() {
                   className="inline-flex items-center gap-1 rounded-lg bg-[#1E3A8A] px-2.5 py-1 text-xs font-bold text-white shadow-2xs transition hover:bg-[#2563EB]"
                 >
                   <Plus className="h-3.5 w-3.5" />
-                  <span>Dự án mới</span>
+                  <span>Mới</span>
                 </button>
               </div>
             </div>
@@ -1940,77 +1937,64 @@ export function AiDesignWorkspace() {
                 mobilePane === 'canvas' ? 'flex' : 'hidden md:flex'
               } flex-1 flex-col overflow-hidden bg-slate-100`}
             >
-              {/* Sub-bar: Status Toast + Working Original / Result / Compare Switcher */}
-              <div className="flex h-11 shrink-0 items-center justify-between bg-white px-4 border-b border-slate-200">
-                <div className="flex items-center gap-2 text-sm text-emerald-700 font-medium truncate">
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-                  <span className="truncate">
-                    {successToast ||
-                      (currentVersion
-                        ? `Đang hiển thị Phiên bản v${currentVersion.versionNumber} (${currentProject?.aspectRatio || '16:9'})`
-                        : 'Sẵn sàng dựng phối cảnh')}
-                  </span>
-                </div>
-
-                {/* Working Original / Result / Compare Controls */}
-                <div
-                  role="group"
-                  aria-label="Chế độ xem ảnh trên Canvas"
-                  className="flex items-center rounded-xl border border-slate-200 p-0.5 bg-slate-100 text-xs font-bold shrink-0"
-                >
-                  <button
-                    type="button"
-                    data-testid="view-mode-original"
-                    onClick={() => setViewMode('original')}
-                    className={`rounded-lg px-3 py-1 transition ${
-                      viewMode === 'original'
-                        ? 'bg-[#1E3A8A] text-white shadow-2xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Ảnh gốc
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="view-mode-result"
-                    onClick={() => setViewMode('result')}
-                    className={`rounded-lg px-3 py-1 transition ${
-                      viewMode === 'result'
-                        ? 'bg-[#1E3A8A] text-white shadow-2xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Kết quả
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="view-mode-compare"
-                    onClick={() => setViewMode('compare')}
-                    className={`rounded-lg px-3 py-1 transition ${
-                      viewMode === 'compare'
-                        ? 'bg-[#1E3A8A] text-white shadow-2xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    So sánh
-                  </button>
-                </div>
-              </div>
-
               {/* MAIN CENTERED CANVAS */}
-              <div className="relative flex-1 overflow-hidden p-4 flex items-center justify-center">
+              <div className="relative flex-1 min-h-0 overflow-hidden p-2 flex items-center justify-center [container-type:size]">
+                {/* Lớp nổi: chế độ xem + thông báo ngắn (không chiếm chiều cao riêng) */}
+                <div className="absolute left-3 top-3 z-20 flex items-center gap-2">
+                  <div
+                    role="group"
+                    aria-label="Chế độ xem ảnh"
+                    className="flex items-center rounded-lg bg-white/95 p-0.5 text-[13px] font-semibold shadow-md ring-1 ring-slate-200"
+                  >
+                    {(
+                      [
+                        { id: 'original', label: 'Ảnh gốc' },
+                        { id: 'result', label: 'Kết quả' },
+                        { id: 'compare', label: 'So sánh' },
+                      ] as const
+                    ).map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        data-testid={`view-mode-${m.id}`}
+                        aria-pressed={viewMode === m.id}
+                        onClick={() => setViewMode(m.id)}
+                        className={`rounded-md px-3 py-1 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A] ${
+                          viewMode === m.id ? 'bg-[#1E3A8A] text-white' : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                  {currentVersion && viewMode !== 'original' && (
+                    <span className="rounded-lg bg-slate-900/75 px-2.5 py-1 text-[13px] font-medium text-white">
+                      v{currentVersion.versionNumber} · {currentProject?.aspectRatio || '16:9'}
+                    </span>
+                  )}
+                </div>
+                {successToast && (
+                  <div
+                    role="status"
+                    className="absolute left-1/2 top-3 z-20 -translate-x-1/2 max-w-[60%] truncate rounded-lg bg-emerald-600 px-3 py-1.5 text-[13px] font-medium text-white shadow-md"
+                  >
+                    {successToast}
+                  </div>
+                )}
                 <div
                   ref={canvasContainerRef}
                   onMouseMove={handleMouseMoveCanvas}
                   onMouseUp={handleMouseUpCanvas}
                   onMouseLeave={handleMouseUpCanvas}
                   style={{
+                    aspectRatio: String(canvasRatio),
+                    width: `min(100cqw, calc(100cqh * ${canvasRatio}))`,
                     transform: `scale(${zoomLevel / 100})`,
                     transformOrigin: 'center center',
                     transition:
                       draggingHandle || draggingCompare ? 'none' : 'transform 0.15s ease-out',
                   }}
-                  className="relative aspect-video max-h-full max-w-full select-none overflow-hidden rounded-2xl bg-slate-900 shadow-xl border border-slate-800"
+                  className="relative select-none overflow-hidden rounded-xl bg-slate-900 shadow-lg"
                 >
                   {/* 1. MODE: ORIGINAL ("Ảnh gốc") -> Renders Input Photo from Ảnh kỹ thuật */}
                   {viewMode === 'original' && (
@@ -2200,115 +2184,57 @@ export function AiDesignWorkspace() {
                 </div>
               </div>
 
-              {/* BOTTOM VERSION STRIP */}
-              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-2.5">
-                <div className="mb-2 flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-slate-900">
-                      Lịch sử phiên bản (Bản thiết kế)
-                    </span>
-                    <span className="text-xs text-slate-500 flex items-center gap-1">
-                      <Info className="h-3.5 w-3.5 text-slate-400" />
-                      <span>Mỗi lần tạo sinh phiên bản mới, bảo toàn nguyên vẹn ảnh gốc</span>
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {currentVersion && (
-                      <a
-                        href={`/api/v1/design/asset/${currentVersion.id}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 font-semibold text-[#1E3A8A] hover:underline"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        <span>Tải v{currentVersion.versionNumber}</span>
-                      </a>
-                    )}
-                    <span className="text-slate-500 font-semibold">
-                      {currentProject?.assetVersions.length || 0} phiên bản
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 overflow-x-auto pb-1">
+              {/* Dải phiên bản: 1 hàng gọn */}
+              <div className="shrink-0 border-t border-slate-200 bg-white px-3 py-2 flex items-center gap-3">
+                <span className="text-[13px] font-semibold text-slate-700 whitespace-nowrap">
+                  Phiên bản ({currentProject?.assetVersions.length || 0})
+                </span>
+                <div className="flex flex-1 min-w-0 items-center gap-2 overflow-x-auto">
+                  {(currentProject?.assetVersions.length || 0) === 0 && (
+                    <span className="text-[13px] text-slate-500">Chưa có phiên bản nào.</span>
+                  )}
                   {currentProject?.assetVersions.map((ver) => {
                     const isSelected = ver.id === currentVersion?.id;
-                    const isFinal =
-                      ver.isApprovedFinal || ver.sourceType === 'DESIGNER_FINAL_UPLOAD';
-                    const label = isFinal
-                      ? `v${ver.versionNumber} · Bản chốt`
-                      : `Phiên bản v${ver.versionNumber}`;
-                    const thumb = `/api/v1/design/asset/${ver.id}`;
-
                     return (
                       <button
                         key={ver.id}
                         type="button"
                         data-testid={`version-card-v${ver.versionNumber}`}
+                        title={`Phiên bản v${ver.versionNumber}${ver.isApprovedFinal ? ' · Đã duyệt' : ''}`}
                         onClick={() => {
                           setSelectedVersionId(ver.id);
                           if (viewMode === 'original') setViewMode('result');
                         }}
-                        className={`group relative flex shrink-0 flex-col items-center overflow-hidden rounded-xl border p-1.5 text-left transition ${
-                          isSelected
-                            ? 'border-[#2563EB] bg-blue-50/70 ring-2 ring-blue-500/20'
-                            : 'border-slate-200 hover:border-slate-300'
+                        className={`relative shrink-0 h-10 w-16 overflow-hidden rounded-md border-2 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A] ${
+                          isSelected ? 'border-[#2563EB]' : 'border-transparent hover:border-slate-300'
                         }`}
                       >
-                        <div className="relative h-14 w-24 overflow-hidden rounded-lg bg-slate-900 border border-slate-100">
-                          <img src={thumb} alt={label} className="h-full w-full object-cover" />
-                          {ver.isApprovedFinal && (
-                            <span className="absolute left-1 top-1 rounded bg-emerald-600 px-1.5 py-0.2 text-[9px] font-bold text-white">
-                              Đã duyệt
-                            </span>
-                          )}
-                        </div>
-                        <span className="mt-1 text-xs font-bold text-slate-800">{label}</span>
+                        <img
+                          src={`/api/v1/design/asset/${ver.id}`}
+                          alt={`Phiên bản v${ver.versionNumber}`}
+                          className="h-full w-full object-cover bg-slate-900"
+                        />
+                        <span className="absolute bottom-0 left-0 rounded-tr bg-slate-900/80 px-1 text-[11px] font-semibold text-white">
+                          v{ver.versionNumber}
+                        </span>
+                        {ver.isApprovedFinal && (
+                          <span className="absolute right-0.5 top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white" />
+                        )}
                       </button>
                     );
                   })}
                 </div>
-              </div>
-
-              {/* FOOTER METRICS BAR */}
-              <div className="flex h-9 shrink-0 items-center justify-between border-t border-slate-200 bg-slate-50 px-4 text-xs text-slate-600">
-                <div className="flex items-center gap-4">
-                  <span className="flex items-center gap-1">
-                    <Clock className="h-3.5 w-3.5 text-slate-400" />
-                    <span>
-                      Thời gian xử lý:{' '}
-                      {currentProject?.processingDurationSec
-                        ? `${currentProject.processingDurationSec}s`
-                        : '—'}
-                    </span>
-                  </span>
-                  <span>|</span>
-                  <span className="flex items-center gap-1">
-                    <Layers className="h-3.5 w-3.5 text-slate-400" />
-                    <span>
-                      Token:{' '}
-                      {currentProject?.tokenCost ? currentProject.tokenCost.toLocaleString() : '—'}
-                    </span>
-                  </span>
-                  <span>|</span>
-                  <span className="flex items-center gap-1">
-                    <Coins className="h-3.5 w-3.5 text-slate-400" />
-                    <span>
-                      Chi phí uớc tính:{' '}
-                      {currentProject?.totalCost
-                        ? `${currentProject.totalCost.currency === 'USD' ? '$' : ''}${currentProject.totalCost.formattedDecimal}${
-                            currentProject.totalCost.currency === 'VND' ? ' ₫' : ''
-                          }`
-                        : '—'}
-                    </span>
-                  </span>
-                </div>
-
-                <div className="text-xs font-medium text-slate-500">
-                  {providerStatus?.isConfigured
-                    ? `● ${providerStatus.providerName}`
-                    : 'Chế độ mô phỏng cục bộ an toàn (Không phát sinh phí API)'}
-                </div>
+                {currentVersion && (
+                  <a
+                    href={`/api/v1/design/asset/${currentVersion.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="shrink-0 inline-flex items-center gap-1 text-[13px] font-semibold text-[#1E3A8A] hover:underline"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Tải v{currentVersion.versionNumber}
+                  </a>
+                )}
               </div>
             </div>
 
@@ -2316,10 +2242,10 @@ export function AiDesignWorkspace() {
             <aside
               className={`${
                 mobilePane === 'assistant' || activeWorkspaceArea === 'assistant'
-                  ? 'flex w-full md:w-92 xl:w-96'
+                  ? 'flex w-full md:w-80 xl:w-[22rem]'
                   : focusCanvas
                 ? 'hidden'
-                : 'hidden xl:flex xl:w-96'
+                : 'hidden xl:flex xl:w-[22rem]'
               } shrink-0 flex-col border-l border-slate-200 bg-white h-full min-h-0`}
             >
               {/* Side Dock Switcher */}
@@ -2331,36 +2257,29 @@ export function AiDesignWorkspace() {
                       setSideDockTab('assistant');
                       setActiveWorkspaceArea('assistant');
                     }}
-                    className={`flex items-center gap-1.5 py-2.5 text-sm font-bold border-b-2 transition ${
+                    className={`flex items-center gap-1.5 whitespace-nowrap py-2.5 text-sm font-semibold border-b-2 transition ${
                       sideDockTab === 'assistant'
                         ? 'border-[#1E3A8A] text-[#1E3A8A]'
                         : 'border-transparent text-slate-500 hover:text-slate-800'
                     }`}
                   >
                     <Sparkles className="h-4 w-4 text-[#2563EB]" />
-                    <span>Trợ lý AI</span>
+                    <span>Tạo ảnh AI</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setSideDockTab('specs')}
-                    className={`flex items-center gap-1.5 py-2.5 text-sm font-bold border-b-2 transition ml-4 ${
+                    className={`flex items-center gap-1.5 whitespace-nowrap py-2.5 text-sm font-semibold border-b-2 transition ml-4 ${
                       sideDockTab === 'specs'
                         ? 'border-[#1E3A8A] text-[#1E3A8A]'
                         : 'border-transparent text-slate-500 hover:text-slate-800'
                     }`}
                   >
                     <Settings2 className="h-4 w-4 text-slate-500" />
-                    <span>Thông số nhanh</span>
+                    <span>Thông số</span>
                   </button>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setActiveWorkspaceArea('specs')}
-                  className="text-xs font-semibold text-[#2563EB] hover:underline"
-                >
-                  Mở rộng Thông số
-                </button>
               </div>
 
               {sideDockTab === 'assistant' ? (
@@ -2389,13 +2308,13 @@ export function AiDesignWorkspace() {
                   </div>
 
                   {/* Conversation History */}
-                  <div className="flex-1 min-h-0 space-y-3 overflow-y-auto pr-1 text-sm">
+                  <div className="min-h-0 shrink space-y-3 overflow-y-auto pr-1 text-sm">
                     {currentProject?.chatMessages.map((msg) => {
                       const isUser = msg.role === 'user';
                       return (
                         <div key={msg.id} className="space-y-1">
                           <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
-                            <span>{isUser ? 'Yêu cầu của bạn' : 'Trợ lý AI Toàn Trung'}</span>
+                            <span>{isUser ? 'Yêu cầu' : aiConnected ? `Kết quả từ ${providerStatus?.providerName || 'AI'}` : 'Kết quả mô phỏng'}</span>
                             {msg.versionNumber && (
                               <span className="rounded bg-blue-100 px-1.5 py-0.2 text-[11px] font-bold text-[#1E3A8A]">
                                 Phiên bản v{msg.versionNumber}
@@ -2415,7 +2334,7 @@ export function AiDesignWorkspace() {
                               <Sparkles className="h-4 w-4 text-[#2563EB] inline mr-1.5 -mt-0.5" />
                             )}
                             <span>{msg.text}</span>
-                            {msg.cost && (
+                            {aiConnected && msg.cost && (
                               <div className="mt-1.5 flex items-center gap-2 text-xs text-slate-500 border-t border-slate-200/60 pt-1 font-normal">
                                 <span>Thời gian: {msg.durationSec}s</span>
                                 <span>·</span>
@@ -2431,7 +2350,7 @@ export function AiDesignWorkspace() {
                   </div>
 
                   {/* Quick Prompt Suggestions */}
-                  <div className="mt-2 flex flex-wrap gap-1.5 shrink-0">
+                  <div className="mt-3 flex flex-wrap gap-1.5 shrink-0">
                     {[
                       'Giữ nguyên nội thất, hiển thị video sóng biển 4K sắc nét',
                       'Tăng độ sáng viền cabinet LED, ánh sáng phản chiếu sàn',
@@ -2457,6 +2376,7 @@ export function AiDesignWorkspace() {
                   )}
 
                   {/* Prompt Composer */}
+                  <div className="flex-1" />
                   <form
                     onSubmit={handleSendChatEdit}
                     className="mt-2.5 shrink-0 pt-2.5 border-t border-slate-200"
@@ -2466,13 +2386,13 @@ export function AiDesignWorkspace() {
                       data-testid="ai-chat-prompt-input"
                       value={chatPrompt}
                       onChange={(e) => handlePromptChange(e.target.value)}
-                      placeholder="Nhập yêu cầu dựng phối cảnh hoặc chỉnh sửa nội dung màn hình LED..."
+                      placeholder={aiConnected ? 'Mô tả yêu cầu dựng phối cảnh / chỉnh nội dung màn hình LED…' : 'Chưa kết nối AI — yêu cầu sẽ tạo ảnh mô phỏng để thử quy trình…'}
                       className="w-full resize-none rounded-xl border border-slate-200 p-2.5 text-sm text-slate-900 placeholder-slate-400 focus:border-[#2563EB] focus:outline-none"
                     />
 
                     <div className="mt-2 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 text-xs text-slate-600">
-                        <span className="font-semibold">Chế độ:</span>
+                        <span className="font-semibold whitespace-nowrap">Chế độ</span>
                         <select
                           value={chatQuality}
                           onChange={(e) =>
@@ -2499,7 +2419,7 @@ export function AiDesignWorkspace() {
                         ) : (
                           <>
                             <Send className="h-3.5 w-3.5" />
-                            <span>Tạo phiên bản mới</span>
+                            <span className="whitespace-nowrap">Tạo phiên bản</span>
                           </>
                         )}
                       </button>
