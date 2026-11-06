@@ -6,8 +6,9 @@
     "packages/*"
   ],
   "scripts": {
+    "postinstall": "npm run db:generate",
     "dev": "npm --workspace @toantrung/web run dev",
-    "build": "npm --workspace @toantrung/web run build",
+    "build": "npm run db:generate && npm --workspace @toantrung/web run build",
     "start": "npm --workspace @toantrung/web run start",
     "typecheck": "npm --workspace @toantrung/contracts run typecheck && npm --workspace @toantrung/database run typecheck && npm --workspace @toantrung/api run typecheck && npm --workspace @toantrung/web run typecheck",
     "db:generate": "npm --workspace @toantrung/database run db:generate",

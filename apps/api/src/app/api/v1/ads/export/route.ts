@@ -20,54 +20,59 @@ export async function GET(request: Request) {
   }
 
   try {
-    const [keywords, campaigns, dailyMetrics, articles] = await Promise.all([
-      prisma.seoKeyword.findMany({
-        orderBy: { cachedSearchVolume: 'desc' },
-      }),
-      prisma.campaign.findMany({
-        include: {
-          trackings: {
-            include: { lead: true },
-          },
+    const keywords: any[] = await prisma.seoKeyword.findMany({
+      orderBy: { cachedSearchVolume: 'desc' },
+    });
+
+    const campaigns: any[] = await prisma.campaign.findMany({
+      include: {
+        trackings: {
+          include: { lead: true },
         },
-        orderBy: { id: 'asc' },
-      }),
-      prisma.platformDailyMetric.findMany({
-        where: {
-          platform: { in: ['google_ads', 'facebook', 'facebook_ads', 'search_console'] },
-        },
-      }),
-      prisma.seoArticle.findMany({
-        include: {
-          keyword: true,
-          createdBy: { select: { fullName: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-    ]);
+      },
+      orderBy: { id: 'asc' },
+    });
+
+    const dailyMetrics: any[] = await prisma.platformDailyMetric.findMany({
+      where: {
+        platform: { in: ['google_ads', 'facebook', 'facebook_ads', 'search_console'] },
+      },
+    });
+
+    const articles: any[] = await prisma.seoArticle.findMany({
+      include: {
+        keyword: true,
+        createdBy: { select: { fullName: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
 
     const dateStamp = new Date().toISOString().slice(0, 10);
 
-    const campaignRows = campaigns.map((c, idx) => {
-      const campMetrics = dailyMetrics.filter(
-        (m) =>
+    const campaignRows = (campaigns || []).map((c: any, idx: number) => {
+      const campMetrics = (dailyMetrics || []).filter(
+        (m: any) =>
           m.grain === 'campaign' &&
           (m.campaignId === c.id || m.campaignExternalId === c.campaignCode)
       );
-      const impressions = campMetrics.reduce((s, m) => s + m.impressions, 0);
-      const clicks = campMetrics.reduce((s, m) => s + m.clicks, 0);
-      const spendVnd = Number(campMetrics.reduce((s, m) => s + m.spendMicros, 0n) / 1_000_000n);
+      const impressions = campMetrics.reduce((s: number, m: any) => s + (m.impressions || 0), 0);
+      const clicks = campMetrics.reduce((s: number, m: any) => s + (m.clicks || 0), 0);
+      const spendVnd = Number(
+        campMetrics.reduce((s: bigint, m: any) => s + BigInt(m.spendMicros || 0), 0n) / 1_000_000n
+      );
       const platformConversions = campMetrics.reduce(
-        (s, m) => s + Number(m.conversionsMicros / 1_000_000n),
+        (s: number, m: any) => s + Number(BigInt(m.conversionsMicros || 0) / 1_000_000n),
         0
       );
-      const dailyBudgetVnd = c.dailyBudgetMicros ? Number(c.dailyBudgetMicros / 1_000_000n) : 0;
+      const dailyBudgetVnd = c.dailyBudgetMicros ? Number(BigInt(c.dailyBudgetMicros) / 1_000_000n) : 0;
 
-      const campLeads = c.trackings.map((t) => t.lead);
+      const campLeads = Array.isArray(c.trackings)
+        ? c.trackings.map((t: any) => t.lead).filter(Boolean)
+        : [];
       const crmLeadsL2 = campLeads.filter(isL2Valid).length;
       const crmLeadsL3 = campLeads.filter(isL3Effective).length;
       const wonCount = campLeads.filter(
-        (l) => isL3Effective(l) && l.pipelineStatus === 'won'
+        (l: any) => isL3Effective(l) && l.pipelineStatus === 'won'
       ).length;
 
       const ctrRatio = impressions > 0 ? Number((clicks / impressions).toFixed(4)) : 0;
