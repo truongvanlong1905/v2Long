@@ -12,7 +12,6 @@ npm run db:seed
 npm run dev        # http://localhost:3000
 ```
 
-Tài khoản demo (chỉ môi trường dev): `admin@toantrung.vn`, `sales@toantrung.vn`, `marketing@toantrung.vn`, `designer@toantrung.vn` — mật khẩu `ToanTrung@2026`.
 
 ## Cấu trúc
 
