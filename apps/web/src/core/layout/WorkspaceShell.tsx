@@ -36,6 +36,8 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   badge?: number;
   adminOnly?: boolean;
+  accentColor?: string;
+  activeBg?: string;
 }
 
 const BREADCRUMB_LABELS: Record<string, string> = {
@@ -132,12 +134,54 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const isFullBleed = pathname === '/design';
 
   const workNav: NavItem[] = [
-    { href: '/dashboard', label: 'Tổng quan', shortLabel: 'Tổng quan', icon: LayoutGrid },
-    { href: '/leads', label: 'Leads & Giao dịch', shortLabel: 'Leads', icon: FileSpreadsheet },
-    { href: '/tracking', label: 'Chiến dịch Marketing', shortLabel: 'Chiến dịch', icon: Crosshair },
-    { href: '/ads', label: 'Từ khóa & SEO', shortLabel: 'SEO/Ads', icon: Megaphone },
-    { href: '/reports', label: 'Phân tích & Báo cáo', shortLabel: 'Báo cáo', icon: BarChart3 },
-    { href: '/design', label: 'AI Mockup Studio', shortLabel: 'AI Studio', icon: Sparkles },
+    {
+      href: '/dashboard',
+      label: 'Tổng quan điều hành',
+      shortLabel: 'Tổng quan',
+      icon: LayoutGrid,
+      accentColor: 'text-blue-600',
+      activeBg: 'bg-blue-50 text-blue-900 border border-blue-200/80',
+    },
+    {
+      href: '/leads',
+      label: 'Leads & Giao dịch',
+      shortLabel: 'Leads',
+      icon: FileSpreadsheet,
+      accentColor: 'text-indigo-600',
+      activeBg: 'bg-indigo-50 text-indigo-900 border border-indigo-200/80',
+    },
+    {
+      href: '/tracking',
+      label: 'Chiến dịch Marketing',
+      shortLabel: 'Chiến dịch',
+      icon: Crosshair,
+      accentColor: 'text-sky-600',
+      activeBg: 'bg-sky-50 text-sky-900 border border-sky-200/80',
+    },
+    {
+      href: '/ads',
+      label: 'Từ khóa & SEO',
+      shortLabel: 'SEO/Ads',
+      icon: Megaphone,
+      accentColor: 'text-violet-600',
+      activeBg: 'bg-violet-50 text-violet-900 border border-violet-200/80',
+    },
+    {
+      href: '/reports',
+      label: 'Phân tích & Báo cáo',
+      shortLabel: 'Báo cáo',
+      icon: BarChart3,
+      accentColor: 'text-emerald-600',
+      activeBg: 'bg-emerald-50 text-emerald-900 border border-emerald-200/80',
+    },
+    {
+      href: '/design',
+      label: 'AI Mockup Studio',
+      shortLabel: 'AI Studio',
+      icon: Sparkles,
+      accentColor: 'text-amber-600',
+      activeBg: 'bg-amber-50 text-amber-900 border border-amber-200/80',
+    },
   ];
 
   const personalNav: NavItem[] = [
@@ -207,13 +251,13 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                 sidebarCollapsed ? 'lg:justify-center lg:px-0' : 'lg:justify-center xl:justify-start lg:px-0 xl:px-3'
               } ${
                 active
-                  ? 'bg-[#1E3A8A]/10 text-[#1E3A8A] font-bold shadow-2xs'
+                  ? `${item.activeBg || 'bg-[#1E3A8A]/10 text-[#1E3A8A]'} font-bold shadow-2xs`
                   : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900'
               }`}
             >
               <Icon
                 className={`w-5 h-5 shrink-0 transition-colors ${
-                  active ? 'text-[#2563EB]' : 'text-slate-400 group-hover:text-slate-700'
+                  active ? item.accentColor || 'text-[#2563EB]' : `${item.accentColor || 'text-slate-400'} opacity-80 group-hover:opacity-100`
                 }`}
               />
               <span
@@ -615,8 +659,8 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
         <main
           className={
             isFullBleed
-              ? 'flex-1 w-full h-[calc(100vh-64px)] overflow-hidden flex flex-col p-0 pb-16 md:pb-0 bg-slate-50/60'
-              : 'flex-1 w-full max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-7 py-4 sm:py-5 pb-24 md:pb-6 overflow-y-auto'
+              ? 'flex-1 w-full h-[calc(100vh-64px)] overflow-hidden flex flex-col p-0 pb-16 md:pb-0 bg-slate-100/70'
+              : 'flex-1 w-full max-w-[1920px] mx-auto px-3 sm:px-4 lg:px-5 py-3 sm:py-3.5 pb-20 md:pb-5 overflow-y-auto bg-slate-100/60'
           }
         >
           {children}

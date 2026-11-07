@@ -301,9 +301,9 @@ export function SeoKeywordsWorkspace() {
   );
 
   return (
-    <div className="space-y-6 text-sm">
-      {/* 1. Header */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-card flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="space-y-3.5 text-sm">
+      {/* 1. Header — Color-Accented Amber/Navy Card */}
+      <div className="bg-white border border-slate-200/90 border-t-4 border-t-amber-500 rounded-2xl p-4 shadow-card flex flex-col md:flex-row md:items-center justify-between gap-3.5">
         <div>
           <div className="flex items-center gap-2 text-xs font-bold text-brand uppercase tracking-wider mb-1">
             <span>QUẢNG CÁO & SEO</span>

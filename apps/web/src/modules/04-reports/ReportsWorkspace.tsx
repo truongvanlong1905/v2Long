@@ -135,9 +135,9 @@ export function ReportsWorkspace() {
   };
 
   return (
-    <div className="space-y-6 text-sm">
-      {/* Header & Filter Bar */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white border border-slate-200/80 rounded-2xl p-5 shadow-card">
+    <div className="space-y-3.5 text-sm">
+      {/* Header & Filter Bar — Color-Accented Top Border */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3.5 bg-white border border-slate-200/80 border-t-4 border-t-[#1E3A8A] rounded-2xl p-4 shadow-card">
         <div>
           <div className="flex items-center gap-2 text-xs font-bold text-brand uppercase tracking-wider">
             <BarChart3 className="w-4 h-4" />
@@ -305,9 +305,9 @@ export function ReportsWorkspace() {
             )}
           </div>
 
-          {/* 4 Main Overview KPI Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-            <div className="bg-white border border-blue-200/80 rounded-2xl p-5 shadow-card">
+          {/* 4 Main Overview KPI Cards — Distinct Color Accents */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5">
+            <div className="bg-white border border-blue-200/80 border-t-4 border-t-blue-600 rounded-2xl p-4 shadow-card">
               <div className="flex items-center justify-between text-sm font-bold text-slate-700">
                 <span>Tổng Lead (L1 / L2 / L3)</span>
                 <Users className="w-4 h-4 text-brand" />
@@ -326,7 +326,7 @@ export function ReportsWorkspace() {
               </p>
             </div>
 
-            <div className="bg-white border border-amber-200/80 rounded-2xl p-5 shadow-card">
+            <div className="bg-white border border-amber-200/80 border-t-4 border-t-amber-500 rounded-2xl p-4 shadow-card">
               <div className="flex items-center justify-between text-sm font-bold text-slate-700">
                 <span>Báo giá chờ khách phản hồi</span>
                 <Clock className="w-4 h-4 text-amber-600" />
@@ -346,7 +346,7 @@ export function ReportsWorkspace() {
               </p>
             </div>
 
-            <div className="bg-white border border-emerald-200/80 rounded-2xl p-5 shadow-card">
+            <div className="bg-white border border-emerald-200/80 border-t-4 border-t-emerald-600 rounded-2xl p-4 shadow-card">
               <div className="flex items-center justify-between text-sm font-bold text-slate-700">
                 <span>Chốt thành công & Win Rate</span>
                 <TrendingUp className="w-4 h-4 text-emerald-600" />
@@ -364,7 +364,7 @@ export function ReportsWorkspace() {
               </p>
             </div>
 
-            <div className="bg-white border border-violet-200/80 rounded-2xl p-5 shadow-card">
+            <div className="bg-white border border-violet-200/80 border-t-4 border-t-violet-600 rounded-2xl p-4 shadow-card">
               <div className="flex items-center justify-between text-sm font-bold text-slate-700">
                 <span>Hiệu quả Quảng cáo & AI Thiết kế</span>
                 <Sparkles className="w-4 h-4 text-violet-600" />
@@ -645,26 +645,16 @@ export function ReportsWorkspace() {
                     const badgeStyle = isSpamRow
                       ? 'bg-red-600 text-white shadow-2xs'
                       : isWonRow
-                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        ? 'bg-emerald-600 text-white border border-emerald-700 shadow-2xs'
                         : isLostRow
-                          ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                          ? 'bg-slate-700 text-white border border-slate-800'
                           : isQuoteSentRow
-                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                            ? 'bg-amber-500 text-slate-950 border border-amber-600 shadow-2xs'
                             : isQuotingRow
-                              ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                              : 'bg-indigo-50 text-indigo-700 border border-indigo-200';
+                              ? 'bg-blue-600 text-white border border-blue-700 shadow-2xs'
+                              : 'bg-violet-600 text-white border border-violet-700 shadow-2xs';
 
-                    const dotStyle = isSpamRow
-                      ? 'bg-white'
-                      : isWonRow
-                        ? 'bg-emerald-500'
-                        : isLostRow
-                          ? 'bg-rose-500'
-                          : isQuoteSentRow
-                            ? 'bg-blue-500'
-                            : isQuotingRow
-                              ? 'bg-amber-500'
-                              : 'bg-indigo-500';
+                    const dotStyle = isQuoteSentRow ? 'bg-slate-950' : 'bg-white';
 
                     const cleanedCustomer = row.companyOrCustomer.replace(
                       /\s*\(Dữ liệu tổng hợp\)/gi,

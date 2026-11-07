@@ -257,17 +257,17 @@ export function TrackingWorkspace() {
   };
 
   return (
-    <div className="space-y-6 text-sm">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="space-y-3.5 text-sm">
+      {/* Header — Color-Accented Violet/Navy Card */}
+      <div className="bg-white border border-slate-200/90 border-t-4 border-t-violet-600 rounded-2xl p-4 shadow-card flex flex-col md:flex-row md:items-center justify-between gap-3.5">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-soft border border-brand-border text-xs font-bold text-brand mb-2">
+          <div className="inline-flex items-center gap-2 px-3 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-xs font-bold text-violet-800 mb-1.5">
             <span>Tracking Nguồn, Đồng bộ Đa kênh & Đối soát</span>
           </div>
           <h1 className="font-display text-2xl font-bold text-ink tracking-tight">
             Tracking Nguồn & Đồng bộ Dữ liệu Đa kênh
           </h1>
-          <p className="text-sm text-ink-muted mt-1">
+          <p className="text-sm text-ink-muted mt-0.5">
             Ưu tiên tín hiệu <code className="font-mono">gclid &gt; UTM &gt; Referrer</code>, phân tầng 3 cấp Lead (L1/L2/L3) và đối soát Google Lead Form tự động.
           </p>
         </div>
