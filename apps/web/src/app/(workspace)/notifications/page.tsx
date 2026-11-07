@@ -1,475 +1,960 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import type { NotificationDto, ReportsDashboardDto } from '@toantrung/contracts';
 import {
-  AlertTriangle,
-  BarChart3,
   Bell,
-  BellOff,
+  Building2,
   Check,
   CheckCheck,
-  ChevronRight,
-  Inbox,
-  Info,
-  Palette,
+  Clock,
+  Eye,
+  FileText,
+  MailOpen,
+  PenSquare,
   RefreshCw,
   Search,
-  UserPlus,
-  type LucideIcon,
+  Send,
+  ShieldCheck,
+  Sparkles,
+  X,
 } from 'lucide-react';
-import type { NotificationDto } from '@toantrung/contracts';
-import { apiRequest } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
+import { apiRequest } from '@/core/http/client';
 
-type FilterId = 'all' | 'unread' | 'leads' | 'alerts' | 'reports' | 'design' | 'system';
-type CategoryKey = Exclude<FilterId, 'all' | 'unread'>;
+type DepartmentScopeCode =
+  | 'ALL'
+  | 'KINH_DOANH'
+  | 'MARKETING_SEO'
+  | 'ADS'
+  | 'KY_THUAT_THIET_KE';
 
-interface CategoryVisual {
-  key: CategoryKey;
-  label: string;
-  Icon: LucideIcon;
-  iconClass: string;
+interface ScopedNotificationItem extends NotificationDto {
+  departmentScope?: DepartmentScopeCode;
+  departmentLabel?: string;
 }
 
-const CATEGORY_VISUALS: Record<CategoryKey, CategoryVisual> = {
-  leads: { key: 'leads', label: 'Lead', Icon: UserPlus, iconClass: 'bg-blue-50 text-[#1E3A8A]' },
-  alerts: { key: 'alerts', label: 'Cảnh báo', Icon: AlertTriangle, iconClass: 'bg-amber-50 text-amber-700' },
-  reports: { key: 'reports', label: 'Báo cáo', Icon: BarChart3, iconClass: 'bg-emerald-50 text-emerald-700' },
-  design: { key: 'design', label: 'Thiết kế', Icon: Palette, iconClass: 'bg-violet-50 text-violet-700' },
-  system: { key: 'system', label: 'Hệ thống', Icon: Info, iconClass: 'bg-slate-100 text-slate-600' },
-};
-
-function classify(item: NotificationDto): CategoryKey {
-  const text = `${item.category} ${item.title}`.toLowerCase();
-  if (text.includes('cảnh báo') || text.includes('dò giá') || text.includes('quá hạn') || text.includes('pipeline'))
-    return 'alerts';
-  if (text.includes('báo cáo') || text.includes('đồng bộ')) return 'reports';
-  if (text.includes('thiết kế') || text.includes('phối cảnh')) return 'design';
-  if (text.includes('lead') || text.includes('kinh doanh')) return 'leads';
-  return 'system';
+interface DispatchedReportItem {
+  id: number;
+  reportCode: string;
+  status: 'DRAFT' | 'ISSUED';
+  title: string;
+  summary: string;
+  contentHtml: string;
+  targetDepartments: string[];
+  reportingPeriod: string;
+  authorName: string;
+  authorRole: string;
+  createdAt: string;
 }
 
-function dayBucket(iso: string): 'today' | 'yesterday' | 'week' | 'older' {
-  const d = new Date(iso);
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const diffDays = Math.floor((start.getTime() - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
-  if (diffDays <= 0) return 'today';
-  if (diffDays === 1) return 'yesterday';
-  if (diffDays < 7) return 'week';
-  return 'older';
-}
+const DEPARTMENT_OPTIONS: Array<{ code: DepartmentScopeCode; label: string }> = [
+  { code: 'ALL', label: 'Toàn công ty (Tất cả phòng ban)' },
+  { code: 'KINH_DOANH', label: 'Phòng Kinh doanh' },
+  { code: 'MARKETING_SEO', label: 'Phòng Marketing & SEO' },
+  { code: 'ADS', label: 'Bộ phận Quảng cáo Ads' },
+  { code: 'KY_THUAT_THIET_KE', label: 'Bộ phận Thiết kế Kỹ thuật' },
+];
 
-const BUCKET_LABELS: Record<ReturnType<typeof dayBucket>, string> = {
-  today: 'Hôm nay',
-  yesterday: 'Hôm qua',
-  week: '7 ngày qua',
-  older: 'Trước đó',
-};
-
-function relativeTime(iso: string): string {
-  const diffMin = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (diffMin < 1) return 'Vừa xong';
-  if (diffMin < 60) return `${diffMin} phút`;
-  const h = Math.round(diffMin / 60);
-  if (h < 24) return `${h} giờ`;
-  const d = Math.round(h / 24);
-  if (d < 7) return `${d} ngày`;
-  return new Date(iso).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+function getRelativeTimeVi(isoDate: string): string {
+  const diffMs = Date.now() - new Date(isoDate).getTime();
+  const diffMin = Math.max(1, Math.floor(diffMs / 60000));
+  if (diffMin < 60) return `${diffMin} phút trước`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `${diffHours} giờ trước`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays <= 7) return `${diffDays} ngày trước`;
+  return new Date(isoDate).toLocaleDateString('vi-VN');
 }
 
 export default function NotificationsPage() {
-  const router = useRouter();
-  const { user, setUnreadCountState } = useSession();
-  const [items, setItems] = useState<NotificationDto[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [filter, setFilter] = useState<FilterId>('all');
-  const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<number | 'all' | 'batch' | 'reload' | null>(null);
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const { user, unreadCount, refreshUnreadCount, setUnreadCountState } = useSession();
 
-  const applyResponse = useCallback(
-    (res: { items: NotificationDto[]; unreadCount: number }) => {
-      setItems(res.items);
-      setUnreadCount(res.unreadCount);
-      setUnreadCountState(res.unreadCount);
-    },
-    [setUnreadCountState],
+  const [activeTab, setActiveTab] = useState<'inbox' | 'reports' | 'compose'>('inbox');
+  const [readFilter, setReadFilter] = useState<'all' | 'unread'>('all');
+  const [deptFilter, setDeptFilter] = useState<DepartmentScopeCode>('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const [scopedItems, setScopedItems] = useState<ScopedNotificationItem[]>([]);
+  const [userDepartmentCode, setUserDepartmentCode] =
+    useState<DepartmentScopeCode>('ALL');
+  const [userDepartmentLabel, setUserDepartmentLabel] = useState<string>(
+    'Toàn công ty',
   );
+  const [canSendFullReport, setCanSendFullReport] = useState<boolean>(false);
+  const [reports, setReports] = useState<DispatchedReportItem[]>([]);
+  const [selectedReport, setSelectedReport] =
+    useState<DispatchedReportItem | null>(null);
 
-  const loadNotifications = useCallback(async () => {
-    setLoadError(null);
+  // Report Composer states
+  const [reportTitle, setReportTitle] = useState('');
+  const [reportSummary, setReportSummary] = useState('');
+  const [reportBodyText, setReportBodyText] = useState('');
+  const [selectedTargetDepts, setSelectedTargetDepts] = useState<DepartmentScopeCode[]>([
+    'ALL',
+  ]);
+  const [loadingLiveMetrics, setLoadingLiveMetrics] = useState(false);
+
+  const loadNotificationCenter = useCallback(async () => {
+    setBusy(true);
     try {
-      const res = await apiRequest<{ items: NotificationDto[]; unreadCount: number }>('/api/v1/notifications');
-      applyResponse(res);
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Không tải được thông báo.');
+      const data = await apiRequest<{
+        items: ScopedNotificationItem[];
+        unreadCount: number;
+        userDepartmentCode: DepartmentScopeCode;
+        userDepartmentLabel: string;
+        canSendFullReport: boolean;
+        reports: DispatchedReportItem[];
+      }>('/api/v1/notifications');
+
+      setScopedItems(data.items || []);
+      setUnreadCountState(data.unreadCount ?? 0);
+      setUserDepartmentCode(data.userDepartmentCode || 'ALL');
+      setUserDepartmentLabel(data.userDepartmentLabel || 'Phòng ban');
+      setCanSendFullReport(Boolean(data.canSendFullReport));
+      setReports(data.reports || []);
+
+      if (!data.canSendFullReport && data.userDepartmentCode) {
+        setSelectedTargetDepts([data.userDepartmentCode]);
+      }
+
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        const rptId = Number(params.get('reportId'));
+        if (rptId && data.reports) {
+          const found = data.reports.find((r) => r.id === rptId);
+          if (found) {
+            setSelectedReport(found);
+          }
+        }
+      }
+    } catch {
+      // ignore error
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
-  }, [applyResponse]);
+  }, [setUnreadCountState]);
 
   useEffect(() => {
-    void loadNotifications();
-  }, [loadNotifications]);
+    void loadNotificationCenter();
+  }, [loadNotificationCenter]);
 
-  const markRead = useCallback(
-    async (ids: number[] | 'all') => {
-      if (!user) return;
-      setActionError(null);
-      setBusy(ids === 'all' ? 'all' : ids.length > 1 ? 'batch' : ids[0] ?? null);
-      try {
-        if (ids === 'all') {
-          applyResponse(
-            await apiRequest('/api/v1/notifications', {
-              method: 'PATCH',
-              csrfToken: user.csrfToken,
-              body: { markAll: true },
-            }),
-          );
-        } else {
-          let last: { items: NotificationDto[]; unreadCount: number } | null = null;
-          for (const id of ids) {
-            last = await apiRequest('/api/v1/notifications', {
-              method: 'PATCH',
-              csrfToken: user.csrfToken,
-              body: { notificationId: id },
-            });
-          }
-          if (last) applyResponse(last);
-        }
-        setSelectedIds([]);
-      } catch (err) {
-        setActionError(err instanceof Error ? err.message : 'Không cập nhật được trạng thái đã đọc.');
-      } finally {
-        setBusy(null);
-      }
-    },
-    [user, applyResponse],
-  );
-
-  const openItem = (item: NotificationDto) => {
-    if (!item.isRead) void markRead([item.id]);
-    if (item.actionUrl) router.push(item.actionUrl);
+  const handleMarkOne = async (notificationId: number) => {
+    if (!user) return;
+    setBusy(true);
+    try {
+      await apiRequest('/api/v1/notifications', {
+        method: 'PATCH',
+        csrfToken: user.csrfToken,
+        body: { notificationId },
+      });
+      await refreshUnreadCount();
+      await loadNotificationCenter();
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const enriched = useMemo(() => items.map((item) => ({ item, cat: classify(item) })), [items]);
-
-  const counts = useMemo(() => {
-    const c: Record<FilterId, number> = { all: 0, unread: 0, leads: 0, alerts: 0, reports: 0, design: 0, system: 0 };
-    for (const { item, cat } of enriched) {
-      c.all += 1;
-      c[cat] += 1;
-      if (!item.isRead) c.unread += 1;
+  const handleMarkAll = async () => {
+    if (!user) return;
+    setBusy(true);
+    try {
+      await apiRequest('/api/v1/notifications', {
+        method: 'PATCH',
+        csrfToken: user.csrfToken,
+        body: { markAll: true },
+      });
+      await refreshUnreadCount();
+      await loadNotificationCenter();
+      setFeedbackMsg('Đã đánh dấu toàn bộ thông báo là đã đọc.');
+    } finally {
+      setBusy(false);
     }
-    return c;
-  }, [enriched]);
+  };
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return enriched.filter(({ item, cat }) => {
-      if (filter === 'unread' && item.isRead) return false;
-      if (filter !== 'all' && filter !== 'unread' && cat !== filter) return false;
-      if (q && !`${item.title} ${item.summary}`.toLowerCase().includes(q)) return false;
+  const handleFillExecutiveMetrics = async () => {
+    setLoadingLiveMetrics(true);
+    setErrorMsg(null);
+    try {
+      const reportData = await apiRequest<ReportsDashboardDto>(
+        '/api/v1/reports?preset=30d',
+      );
+      const ov = reportData.overview;
+      const mkt = reportData.marketingSummary;
+      const dsn = reportData.designSummary;
+      const todayStr = new Date().toLocaleDateString('vi-VN');
+
+      if (canSendFullReport) {
+        setReportTitle(
+          `Báo cáo Điều hành Tổng hợp Toàn Công ty — Ngày ${todayStr}`,
+        );
+        setReportSummary(
+          `Tổng hợp thực tế: ${ov.totalLeadsL1} Lead tiếp nhận (Hợp lệ L2: ${ov.validLeadsL2}, Hiệu quả L3: ${ov.effectiveLeadsL3}), chốt ${ov.wonCount} hợp đồng (${ov.winRateText}), ${ov.unansweredQuoteCount} hồ sơ đã gửi báo giá đang theo dõi.`,
+        );
+        setReportBodyText(
+          [
+            `I. TỔNG QUAN KINH DOANH & PIPELINE DỰ ÁN LED`,
+            `- Tổng hồ sơ Lead tiếp nhận (L1): ${ov.totalLeadsL1} hồ sơ`,
+            `- Lead hợp lệ đưa vào Pipeline (L2): ${ov.validLeadsL2} hồ sơ | Lead hiệu quả tính CPL (L3): ${ov.effectiveLeadsL3} hồ sơ`,
+            `- Trạng thái xử lý: Mới nhận (${ov.newLeadCount}) · Đang soạn báo giá (${ov.quotingCount}) · Đã gửi báo giá (${ov.quoteSentCount}) · Đã chốt hợp đồng (${ov.wonCount} - Tỷ lệ chốt ${ov.winRateText})`,
+            `- Hồ sơ báo giá cần liên hệ lại (>= 7 ngày): ${ov.overdue7DaysQuoteCount} hồ sơ`,
+            ``,
+            `II. HIỆU QUẢ QUẢNG CÁO ADS & NỘI DUNG SEO`,
+            `- Số bài viết SEO đã xuất bản: ${mkt.publishedSeoArticles} bài (${mkt.draftSeoArticles} bản nháp)`,
+            `- Tổng Lead hiệu quả từ Quảng cáo (L3): ${mkt.effectiveLeadsFromAds} Lead`,
+            ``,
+            `III. TIẾN ĐỘ BỘ PHẬN THIẾT KẾ KỸ THUẬT 3D & BANNER`,
+            `- Tổng yêu cầu thiết kế AI: ${dsn.totalRequests} yêu cầu (Hoàn tất ${dsn.completed3dCount} Phối cảnh 3D & ${dsn.completedBannerCount} Banner)`,
+            ``,
+            `IV. CHỈ ĐẠO & PHỐI HỢP CÁC PHÒNG BAN`,
+            `1. Phòng Kinh doanh: Rà soát lịch hẹn liên hệ lại các hồ sơ báo giá chu kỳ 1-2 tháng và cập nhật trạng thái trực tiếp trên bảng Lead.`,
+            `2. Phòng Marketing & Bộ phận Ads: Tối ưu nhóm từ khóa màn hình LED hội trường & bảng điện tử công nghiệp có tỷ lệ chuyển đổi L3 cao.`,
+            `3. Bộ phận Thiết kế: Đảm bảo bàn giao bản vẽ phối cảnh 3D đúng tiến độ cho các hồ sơ dự án trọng điểm.`,
+          ].join('\n'),
+        );
+      } else {
+        setReportTitle(
+          `Báo cáo Tiến độ ${userDepartmentLabel} — Ngày ${todayStr}`,
+        );
+        setReportSummary(
+          `Báo cáo kết quả công việc của ${userDepartmentLabel} trình Ban Giám đốc và nội bộ phòng.`,
+        );
+        setReportBodyText(
+          [
+            `I. KẾT QUẢ THỰC HIỆN TRONG KỲ (${userDepartmentLabel.toUpperCase()})`,
+            `- Hồ sơ công việc đã tiếp nhận và xử lý: ${ov.validLeadsL2} hồ sơ`,
+            `- Hồ sơ đang theo dõi lịch hẹn tiếp theo: ${ov.unansweredQuoteCount} hồ sơ`,
+            `- Kết quả hoàn thành / chốt hợp đồng: ${ov.wonCount} hồ sơ`,
+            ``,
+            `II. ĐỀ XUẤT & KIẾN NGHỊ TRÌNH BAN GIÁM ĐỐC`,
+            `- Phối hợp hỗ trợ kỹ thuật và phương án mặt bằng cho các dự án chu kỳ dài hạn.`,
+          ].join('\n'),
+        );
+      }
+    } catch {
+      setErrorMsg('Không thể tự động lấy số liệu tổng hợp. Bạn vẫn có thể nhập nội dung trực tiếp.');
+    } finally {
+      setLoadingLiveMetrics(false);
+    }
+  };
+
+  const handleToggleTargetDept = (code: DepartmentScopeCode) => {
+    if (!canSendFullReport) return;
+    if (code === 'ALL') {
+      setSelectedTargetDepts(['ALL']);
+      return;
+    }
+    setSelectedTargetDepts((prev) => {
+      const withoutAll = prev.filter((item) => item !== 'ALL');
+      if (withoutAll.includes(code)) {
+        const next = withoutAll.filter((item) => item !== code);
+        return next.length === 0 ? ['ALL'] : next;
+      }
+      return [...withoutAll, code];
+    });
+  };
+
+  const handleDispatchReport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    if (!reportTitle.trim() || !reportBodyText.trim()) {
+      setErrorMsg('Vui lòng nhập tiêu đề và nội dung chi tiết của báo cáo.');
+      return;
+    }
+
+    setBusy(true);
+    setErrorMsg(null);
+    setFeedbackMsg(null);
+
+    try {
+      const formattedHtml = reportBodyText
+        .split('\n')
+        .map((line) => {
+          const trimmed = line.trim();
+          if (!trimmed) return '<br/>';
+          if (/^(I|II|III|IV|V)\./.test(trimmed)) {
+            return `<h3 style="font-weight:700;color:#1E3A8A;margin-top:12px;margin-bottom:4px;">${trimmed}</h3>`;
+          }
+          return `<p style="margin:4px 0;line-height:1.6;">${trimmed}</p>`;
+        })
+        .join('');
+
+      await apiRequest('/api/v1/notifications', {
+        method: 'POST',
+        csrfToken: user.csrfToken,
+        body: {
+          title: reportTitle.trim(),
+          summary:
+            reportSummary.trim() ||
+            reportBodyText.trim().replace(/\s+/g, ' ').slice(0, 220),
+          contentHtml: formattedHtml,
+          targetDepartments: canSendFullReport
+            ? selectedTargetDepts
+            : [userDepartmentCode],
+          actionLabel: 'Xem báo cáo chi tiết',
+        },
+      });
+
+      setReportTitle('');
+      setReportSummary('');
+      setReportBodyText('');
+      await refreshUnreadCount();
+      await loadNotificationCenter();
+      setActiveTab('inbox');
+      setFeedbackMsg(
+        canSendFullReport
+          ? 'Đã phát hành Báo cáo Điều hành thành công tới các phòng ban đã chọn.'
+          : `Đã gửi báo cáo của ${userDepartmentLabel} tới Ban Giám đốc và nội bộ phòng.`,
+      );
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : 'Không thể gửi báo cáo lúc này.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const filteredNotifications = useMemo(() => {
+    return scopedItems.filter((item) => {
+      if (readFilter === 'unread' && item.isRead) return false;
+      if (
+        canSendFullReport &&
+        deptFilter !== 'ALL' &&
+        item.departmentScope !== deptFilter &&
+        item.departmentScope !== 'ALL'
+      ) {
+        return false;
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const match =
+          item.title.toLowerCase().includes(q) ||
+          item.summary.toLowerCase().includes(q) ||
+          item.category.toLowerCase().includes(q);
+        if (!match) return false;
+      }
       return true;
     });
-  }, [enriched, filter, search]);
-
-  const grouped = useMemo(() => {
-    const order: Array<ReturnType<typeof dayBucket>> = ['today', 'yesterday', 'week', 'older'];
-    const map = new Map<string, typeof filtered>();
-    for (const entry of filtered) {
-      const b = dayBucket(entry.item.createdAt);
-      map.set(b, [...(map.get(b) || []), entry]);
-    }
-    return order.filter((b) => map.has(b)).map((b) => ({ bucket: b, entries: map.get(b)! }));
-  }, [filtered]);
-
-  const allVisibleSelected = filtered.length > 0 && filtered.every(({ item }) => selectedIds.includes(item.id));
-  const selectedUnread = selectedIds.filter((id) => items.find((i) => i.id === id && !i.isRead));
-
-  const FILTERS: Array<{ id: FilterId; label: string; Icon: LucideIcon }> = [
-    { id: 'all', label: 'Tất cả', Icon: Inbox },
-    { id: 'unread', label: 'Chưa đọc', Icon: Bell },
-    { id: 'leads', label: 'Lead', Icon: UserPlus },
-    { id: 'alerts', label: 'Cảnh báo', Icon: AlertTriangle },
-    { id: 'reports', label: 'Báo cáo', Icon: BarChart3 },
-    { id: 'design', label: 'Thiết kế', Icon: Palette },
-    { id: 'system', label: 'Hệ thống', Icon: Info },
-  ];
+  }, [scopedItems, readFilter, canSendFullReport, deptFilter, searchQuery]);
 
   return (
-    <div className="space-y-5">
-      {/* Tiêu đề trang gọn */}
-      <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-        <div>
-          <h1 className="font-display text-2xl font-bold text-slate-900 tracking-tight">Thông báo</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            {loading
-              ? 'Đang tải…'
-              : unreadCount > 0
-                ? `${unreadCount} chưa đọc trong tổng số ${items.length} thông báo`
-                : `Bạn đã đọc hết ${items.length} thông báo`}
+    <div className="space-y-3.5 text-sm">
+      {/* 1. CLEAN MODERN WHITE HEADER */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-4 sm:px-5 shadow-2xs flex flex-col lg:flex-row lg:items-center justify-between gap-3.5">
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-blue-50 border border-blue-200/80 text-[#1E3A8A] text-xs font-bold">
+              <Bell className="w-3.5 h-3.5" />
+              <span>Trung tâm Thông báo &amp; Báo cáo Nội bộ</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold">
+              <Building2 className="w-3.5 h-3.5 text-slate-500" />
+              <span>
+                {canSendFullReport
+                  ? 'Phạm vi: Giám đốc / Quản trị xem toàn bộ các phòng ban'
+                  : `Phạm vi bảo mật: Chỉ xem thông báo của ${userDepartmentLabel}`}
+              </span>
+            </span>
+          </div>
+          <h1 className="font-display text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+            Thông báo Phòng ban &amp; Điều hành Báo cáo
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-500">
+            {canSendFullReport
+              ? 'Theo dõi thông báo của tất cả phòng ban và phát hành Báo cáo Điều hành toàn diện (Full) xuống từng bộ phận hoặc toàn công ty.'
+              : `Nhận thông báo công việc riêng của ${userDepartmentLabel} và soạn báo cáo gửi trực tiếp lên Ban Giám đốc.`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             type="button"
-            onClick={() => {
-              setBusy('reload');
-              void loadNotifications().finally(() => setBusy(null));
-            }}
-            disabled={busy !== null}
-            className="h-10 px-3.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-sm font-medium text-slate-700 inline-flex items-center gap-2 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A]"
+            disabled={busy}
+            onClick={() => void loadNotificationCenter()}
+            className="h-9 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 transition"
           >
-            <RefreshCw className={`w-4 h-4 ${busy === 'reload' ? 'animate-spin' : ''}`} />
-            Làm mới
+            <RefreshCw className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} />
+            <span>Làm mới</span>
           </button>
+
+          {unreadCount > 0 && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void handleMarkAll()}
+              className="h-9 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 transition"
+            >
+              <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Đánh dấu đã đọc ({unreadCount})</span>
+            </button>
+          )}
+
           <button
             type="button"
-            disabled={busy !== null || unreadCount === 0}
-            onClick={() => void markRead('all')}
-            className="h-10 px-4 rounded-lg bg-[#1E3A8A] hover:bg-[#1E40AF] text-white text-sm font-semibold inline-flex items-center gap-2 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#1E3A8A]"
+            onClick={() => setActiveTab('compose')}
+            className="h-9 px-3.5 rounded-xl bg-[#1E3A8A] hover:bg-blue-800 text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs transition"
           >
-            <CheckCheck className="w-4 h-4" />
-            {busy === 'all' ? 'Đang xử lý…' : 'Đánh dấu tất cả đã đọc'}
+            <PenSquare className="w-3.5 h-3.5" />
+            <span>
+              {canSendFullReport ? 'Soạn & Gửi Báo cáo Full' : 'Soạn Báo cáo Phòng'}
+            </span>
           </button>
         </div>
-      </header>
+      </div>
 
-      {actionError && (
-        <div role="alert" className="px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-800">
-          {actionError}
+      {feedbackMsg && (
+        <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 font-medium">
+            <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{feedbackMsg}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setFeedbackMsg(null)}
+            className="text-xs font-bold text-emerald-700"
+          >
+            Đóng
+          </button>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)] gap-5 items-start">
-        {/* Bộ lọc kiểu hộp thư */}
-        <nav aria-label="Bộ lọc thông báo" className="lg:sticky lg:top-20">
-          <ul className="flex lg:flex-col gap-1 overflow-x-auto pb-1 lg:pb-0">
-            {FILTERS.map(({ id, label, Icon }) => {
-              const active = filter === id;
-              return (
-                <li key={id} className="shrink-0">
-                  <button
-                    type="button"
-                    aria-current={active ? 'page' : undefined}
-                    onClick={() => {
-                      setFilter(id);
-                      setSelectedIds([]);
-                    }}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A] ${
-                      active
-                        ? 'bg-blue-50 text-[#1E3A8A] font-semibold'
-                        : 'text-slate-700 hover:bg-slate-100'
-                    }`}
-                  >
-                    <Icon className="w-4 h-4 shrink-0" />
-                    <span className="flex-1 text-left whitespace-nowrap">{label}</span>
-                    {counts[id] > 0 && (
-                      <span
-                        className={`min-w-[24px] px-1.5 py-0.5 rounded-full text-xs font-semibold text-center ${
-                          id === 'unread'
-                            ? 'bg-[#1E3A8A] text-white'
-                            : active
-                              ? 'bg-white text-[#1E3A8A]'
-                              : 'bg-slate-100 text-slate-600'
-                        }`}
-                      >
-                        {counts[id]}
-                      </span>
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
+      {errorMsg && (
+        <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 flex items-center justify-between gap-2">
+          <span>{errorMsg}</span>
+          <button
+            type="button"
+            onClick={() => setErrorMsg(null)}
+            className="text-xs font-bold text-rose-700"
+          >
+            Đóng
+          </button>
+        </div>
+      )}
 
-        {/* Danh sách */}
-        <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          {/* Thanh công cụ */}
-          <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-200">
-            <label className="inline-flex items-center" title="Chọn tất cả">
-              <input
-                type="checkbox"
-                aria-label="Chọn tất cả thông báo đang hiển thị"
-                checked={allVisibleSelected}
-                disabled={filtered.length === 0}
-                onChange={(e) =>
-                  setSelectedIds(e.target.checked ? filtered.map(({ item }) => item.id) : [])
-                }
-                className="w-4 h-4 rounded border-slate-300 text-[#1E3A8A] focus:ring-[#1E3A8A]"
-              />
-            </label>
-            {selectedIds.length > 0 ? (
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-slate-600">Đã chọn {selectedIds.length}</span>
+      {/* 2. UNIFIED NAVIGATION BAR (No Module Split!) */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl shadow-2xs overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-200/80 bg-slate-50/60 flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setActiveTab('inbox')}
+              className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition ${
+                activeTab === 'inbox'
+                  ? 'bg-[#1E3A8A] text-white shadow-2xs'
+                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <Bell className="w-4 h-4" />
+              <span>Hộp thư Thông báo ({scopedItems.length})</span>
+              {unreadCount > 0 && (
+                <span
+                  className={`px-1.5 py-0.5 rounded-full text-[11px] font-bold ${
+                    activeTab === 'inbox'
+                      ? 'bg-white text-[#1E3A8A]'
+                      : 'bg-blue-50 text-[#1E3A8A]'
+                  }`}
+                >
+                  {unreadCount} mới
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('reports')}
+              className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition ${
+                activeTab === 'reports'
+                  ? 'bg-[#1E3A8A] text-white shadow-2xs'
+                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              <span>Báo cáo Nội bộ ({reports.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('compose')}
+              className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition ${
+                activeTab === 'compose'
+                  ? 'bg-[#1E3A8A] text-white shadow-2xs'
+                  : 'bg-white border border-slate-200 text-[#1E3A8A] hover:bg-blue-50/50'
+              }`}
+            >
+              <PenSquare className="w-4 h-4" />
+              <span>
+                {canSendFullReport ? '+ Soạn Báo cáo Full (Giám đốc)' : '+ Soạn Báo cáo Phòng'}
+              </span>
+            </button>
+          </div>
+
+          {activeTab === 'inbox' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex p-0.5 rounded-xl bg-slate-200/70">
                 <button
                   type="button"
-                  disabled={busy !== null || selectedUnread.length === 0}
-                  onClick={() => void markRead(selectedUnread)}
-                  className="h-8 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
+                  onClick={() => setReadFilter('all')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                    readFilter === 'all'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
                 >
-                  <Check className="w-4 h-4" />
-                  Đánh dấu đã đọc
+                  Tất cả
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSelectedIds([])}
-                  className="h-8 px-2 rounded-lg text-slate-500 hover:text-slate-800"
+                  onClick={() => setReadFilter('unread')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                    readFilter === 'unread'
+                      ? 'bg-white text-[#1E3A8A] shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
                 >
-                  Bỏ chọn
+                  Chưa đọc ({unreadCount})
+                </button>
+              </div>
+
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Tìm kiếm thông báo..."
+                  className="h-8 pl-8 pr-3 rounded-xl border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-[#1E3A8A] w-52"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Department Filter Strip for BOD / ADMIN */}
+        {activeTab === 'inbox' && canSendFullReport && (
+          <div className="px-4 py-2.5 border-b border-slate-100 bg-white flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="font-semibold text-slate-500 mr-1">
+              Lọc theo phòng ban:
+            </span>
+            {DEPARTMENT_OPTIONS.map((dept) => (
+              <button
+                key={dept.code}
+                type="button"
+                onClick={() => setDeptFilter(dept.code)}
+                className={`px-2.5 py-1 rounded-lg border font-medium transition ${
+                  deptFilter === dept.code
+                    ? 'bg-blue-50 border-blue-200 text-[#1E3A8A] font-semibold'
+                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {dept.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* TAB 1: CLEAN WEB NOTIFICATION FEED */}
+        {activeTab === 'inbox' && (
+          <div className="divide-y divide-slate-100">
+            {filteredNotifications.length === 0 ? (
+              <div className="py-14 px-4 text-center space-y-2">
+                <div className="w-11 h-11 rounded-2xl bg-slate-100 text-slate-400 grid place-items-center mx-auto">
+                  <MailOpen className="w-5 h-5" />
+                </div>
+                <p className="text-sm font-semibold text-slate-700">
+                  Không có thông báo nào trong danh sách
+                </p>
+                <p className="text-xs text-slate-500">
+                  Mọi thông báo công việc thuộc phạm vi {userDepartmentLabel} đã được xử lý.
+                </p>
+              </div>
+            ) : (
+              filteredNotifications.map((n) => {
+                const reportIdMatch = n.actionUrl?.match(/reportId=(\d+)/);
+                const linkedReportId = reportIdMatch ? Number(reportIdMatch[1]) : null;
+                const matchedReport = linkedReportId
+                  ? reports.find((r) => r.id === linkedReportId)
+                  : null;
+
+                return (
+                  <div
+                    key={n.id}
+                    className={`p-4 sm:px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition ${
+                      !n.isRead
+                        ? 'bg-blue-50/25 hover:bg-blue-50/45 border-l-2 border-l-[#1E3A8A]'
+                        : 'bg-white hover:bg-slate-50/70'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div
+                        className={`w-9 h-9 rounded-xl border grid place-items-center shrink-0 mt-0.5 ${
+                          !n.isRead
+                            ? 'bg-blue-50 border-blue-200 text-[#1E3A8A]'
+                            : 'bg-slate-50 border-slate-200 text-slate-400'
+                        }`}
+                      >
+                        <Bell className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200/80 text-slate-700 text-[11px] font-semibold">
+                            {n.category}
+                          </span>
+                          {!n.isRead && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-[#1E3A8A] border border-blue-200 text-[11px] font-bold">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#1E3A8A]" />
+                              Mới
+                            </span>
+                          )}
+                          <span className="text-xs text-slate-400 inline-flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {getRelativeTimeVi(n.createdAt)}
+                          </span>
+                        </div>
+                        <h3
+                          className={`text-sm ${
+                            !n.isRead
+                              ? 'font-bold text-slate-900'
+                              : 'font-semibold text-slate-700'
+                          }`}
+                        >
+                          {n.title}
+                        </h3>
+                        <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                          {n.summary}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0 sm:self-center">
+                      {matchedReport ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedReport(matchedReport);
+                            if (!n.isRead) void handleMarkOne(n.id);
+                          }}
+                          className="h-8 px-3 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200 text-[#1E3A8A] text-xs font-semibold inline-flex items-center gap-1.5 transition"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Đọc báo cáo</span>
+                        </button>
+                      ) : n.actionUrl ? (
+                        <Link
+                          href={n.actionUrl}
+                          onClick={() => {
+                            if (!n.isRead) void handleMarkOne(n.id);
+                          }}
+                          className="h-8 px-3 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-[#1E3A8A] text-xs font-semibold inline-flex items-center transition shadow-2xs"
+                        >
+                          {n.actionLabel || 'Chi tiết'}
+                        </Link>
+                      ) : null}
+
+                      {!n.isRead && (
+                        <button
+                          type="button"
+                          onClick={() => void handleMarkOne(n.id)}
+                          className="h-8 px-2.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 text-xs font-medium inline-flex items-center gap-1 transition"
+                          title="Đánh dấu đã đọc"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span className="hidden md:inline">Đã đọc</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* TAB 2: DISPATCHED REPORTS LIST */}
+        {activeTab === 'reports' && (
+          <div className="p-4 sm:p-5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
+              <div>
+                <h2 className="text-sm sm:text-base font-bold text-slate-900">
+                  Danh sách Báo cáo Điều hành &amp; Báo cáo Phòng ban
+                </h2>
+                <p className="text-xs text-slate-500">
+                  {canSendFullReport
+                    ? 'Giám đốc xem toàn bộ báo cáo từ các phòng ban và báo cáo điều hành đã phát hành.'
+                    : `Hiển thị các báo cáo thuộc phạm vi ${userDepartmentLabel} và báo cáo chung từ Ban Giám đốc.`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('compose')}
+                className="h-8 px-3 rounded-lg bg-[#1E3A8A] hover:bg-blue-800 text-white text-xs font-semibold inline-flex items-center gap-1.5"
+              >
+                <PenSquare className="w-3.5 h-3.5" />
+                <span>Soạn báo cáo mới</span>
+              </button>
+            </div>
+
+            {reports.length === 0 ? (
+              <div className="py-10 text-center text-slate-500 space-y-2">
+                <FileText className="w-8 h-8 text-slate-300 mx-auto" />
+                <p className="text-sm font-semibold text-slate-700">
+                  Chưa có báo cáo nào được gửi trong phạm vi phòng ban của bạn
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('compose')}
+                  className="px-3.5 py-1.5 rounded-xl bg-blue-50 border border-blue-200 text-[#1E3A8A] text-xs font-semibold"
+                >
+                  Soạn báo cáo đầu tiên →
                 </button>
               </div>
             ) : (
-              <div className="relative flex-1 min-w-[200px] max-w-md">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="search"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Tìm trong thông báo…"
-                  aria-label="Tìm trong thông báo"
-                  className="w-full h-9 pl-9 pr-3 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#1E3A8A]/30 focus:border-[#1E3A8A]"
-                />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {reports.map((rpt) => (
+                  <div
+                    key={rpt.id}
+                    className="p-4 rounded-xl bg-white border border-slate-200/90 hover:border-blue-300 transition flex flex-col justify-between gap-3 shadow-2xs"
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-mono text-xs font-bold text-[#1E3A8A] bg-blue-50 px-2 py-0.5 rounded border border-blue-200/70">
+                          {rpt.reportCode}
+                        </span>
+                        <span className="text-xs text-slate-400">
+                          {new Date(rpt.createdAt).toLocaleString('vi-VN')}
+                        </span>
+                      </div>
+                      <h3 className="text-sm font-bold text-slate-900">
+                        {rpt.title}
+                      </h3>
+                      <p className="text-xs text-slate-600 line-clamp-2">
+                        {rpt.summary}
+                      </p>
+                    </div>
+
+                    <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2 text-xs">
+                      <span className="text-slate-500">
+                        Người gửi: <strong className="text-slate-800">{rpt.authorName}</strong>{' '}
+                        ({rpt.authorRole})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedReport(rpt)}
+                        className="h-8 px-3 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-[#1E3A8A] font-semibold inline-flex items-center gap-1"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Xem toàn văn</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
+        )}
 
-          {loading ? (
-            <ul aria-busy="true" className="divide-y divide-slate-100">
-              {[0, 1, 2, 3].map((i) => (
-                <li key={i} className="flex items-start gap-3 px-4 py-4 animate-pulse">
-                  <div className="w-9 h-9 rounded-full bg-slate-100" />
-                  <div className="flex-1 space-y-2">
-                    <div className="h-3.5 w-1/2 rounded bg-slate-100" />
-                    <div className="h-3 w-4/5 rounded bg-slate-100" />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : loadError ? (
-            <div className="px-6 py-14 text-center">
-              <AlertTriangle className="w-8 h-8 text-red-500 mx-auto" />
-              <p className="mt-2 text-sm font-semibold text-slate-900">Không tải được thông báo</p>
-              <p className="mt-1 text-sm text-slate-500">{loadError}</p>
+        {/* TAB 3: BUILT-IN REPORT COMPOSER RIGHT INSIDE NOTIFICATIONS */}
+        {activeTab === 'compose' && (
+          <form onSubmit={(e) => void handleDispatchReport(e)} className="p-4 sm:p-5 space-y-4">
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/90 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-[#1E3A8A]" />
+                  <strong className="text-sm font-bold text-slate-900">
+                    {canSendFullReport
+                      ? 'Chế độ Giám đốc / Quản trị: Soạn & Gửi Báo cáo Full đa phòng ban'
+                      : `Chế độ Báo cáo Phòng ban: ${userDepartmentLabel}`}
+                  </strong>
+                </div>
+                <p className="text-xs text-slate-500">
+                  {canSendFullReport
+                    ? 'Báo cáo được gửi trực tiếp vào Hộp thư Thông báo của toàn công ty hoặc từng phòng ban được chọn.'
+                    : `Báo cáo sẽ được gửi trực tiếp tới Ban Giám đốc và các thành viên thuộc ${userDepartmentLabel}.`}
+                </p>
+              </div>
+
               <button
                 type="button"
-                onClick={() => void loadNotifications()}
-                className="mt-4 h-9 px-4 rounded-lg border border-slate-200 text-sm font-medium hover:bg-slate-50"
+                disabled={loadingLiveMetrics}
+                onClick={() => void handleFillExecutiveMetrics()}
+                className="h-9 px-3.5 rounded-xl bg-white hover:bg-blue-50 border border-blue-200 text-[#1E3A8A] text-xs font-semibold inline-flex items-center gap-1.5 shrink-0 shadow-2xs transition"
               >
-                Thử lại
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>
+                  {loadingLiveMetrics
+                    ? 'Đang lấy số liệu...'
+                    : 'Chèn số liệu thực tế từ Hệ thống'}
+                </span>
               </button>
             </div>
-          ) : filtered.length === 0 ? (
-            <div className="px-6 py-16 text-center">
-              <BellOff className="w-9 h-9 text-slate-300 mx-auto" />
-              <p className="mt-3 text-sm font-semibold text-slate-900">
-                {search ? 'Không tìm thấy thông báo phù hợp' : 'Không có thông báo nào ở mục này'}
-              </p>
-              <p className="mt-1 text-sm text-slate-500">
-                {search
-                  ? 'Thử từ khóa khác hoặc chọn mục "Tất cả".'
-                  : 'Khi có việc mới liên quan đến bạn, thông báo sẽ xuất hiện tại đây.'}
-              </p>
-            </div>
-          ) : (
-            grouped.map(({ bucket, entries }) => (
-              <div key={bucket}>
-                <h2 className="px-4 py-2 bg-slate-50 border-b border-slate-100 text-[13px] font-semibold text-slate-500">
-                  {BUCKET_LABELS[bucket]}
-                </h2>
-                <ul className="divide-y divide-slate-100">
-                  {entries.map(({ item, cat }) => {
-                    const visual = CATEGORY_VISUALS[cat];
-                    const checked = selectedIds.includes(item.id);
-                    const Icon = visual.Icon;
+
+            {/* Target Department Selector (Full Control for BOD/ADMIN; Scoped for Department Users) */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                Phòng ban nhận báo cáo &amp; thông báo *
+              </label>
+              {canSendFullReport ? (
+                <div className="flex flex-wrap gap-2">
+                  {DEPARTMENT_OPTIONS.map((dept) => {
+                    const active = selectedTargetDepts.includes(dept.code);
                     return (
-                      <li
-                        key={item.id}
-                        className={`group relative flex items-start gap-3 px-4 py-3.5 transition-colors ${
-                          checked ? 'bg-blue-50/70' : item.isRead ? 'bg-white hover:bg-slate-50' : 'bg-blue-50/30 hover:bg-blue-50/60'
+                      <button
+                        key={dept.code}
+                        type="button"
+                        onClick={() => handleToggleTargetDept(dept.code)}
+                        className={`px-3 py-1.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+                          active
+                            ? 'bg-[#1E3A8A] text-white border-[#1E3A8A] shadow-2xs'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                         }`}
                       >
-                        {!item.isRead && (
-                          <span aria-hidden="true" className="absolute left-0 top-0 bottom-0 w-[3px] bg-[#1E3A8A]" />
-                        )}
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() =>
-                            setSelectedIds((prev) =>
-                              prev.includes(item.id) ? prev.filter((x) => x !== item.id) : [...prev, item.id],
-                            )
-                          }
-                          aria-label={`Chọn thông báo: ${item.title}`}
-                          className="mt-2.5 w-4 h-4 rounded border-slate-300 text-[#1E3A8A] focus:ring-[#1E3A8A] shrink-0"
-                        />
-                        <span className={`w-9 h-9 rounded-full grid place-items-center shrink-0 ${visual.iconClass}`}>
-                          <Icon className="w-4 h-4" />
-                        </span>
-
-                        <button
-                          type="button"
-                          onClick={() => openItem(item)}
-                          className="flex-1 min-w-0 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A] rounded-md"
-                        >
-                          <div className="flex items-baseline gap-2">
-                            <p
-                              className={`flex-1 min-w-0 text-[15px] leading-snug truncate ${
-                                item.isRead ? 'text-slate-700' : 'font-semibold text-slate-900'
-                              }`}
-                            >
-                              {item.title}
-                            </p>
-                            <time
-                              dateTime={item.createdAt}
-                              title={new Date(item.createdAt).toLocaleString('vi-VN')}
-                              className={`text-[13px] whitespace-nowrap shrink-0 ${
-                                item.isRead ? 'text-slate-400' : 'text-[#1E3A8A] font-medium'
-                              }`}
-                            >
-                              {relativeTime(item.createdAt)}
-                            </time>
-                          </div>
-                          <p className="mt-0.5 text-sm text-slate-600 line-clamp-2">{item.summary}</p>
-                          <div className="mt-1.5 flex items-center gap-2 text-[13px]">
-                            <span className="text-slate-500">{visual.label}</span>
-                            {item.actionUrl && item.actionLabel && (
-                              <span className="inline-flex items-center gap-0.5 text-[#1E3A8A] font-medium">
-                                · {item.actionLabel}
-                                <ChevronRight className="w-3.5 h-3.5" />
-                              </span>
-                            )}
-                          </div>
-                        </button>
-
-                        {!item.isRead && (
-                          <button
-                            type="button"
-                            disabled={busy !== null}
-                            onClick={() => void markRead([item.id])}
-                            title="Đánh dấu đã đọc"
-                            aria-label={`Đánh dấu đã đọc: ${item.title}`}
-                            className="mt-1 p-2 rounded-lg text-slate-400 hover:text-[#1E3A8A] hover:bg-white opacity-100 lg:opacity-0 lg:group-hover:opacity-100 focus:opacity-100 transition disabled:opacity-50"
-                          >
-                            <Check className="w-4 h-4" />
-                          </button>
-                        )}
-                      </li>
+                        <span>{active ? '✓' : '+'}</span>
+                        <span>{dept.label}</span>
+                      </button>
                     );
                   })}
-                </ul>
+                </div>
+              ) : (
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-700">
+                  <Building2 className="w-3.5 h-3.5 text-[#1E3A8A]" />
+                  <span>Ban Giám đốc &amp; {userDepartmentLabel} (Theo phân quyền phòng ban)</span>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Tiêu đề Báo cáo / Thông báo điều hành *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={reportTitle}
+                  onChange={(e) => setReportTitle(e.target.value)}
+                  placeholder="VD: Báo cáo Điều hành Tổng hợp Tuần 1 Tháng 11/2026..."
+                  className="w-full h-9 px-3 rounded-xl border border-slate-300 text-sm font-semibold text-slate-900 focus:outline-none focus:border-[#1E3A8A]"
+                />
               </div>
-            ))
-          )}
-        </section>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Tóm tắt ngắn hiển thị ngoài thông báo
+                </label>
+                <input
+                  type="text"
+                  value={reportSummary}
+                  onChange={(e) => setReportSummary(e.target.value)}
+                  placeholder="Tóm tắt trọng tâm báo cáo hoặc chỉ đạo..."
+                  className="w-full h-9 px-3 rounded-xl border border-slate-300 text-sm text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Nội dung chi tiết Báo cáo *
+              </label>
+              <textarea
+                rows={10}
+                required
+                value={reportBodyText}
+                onChange={(e) => setReportBodyText(e.target.value)}
+                placeholder="Nhập nội dung báo cáo chi tiết hoặc nhấn nút 'Chèn số liệu thực tế từ Hệ thống' ở góc phải phía trên..."
+                className="w-full p-3.5 rounded-xl border border-slate-300 text-sm text-slate-800 leading-relaxed focus:outline-none focus:border-[#1E3A8A]"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setActiveTab('inbox')}
+                className="h-9 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold"
+              >
+                Hủy
+              </button>
+              <button
+                type="submit"
+                disabled={busy}
+                className="h-9 px-5 rounded-xl bg-[#1E3A8A] hover:bg-blue-800 text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-2 shadow-2xs transition disabled:opacity-60"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>
+                  {busy
+                    ? 'Đang gửi báo cáo...'
+                    : canSendFullReport
+                      ? 'Phát hành Báo cáo & Gửi Thông báo'
+                      : 'Gửi Báo cáo Phòng ban'}
+                </span>
+              </button>
+            </div>
+          </form>
+        )}
       </div>
+
+      {/* MODAL XEM TOÀN VĂN BÁO CÁO NGAY TRONG TRANG THÔNG BÁO */}
+      {selectedReport && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setSelectedReport(null)}
+        >
+          <div
+            className="bg-white w-full max-w-3xl max-h-[88vh] rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 bg-slate-50 border-b border-slate-200 flex items-start justify-between gap-3">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-xs font-bold text-[#1E3A8A] bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                    {selectedReport.reportCode}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    Người gửi: <strong>{selectedReport.authorName}</strong> ({selectedReport.authorRole})
+                  </span>
+                  <span className="text-xs text-slate-400">
+                    · {new Date(selectedReport.createdAt).toLocaleString('vi-VN')}
+                  </span>
+                </div>
+                <h2 className="font-display text-base sm:text-lg font-bold text-slate-900 mt-1">
+                  {selectedReport.title}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedReport(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/60"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-3 text-sm text-slate-800 leading-relaxed">
+              {selectedReport.summary && (
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs sm:text-sm text-slate-700 font-medium">
+                  {selectedReport.summary}
+                </div>
+              )}
+              <div
+                className="prose prose-sm max-w-none text-slate-800"
+                dangerouslySetInnerHTML={{ __html: selectedReport.contentHtml }}
+              />
+            </div>
+
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => setSelectedReport(null)}
+                className="h-9 px-4 rounded-xl bg-[#1E3A8A] text-white text-xs font-semibold"
+              >
+                Đóng báo cáo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

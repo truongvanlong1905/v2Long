@@ -54,19 +54,19 @@ import { ManualLeadModal } from './ManualLeadModal';
 import { LeadActivityTimeline } from './LeadActivityTimeline';
 
 const STATUS_BADGE_STYLES: Record<PipelineStatus, string> = {
-  new_lead: 'bg-violet-600 text-white border-violet-700 shadow-2xs font-bold',
-  quoting: 'bg-blue-600 text-white border-blue-700 shadow-2xs font-bold',
-  quote_sent: 'bg-amber-500 text-slate-950 border-amber-600 shadow-2xs font-extrabold',
-  won: 'bg-emerald-600 text-white border-emerald-700 shadow-2xs font-bold',
-  lost: 'bg-slate-700 text-white border-slate-800 font-semibold',
+  new_lead: 'bg-violet-50 text-violet-700 border-violet-200 font-semibold',
+  quoting: 'bg-blue-50 text-blue-700 border-blue-200 font-semibold',
+  quote_sent: 'bg-amber-50 text-amber-800 border-amber-300 font-semibold',
+  won: 'bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold',
+  lost: 'bg-slate-100 text-slate-600 border-slate-200 font-semibold',
 };
 
 const STATUS_ROW_ACCENTS: Record<PipelineStatus, string> = {
-  new_lead: 'border-l-4 border-l-violet-600',
-  quoting: 'border-l-4 border-l-blue-600',
-  quote_sent: 'border-l-4 border-l-amber-500',
-  won: 'border-l-4 border-l-emerald-600',
-  lost: 'border-l-4 border-l-slate-400',
+  new_lead: 'border-l-2 border-l-violet-400',
+  quoting: 'border-l-2 border-l-blue-400',
+  quote_sent: 'border-l-2 border-l-amber-400',
+  won: 'border-l-2 border-l-emerald-400',
+  lost: 'border-l-2 border-l-slate-300',
 };
 
 const KANBAN_COLUMN_THEMES: Record<
@@ -74,29 +74,29 @@ const KANBAN_COLUMN_THEMES: Record<
   { wrap: string; headerBg: string; badge: string }
 > = {
   new_lead: {
-    wrap: 'bg-violet-50/60 border-violet-200/90 border-t-4 border-t-violet-600',
-    headerBg: 'bg-violet-100/80 text-violet-950',
-    badge: 'bg-violet-600 text-white',
+    wrap: 'bg-slate-50/70 border-slate-200/90',
+    headerBg: 'bg-white border border-slate-200/80 text-slate-900',
+    badge: 'bg-violet-50 text-violet-700 border border-violet-200',
   },
   quoting: {
-    wrap: 'bg-blue-50/60 border-blue-200/90 border-t-4 border-t-blue-600',
-    headerBg: 'bg-blue-100/80 text-blue-950',
-    badge: 'bg-blue-600 text-white',
+    wrap: 'bg-slate-50/70 border-slate-200/90',
+    headerBg: 'bg-white border border-slate-200/80 text-slate-900',
+    badge: 'bg-blue-50 text-blue-700 border border-blue-200',
   },
   quote_sent: {
-    wrap: 'bg-amber-50/60 border-amber-200/90 border-t-4 border-t-amber-500',
-    headerBg: 'bg-amber-100/80 text-amber-950',
-    badge: 'bg-amber-500 text-slate-950',
+    wrap: 'bg-slate-50/70 border-slate-200/90',
+    headerBg: 'bg-white border border-slate-200/80 text-slate-900',
+    badge: 'bg-amber-50 text-amber-800 border border-amber-300',
   },
   won: {
-    wrap: 'bg-emerald-50/60 border-emerald-200/90 border-t-4 border-t-emerald-600',
-    headerBg: 'bg-emerald-100/80 text-emerald-950',
-    badge: 'bg-emerald-600 text-white',
+    wrap: 'bg-slate-50/70 border-slate-200/90',
+    headerBg: 'bg-white border border-slate-200/80 text-slate-900',
+    badge: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
   },
   lost: {
-    wrap: 'bg-slate-100/90 border-slate-300/90 border-t-4 border-t-slate-600',
-    headerBg: 'bg-slate-200/80 text-slate-900',
-    badge: 'bg-slate-700 text-white',
+    wrap: 'bg-slate-50/70 border-slate-200/90',
+    headerBg: 'bg-white border border-slate-200/80 text-slate-900',
+    badge: 'bg-slate-100 text-slate-600 border border-slate-200',
   },
 };
 
@@ -110,47 +110,66 @@ export type B2bFollowUpHorizonKey =
 export const B2B_HORIZON_OPTIONS: {
   key: B2bFollowUpHorizonKey;
   tag: string;
+  legacyTags: string[];
   label: string;
   shortLabel: string;
   badgeClass: string;
 }[] = [
   {
     key: 'hot_under_7d',
-    tag: '[CHU KỲ B2B: TƯƠNG TÁC NÓNG 3-7 NGÀY]',
-    label: 'Tương tác ngắn hạn (Dự kiến chốt trong 3–7 ngày)',
-    shortLabel: 'Tương tác nóng (< 7 ngày)',
-    badgeClass: 'bg-sky-100 text-sky-900 border-sky-300',
+    tag: '[THEO DÕI DỰ ÁN: ĐANG TƯ VẤN < 7 NGÀY]',
+    legacyTags: ['[CHU KỲ B2B: TƯƠNG TÁC NÓNG 3-7 NGÀY]'],
+    label: 'Đang tư vấn ngắn hạn (Theo dõi sát trong 3–7 ngày đầu)',
+    shortLabel: 'Đang tư vấn (< 7 ngày)',
+    badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
   },
   {
     key: 'remind_7_14d',
-    tag: '[CHU KỲ B2B: HỎI GIÁ ĐỂ ĐÓ 7-14 NGÀY]',
-    label: 'Khách hỏi giá để đó vài ngày – 2 tuần (Nhắc lại 7–14 ngày)',
-    shortLabel: 'Hỏi giá để đó (7–14 ngày)',
-    badgeClass: 'bg-amber-100 text-amber-900 border-amber-400',
+    tag: '[THEO DÕI DỰ ÁN: LIÊN HỆ LẠI 7-30 NGÀY]',
+    legacyTags: ['[CHU KỲ B2B: HỎI GIÁ ĐỂ ĐÓ 7-14 NGÀY]'],
+    label: 'Cần liên hệ lại (7–30 ngày — Khách đang cân nhắc phương án)',
+    shortLabel: 'Cần liên hệ lại (7–30 ngày)',
+    badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
   },
   {
     key: 'monthly_15_45d',
-    tag: '[CHU KỲ B2B: NGÂM HÀNG THÁNG 15-45 NGÀY]',
-    label: 'Khách ngâm hàng tháng — Chờ trình duyệt ngân sách (15–45 ngày)',
-    shortLabel: 'Ngâm hàng tháng (15–45 ngày)',
-    badgeClass: 'bg-orange-100 text-orange-900 border-orange-400',
+    tag: '[THEO DÕI DỰ ÁN: ĐỊNH KỲ 1-2 THÁNG]',
+    legacyTags: ['[CHU KỲ B2B: NGÂM HÀNG THÁNG 15-45 NGÀY]'],
+    label: 'Theo dõi định kỳ 1–2 tháng (Chờ trình duyệt ngân sách / đấu thầu)',
+    shortLabel: 'Theo dõi 1–2 tháng',
+    badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
   },
   {
     key: 'longterm_next_year',
-    tag: '[CHU KỲ B2B: DỰ ÁN DÀI HẠN / NĂM SAU CHỐT]',
-    label: 'Dự án dài hạn / Chờ mặt bằng / Năm sau mới chốt (> 45 ngày)',
-    shortLabel: 'Dự án dài hạn / Năm sau chốt',
-    badgeClass: 'bg-purple-100 text-purple-900 border-purple-400',
+    tag: '[THEO DÕI DỰ ÁN: DÀI HẠN > 2 THÁNG]',
+    legacyTags: ['[CHU KỲ B2B: DỰ ÁN DÀI HẠN / NĂM SAU CHỐT]'],
+    label: 'Dự án dài hạn (> 2 tháng — Chờ tiến độ công trình / kỳ kế hoạch mới)',
+    shortLabel: 'Dự án dài hạn (> 2 tháng)',
+    badgeClass: 'bg-violet-50 text-violet-700 border-violet-200',
   },
 ];
+
+function extractScheduledFollowUpDate(noteText: string): string {
+  const match = noteText.match(/\[HẸN LIÊN HỆ:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\]/);
+  return match ? match[1] : '';
+}
+
+function formatIsoDateVi(isoDate: string): string {
+  if (!isoDate) return '';
+  const parts = isoDate.split('-');
+  if (parts.length !== 3) return isoDate;
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
 
 function getB2bFollowUpHorizon(lead: LeadItemDto): {
   key: B2bFollowUpHorizonKey;
   shortLabel: string;
   badgeClass: string;
   waitingDays: number;
+  scheduledDate: string;
 } {
   const combinedNote = `${lead.customProductNote || ''} ${lead.initialNote || ''}`;
+  const scheduledDate = extractScheduledFollowUpDate(combinedNote);
   const refDateStr = lead.quoteSentAt || lead.contactedAt;
   const waitingDays = Math.max(
     0,
@@ -158,12 +177,18 @@ function getB2bFollowUpHorizon(lead: LeadItemDto): {
   );
 
   for (const opt of B2B_HORIZON_OPTIONS) {
-    if (combinedNote.includes(opt.tag)) {
+    if (
+      combinedNote.includes(opt.tag) ||
+      opt.legacyTags.some((t) => combinedNote.includes(t))
+    ) {
       return {
         key: opt.key,
-        shortLabel: opt.shortLabel,
+        shortLabel: scheduledDate
+          ? `${opt.shortLabel} · Hẹn ${formatIsoDateVi(scheduledDate)}`
+          : opt.shortLabel,
         badgeClass: opt.badgeClass,
         waitingDays,
+        scheduledDate,
       };
     }
   }
@@ -175,50 +200,66 @@ function getB2bFollowUpHorizon(lead: LeadItemDto): {
   ) {
     return {
       key: 'longterm_next_year',
-      shortLabel: 'Dự án dài hạn / Năm sau chốt',
-      badgeClass: 'bg-purple-100 text-purple-900 border-purple-400',
+      shortLabel: scheduledDate
+        ? `Dự án dài hạn · Hẹn ${formatIsoDateVi(scheduledDate)}`
+        : 'Dự án dài hạn (> 2 tháng)',
+      badgeClass: 'bg-violet-50 text-violet-700 border-violet-200',
       waitingDays,
+      scheduledDate,
     };
   }
 
   if (lead.pipelineStatus !== 'quote_sent' && lead.pipelineStatus !== 'quoting') {
     return {
-      key: 'none',
-      shortLabel: '',
-      badgeClass: '',
+      key: scheduledDate ? 'remind_7_14d' : 'none',
+      shortLabel: scheduledDate ? `Hẹn liên hệ: ${formatIsoDateVi(scheduledDate)}` : '',
+      badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
       waitingDays,
+      scheduledDate,
     };
   }
 
   if (waitingDays > 45) {
     return {
       key: 'longterm_next_year',
-      shortLabel: `Ngâm ${waitingDays} ngày · Chăm sóc dài hạn / Năm sau`,
-      badgeClass: 'bg-purple-100 text-purple-900 border-purple-400',
+      shortLabel: scheduledDate
+        ? `Hẹn ${formatIsoDateVi(scheduledDate)} · Dự án dài hạn`
+        : `Theo dõi ${waitingDays} ngày · Dự án dài hạn`,
+      badgeClass: 'bg-violet-50 text-violet-700 border-violet-200',
       waitingDays,
+      scheduledDate,
     };
   }
   if (waitingDays >= 15) {
     return {
       key: 'monthly_15_45d',
-      shortLabel: `Ngâm ${waitingDays} ngày · Theo dõi hàng tháng`,
-      badgeClass: 'bg-orange-100 text-orange-900 border-orange-400',
+      shortLabel: scheduledDate
+        ? `Hẹn ${formatIsoDateVi(scheduledDate)} · Theo dõi 1–2 tháng`
+        : `Theo dõi ${waitingDays} ngày · Định kỳ 1–2 tháng`,
+      badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
       waitingDays,
+      scheduledDate,
     };
   }
   if (waitingDays >= 7 || lead.isQuoteOverdue7Days) {
     return {
       key: 'remind_7_14d',
-      shortLabel: `Chờ ${Math.max(waitingDays, 7)} ngày · Khách để đó cần nhắc`,
-      badgeClass: 'bg-amber-100 text-amber-900 border-amber-400',
+      shortLabel: scheduledDate
+        ? `Hẹn ${formatIsoDateVi(scheduledDate)} · Cần liên hệ lại`
+        : `Đã gửi ${Math.max(waitingDays, 7)} ngày · Cần liên hệ lại`,
+      badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
       waitingDays: Math.max(waitingDays, 7),
+      scheduledDate,
     };
   }
   return {
     key: 'hot_under_7d',
-    shortLabel: `Mới ${waitingDays} ngày · Đang tương tác nóng`,
-    badgeClass: 'bg-sky-100 text-sky-900 border-sky-300',
+    shortLabel: scheduledDate
+      ? `Hẹn ${formatIsoDateVi(scheduledDate)} · Đang tư vấn`
+      : `Mới ${waitingDays} ngày · Đang tư vấn`,
+    badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
     waitingDays,
+    scheduledDate,
   };
 }
 
@@ -466,6 +507,7 @@ export function LeadsWorkspace() {
   const [editProductIds, setEditProductIds] = useState<number[]>([]);
   const [editCustomProductNote, setEditCustomProductNote] = useState('');
   const [editB2bHorizon, setEditB2bHorizon] = useState<B2bFollowUpHorizonKey>('none');
+  const [editFollowUpDate, setEditFollowUpDate] = useState('');
   const [editUpdateNote, setEditUpdateNote] = useState('');
 
   // Detail modal action states
@@ -704,9 +746,14 @@ export function LeadsWorkspace() {
       setEditProductIds(selectedLead.products.map((p) => p.id));
 
       const rawCustomNote = selectedLead.customProductNote || '';
-      let cleanCustomNote = rawCustomNote;
+      const existingScheduledDate = extractScheduledFollowUpDate(rawCustomNote);
+      setEditFollowUpDate(existingScheduledDate);
+      let cleanCustomNote = rawCustomNote.replace(/\[HẸN LIÊN HỆ:\s*[^\]]+\]/g, '').trim();
       for (const opt of B2B_HORIZON_OPTIONS) {
         cleanCustomNote = cleanCustomNote.replace(opt.tag, '').trim();
+        for (const legacyTag of opt.legacyTags) {
+          cleanCustomNote = cleanCustomNote.replace(legacyTag, '').trim();
+        }
       }
       setEditCustomProductNote(cleanCustomNote);
       const detectedHorizon = getB2bFollowUpHorizon(selectedLead);
@@ -808,8 +855,12 @@ export function LeadsWorkspace() {
     setErrorMsg(null);
     try {
       const horizonOpt = B2B_HORIZON_OPTIONS.find((o) => o.key === editB2bHorizon);
+      const followUpTag = editFollowUpDate.trim()
+        ? `[HẸN LIÊN HỆ: ${editFollowUpDate.trim()}]`
+        : '';
       const composedCustomNote = [
         horizonOpt ? horizonOpt.tag : '',
+        followUpTag,
         editCustomProductNote.trim(),
       ]
         .filter(Boolean)
@@ -836,8 +887,8 @@ export function LeadsWorkspace() {
           customProductNote: composedCustomNote || null,
           note:
             editUpdateNote.trim() ||
-            (horizonOpt
-              ? `Cập nhật trực tiếp thông tin Lead & gắn chu kỳ chăm sóc: ${horizonOpt.shortLabel}`
+            (horizonOpt || editFollowUpDate
+              ? `Cập nhật hồ sơ Lead${horizonOpt ? ` · Lộ trình: ${horizonOpt.shortLabel}` : ''}${editFollowUpDate ? ` · Hẹn liên hệ: ${formatIsoDateVi(editFollowUpDate)}` : ''}`
               : 'Cập nhật trực tiếp thông tin hồ sơ Lead tại màn hình Chi tiết.'),
         },
       });
@@ -1046,19 +1097,19 @@ export function LeadsWorkspace() {
 
   return (
     <div className="space-y-3.5">
-      {/* Page Header — Color-Accented Navy Banner */}
-      <div className="rounded-2xl bg-linear-to-r from-[#0F172A] via-[#1E3A8A] to-[#1D4ED8] text-white p-4 shadow-md border border-blue-900/40 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+      {/* Page Header — Clean Modern White Card */}
+      <div className="rounded-2xl bg-white text-slate-900 p-4 shadow-2xs border border-slate-200/90 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div className="space-y-0.5 min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="font-display text-xl sm:text-2xl font-bold text-white tracking-tight">
+            <h1 className="font-display text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
               Quản lý Lead &amp; Pipeline Kinh doanh B2B
             </h1>
-            <span className="px-2.5 py-0.5 rounded-full bg-white/15 border border-white/25 text-xs font-bold text-sky-200">
-              Chu kỳ ngắn hạn · Hàng tháng · Dự án năm sau
+            <span className="px-2.5 py-0.5 rounded-full bg-blue-50 border border-blue-200/80 text-xs font-semibold text-[#1E3A8A]">
+              Theo dõi lộ trình dự án &amp; Lịch hẹn chăm sóc
             </span>
           </div>
-          <p className="text-xs sm:text-sm text-blue-100/90">
-            Tiếp nhận, chỉnh sửa trực tiếp theo phân quyền, phân tầng chăm sóc báo giá B2B và chốt hợp đồng LED
+          <p className="text-xs sm:text-sm text-slate-500">
+            Tiếp nhận, mở chi tiết để xem và chỉnh sửa trực tiếp theo phân quyền, đặt lịch hẹn theo dõi dự án 1–2 tháng hoặc dài hạn
           </p>
         </div>
 
@@ -1070,14 +1121,14 @@ export function LeadsWorkspace() {
               onClick={() => void handleToggleReceivingStatus()}
               className={`h-9 px-3 rounded-xl border text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors ${
                 isReceivingLeads
-                  ? 'bg-emerald-500/20 border-emerald-300/50 text-emerald-100 hover:bg-emerald-500/30'
-                  : 'bg-white/10 border-white/20 text-slate-200 hover:bg-white/20'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100/70'
+                  : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200/70'
               }`}
               title="Bật/tắt chế độ nhận phân bổ Lead tự động (Round-Robin)"
             >
               <span
                 className={`w-2 h-2 rounded-full ${
-                  isReceivingLeads ? 'bg-emerald-400 animate-pulse' : 'bg-slate-400'
+                  isReceivingLeads ? 'bg-emerald-500' : 'bg-slate-400'
                 }`}
               />
               <span>{isReceivingLeads ? 'Đang nhận Lead' : 'Tạm ngưng nhận'}</span>
@@ -1087,20 +1138,20 @@ export function LeadsWorkspace() {
           <button
             type="button"
             onClick={() => void fetchLeads()}
-            className="h-9 px-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-xs sm:text-sm font-semibold text-white inline-flex items-center gap-1.5"
+            className="h-9 px-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-xs sm:text-sm font-semibold text-slate-700 inline-flex items-center gap-1.5"
           >
-            <RefreshCw className="w-3.5 h-3.5 text-sky-300" />
+            <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
             <span>Làm mới</span>
           </button>
 
-          <div className="inline-flex p-0.5 rounded-xl bg-slate-900/50 border border-white/15">
+          <div className="inline-flex p-0.5 rounded-xl bg-slate-100 border border-slate-200/80">
             <button
               type="button"
               onClick={() => setViewMode('table')}
               className={`px-2.5 py-1 rounded-lg text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition ${
                 viewMode === 'table'
                   ? 'bg-white text-[#1E3A8A] shadow-2xs'
-                  : 'text-blue-100 hover:text-white'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Table2 className="w-3.5 h-3.5" />
@@ -1112,7 +1163,7 @@ export function LeadsWorkspace() {
               className={`px-2.5 py-1 rounded-lg text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition ${
                 viewMode === 'kanban'
                   ? 'bg-white text-[#1E3A8A] shadow-2xs'
-                  : 'text-blue-100 hover:text-white'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Kanban className="w-3.5 h-3.5" />
@@ -1122,10 +1173,10 @@ export function LeadsWorkspace() {
 
           <a
             href={exportHref}
-            className="h-9 px-3 rounded-xl border border-white/20 bg-white/10 hover:bg-white/20 text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition-colors"
+            className="h-9 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition-colors"
             title="Xuất toàn bộ hồ sơ Lead theo bộ lọc hiện tại ra file Excel (.xlsx)"
           >
-            <Download className="w-3.5 h-3.5 text-sky-300" />
+            <Download className="w-3.5 h-3.5 text-emerald-600" />
             <span>Xuất Excel ({displayedLeads.length})</span>
           </a>
 
@@ -1133,7 +1184,7 @@ export function LeadsWorkspace() {
             <button
               type="button"
               onClick={() => setShowCreateModal(true)}
-              className="h-9 px-3.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs sm:text-sm font-extrabold inline-flex items-center gap-1.5 shadow-xs transition-colors"
+              className="h-9 px-3.5 rounded-xl bg-[#1E3A8A] hover:bg-blue-800 text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 shadow-2xs transition-colors"
             >
               <Plus className="w-4 h-4" />
               <span>Tạo Lead mới</span>
@@ -1142,7 +1193,7 @@ export function LeadsWorkspace() {
         </div>
       </div>
 
-      {/* 6-Card Color-Coded Pipeline & B2B Nurturing Strip */}
+      {/* 6-Card Clean White Pipeline & Project Follow-Up Strip */}
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2.5">
         <button
           type="button"
@@ -1153,20 +1204,20 @@ export function LeadsWorkspace() {
             setUnreceivedOnly(false);
             setCurrentPage(1);
           }}
-          className={`text-left rounded-xl p-3 border border-t-4 border-t-indigo-600 transition shadow-2xs ${
+          className={`text-left rounded-xl p-3 border transition shadow-2xs ${
             statusFilter === 'all' && b2bHorizonFilter === 'all' && !overdueOnly && !unreceivedOnly
-              ? 'bg-indigo-50/90 border-indigo-400 ring-2 ring-indigo-500/20'
-              : 'bg-white border-slate-200 hover:bg-indigo-50/40'
+              ? 'bg-blue-50/50 border-blue-300 ring-1 ring-blue-500/20'
+              : 'bg-white border-slate-200/90 hover:border-slate-300'
           }`}
         >
-          <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-800 block">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
             Tổng Lead Hợp Lệ
           </span>
           <div className="flex items-baseline justify-between mt-1">
-            <span className="font-display text-2xl font-extrabold text-slate-900">
+            <span className="font-display text-2xl font-bold text-slate-900">
               {b2bSummaryCounts.validTotal}
             </span>
-            <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded">
+            <span className="text-[11px] font-medium text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
               Toàn phễu
             </span>
           </div>
@@ -1181,20 +1232,20 @@ export function LeadsWorkspace() {
             setUnreceivedOnly(false);
             setCurrentPage(1);
           }}
-          className={`text-left rounded-xl p-3 border border-t-4 border-t-violet-600 transition shadow-2xs ${
+          className={`text-left rounded-xl p-3 border transition shadow-2xs ${
             statusFilter === 'new_lead'
-              ? 'bg-violet-50/90 border-violet-400 ring-2 ring-violet-500/20'
-              : 'bg-white border-slate-200 hover:bg-violet-50/40'
+              ? 'bg-violet-50/50 border-violet-300 ring-1 ring-violet-500/20'
+              : 'bg-white border-slate-200/90 hover:border-slate-300'
           }`}
         >
-          <span className="text-[11px] font-bold uppercase tracking-wider text-violet-800 block">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
             1. Vừa Nhận Thông Tin
           </span>
           <div className="flex items-baseline justify-between mt-1">
-            <span className="font-display text-2xl font-extrabold text-violet-900">
+            <span className="font-display text-2xl font-bold text-slate-900">
               {b2bSummaryCounts.newLeadCount}
             </span>
-            <span className="text-[11px] font-semibold text-violet-700 bg-violet-100 px-1.5 py-0.5 rounded">
+            <span className="text-[11px] font-medium text-violet-700 bg-violet-50 border border-violet-200/70 px-1.5 py-0.5 rounded">
               {unreceivedCount} chờ nhận
             </span>
           </div>
@@ -1209,20 +1260,20 @@ export function LeadsWorkspace() {
             setUnreceivedOnly(false);
             setCurrentPage(1);
           }}
-          className={`text-left rounded-xl p-3 border border-t-4 border-t-blue-600 transition shadow-2xs ${
+          className={`text-left rounded-xl p-3 border transition shadow-2xs ${
             statusFilter === 'quoting'
-              ? 'bg-blue-50/90 border-blue-400 ring-2 ring-blue-500/20'
-              : 'bg-white border-slate-200 hover:bg-blue-50/40'
+              ? 'bg-blue-50/50 border-blue-300 ring-1 ring-blue-500/20'
+              : 'bg-white border-slate-200/90 hover:border-slate-300'
           }`}
         >
-          <span className="text-[11px] font-bold uppercase tracking-wider text-blue-800 block">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
             2. Đang Soạn Báo Giá
           </span>
           <div className="flex items-baseline justify-between mt-1">
-            <span className="font-display text-2xl font-extrabold text-blue-900">
+            <span className="font-display text-2xl font-bold text-slate-900">
               {b2bSummaryCounts.quotingCount}
             </span>
-            <span className="text-[11px] font-semibold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded">
+            <span className="text-[11px] font-medium text-blue-700 bg-blue-50 border border-blue-200/70 px-1.5 py-0.5 rounded">
               Khảo sát / CAD
             </span>
           </div>
@@ -1237,21 +1288,21 @@ export function LeadsWorkspace() {
             setUnreceivedOnly(false);
             setCurrentPage(1);
           }}
-          className={`text-left rounded-xl p-3 border border-t-4 border-t-amber-500 transition shadow-2xs ${
+          className={`text-left rounded-xl p-3 border transition shadow-2xs ${
             b2bHorizonFilter === 'hot_under_7d'
-              ? 'bg-amber-50/90 border-amber-400 ring-2 ring-amber-500/20'
-              : 'bg-white border-slate-200 hover:bg-amber-50/40'
+              ? 'bg-amber-50/50 border-amber-300 ring-1 ring-amber-500/20'
+              : 'bg-white border-slate-200/90 hover:border-slate-300'
           }`}
         >
-          <span className="text-[11px] font-bold uppercase tracking-wider text-amber-900 block">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
             3A. Báo Giá Mới (&lt;7 ngày)
           </span>
           <div className="flex items-baseline justify-between mt-1">
-            <span className="font-display text-2xl font-extrabold text-amber-900">
+            <span className="font-display text-2xl font-bold text-slate-900">
               {b2bSummaryCounts.hotQuoteCount}
             </span>
-            <span className="text-[11px] font-semibold text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded">
-              Tương tác nóng
+            <span className="text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200/80 px-1.5 py-0.5 rounded">
+              Đang tư vấn
             </span>
           </div>
         </button>
@@ -1267,21 +1318,21 @@ export function LeadsWorkspace() {
             setUnreceivedOnly(false);
             setCurrentPage(1);
           }}
-          className={`text-left rounded-xl p-3 border border-t-4 border-t-purple-600 transition shadow-2xs ${
+          className={`text-left rounded-xl p-3 border transition shadow-2xs ${
             b2bHorizonFilter === 'any_long_cycle'
-              ? 'bg-purple-50/90 border-purple-400 ring-2 ring-purple-500/20'
-              : 'bg-white border-slate-200 hover:bg-purple-50/40'
+              ? 'bg-indigo-50/50 border-indigo-300 ring-1 ring-indigo-500/20'
+              : 'bg-white border-slate-200/90 hover:border-slate-300'
           }`}
         >
-          <span className="text-[11px] font-bold uppercase tracking-wider text-purple-900 block">
-            3B. Khách Ngâm / Dài Hạn B2B
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
+            3B. Theo Dõi Dài Hạn
           </span>
           <div className="flex items-baseline justify-between mt-1">
-            <span className="font-display text-2xl font-extrabold text-purple-900">
+            <span className="font-display text-2xl font-bold text-slate-900">
               {b2bSummaryCounts.longCycleCount}
             </span>
-            <span className="text-[11px] font-semibold text-purple-800 bg-purple-100 px-1.5 py-0.5 rounded">
-              Tháng / Năm sau
+            <span className="text-[11px] font-medium text-indigo-700 bg-indigo-50 border border-indigo-200/70 px-1.5 py-0.5 rounded">
+              1–2 tháng+
             </span>
           </div>
         </button>
@@ -1295,20 +1346,20 @@ export function LeadsWorkspace() {
             setUnreceivedOnly(false);
             setCurrentPage(1);
           }}
-          className={`text-left rounded-xl p-3 border border-t-4 border-t-emerald-600 transition shadow-2xs ${
+          className={`text-left rounded-xl p-3 border transition shadow-2xs ${
             statusFilter === 'won'
-              ? 'bg-emerald-50/90 border-emerald-400 ring-2 ring-emerald-500/20'
-              : 'bg-white border-slate-200 hover:bg-emerald-50/40'
+              ? 'bg-emerald-50/50 border-emerald-300 ring-1 ring-emerald-500/20'
+              : 'bg-white border-slate-200/90 hover:border-slate-300'
           }`}
         >
-          <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 block">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
             4. Chốt Thành Công
           </span>
           <div className="flex items-baseline justify-between mt-1">
-            <span className="font-display text-2xl font-extrabold text-emerald-900">
+            <span className="font-display text-2xl font-bold text-slate-900">
               {b2bSummaryCounts.wonCount}
             </span>
-            <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded">
+            <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200/70 px-1.5 py-0.5 rounded">
               Hợp đồng LED
             </span>
           </div>
@@ -1355,8 +1406,8 @@ export function LeadsWorkspace() {
         </div>
       )}
 
-      {/* Filter Bar & B2B Long-Cycle Nurturing Filter Pills */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-xs space-y-2.5">
+      {/* Filter Bar & Project Follow-Up Plan Filter Pills */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-2xs space-y-2.5">
         <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-2.5">
           <div className="flex flex-wrap items-center gap-1.5">
             <Filter className="w-4 h-4 text-slate-400 shrink-0 mr-0.5" />
@@ -1369,7 +1420,7 @@ export function LeadsWorkspace() {
                 setStatusFilter('all');
                 setCurrentPage(1);
               }}
-              className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-colors ${
+              className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-colors ${
                 statusFilter === 'all' &&
                 b2bHorizonFilter === 'all' &&
                 !overdueOnly &&
@@ -1391,10 +1442,10 @@ export function LeadsWorkspace() {
                   setStatusFilter(st);
                   setCurrentPage(1);
                 }}
-                className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-colors ${
+                className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm border transition-colors ${
                   statusFilter === st && !overdueOnly && !unreceivedOnly
                     ? STATUS_BADGE_STYLES[st]
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200/70'
+                    : 'bg-slate-100 border-transparent text-slate-700 font-medium hover:bg-slate-200/70'
                 }`}
               >
                 {PIPELINE_STATUS_LABELS[st]}
@@ -1409,9 +1460,9 @@ export function LeadsWorkspace() {
                   setUnreceivedOnly((v) => !v);
                   setCurrentPage(1);
                 }}
-                className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-colors ${
+                className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-colors ${
                   unreceivedOnly
-                    ? 'bg-blue-700 text-white shadow-xs'
+                    ? 'bg-blue-700 text-white shadow-2xs'
                     : 'bg-blue-50 border border-blue-200 text-blue-900 hover:bg-blue-100'
                 }`}
               >
@@ -1427,13 +1478,13 @@ export function LeadsWorkspace() {
                   setOverdueOnly((v) => !v);
                   setCurrentPage(1);
                 }}
-                className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-colors ${
+                className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-colors ${
                   overdueOnly
-                    ? 'bg-amber-600 text-white shadow-xs'
+                    ? 'bg-amber-600 text-white shadow-2xs'
                     : 'bg-amber-50 border border-amber-200 text-amber-900 hover:bg-amber-100'
                 }`}
               >
-                Quá hạn &gt;7 ngày ({overdueCount})
+                Cần nhắc &gt;7 ngày ({overdueCount})
               </button>
             )}
           </div>
@@ -1470,11 +1521,11 @@ export function LeadsWorkspace() {
           </div>
         </div>
 
-        {/* B2B Long Sales Cycle Filter Strip (Giải quyết bài toán khách hỏi giá để đó vài ngày -> hàng tháng -> năm sau chốt) */}
+        {/* Project Follow-Up Plan Filter Strip */}
         <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="font-bold text-slate-600 mr-1 inline-flex items-center gap-1">
-            <Clock className="w-3.5 h-3.5 text-purple-600" />
-            <span>Chu kỳ khách ngâm báo giá B2B:</span>
+          <span className="font-semibold text-slate-600 mr-1 inline-flex items-center gap-1">
+            <Clock className="w-3.5 h-3.5 text-[#1E3A8A]" />
+            <span>Lộ trình theo dõi dự án:</span>
           </span>
           <button
             type="button"
@@ -1482,13 +1533,13 @@ export function LeadsWorkspace() {
               setB2bHorizonFilter('all');
               setCurrentPage(1);
             }}
-            className={`px-2.5 py-1 rounded-lg font-semibold border transition ${
+            className={`px-2.5 py-1 rounded-lg font-medium border transition ${
               b2bHorizonFilter === 'all'
                 ? 'bg-slate-800 text-white border-slate-800'
                 : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
             }`}
           >
-            Tất cả chu kỳ
+            Tất cả lộ trình
           </button>
           <button
             type="button"
@@ -1498,13 +1549,13 @@ export function LeadsWorkspace() {
               );
               setCurrentPage(1);
             }}
-            className={`px-2.5 py-1 rounded-lg font-bold border transition ${
+            className={`px-2.5 py-1 rounded-lg font-medium border transition ${
               b2bHorizonFilter === 'any_long_cycle'
-                ? 'bg-purple-700 text-white border-purple-800'
-                : 'bg-purple-50 text-purple-900 border-purple-200 hover:bg-purple-100'
+                ? 'bg-[#1E3A8A] text-white border-[#1E3A8A]'
+                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
             }`}
           >
-            Tất cả khách ngâm / dài hạn ({b2bSummaryCounts.longCycleCount})
+            Cần theo dõi định kỳ ({b2bSummaryCounts.longCycleCount})
           </button>
           {B2B_HORIZON_OPTIONS.map((opt) => (
             <button
@@ -1514,10 +1565,10 @@ export function LeadsWorkspace() {
                 setB2bHorizonFilter(b2bHorizonFilter === opt.key ? 'all' : opt.key);
                 setCurrentPage(1);
               }}
-              className={`px-2.5 py-1 rounded-lg font-semibold border transition ${
+              className={`px-2.5 py-1 rounded-lg font-medium border transition ${
                 b2bHorizonFilter === opt.key
                   ? 'bg-[#1E3A8A] text-white border-[#1E3A8A]'
-                  : `${opt.badgeClass} hover:opacity-90`
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
               }`}
             >
               {opt.shortLabel}
@@ -1672,14 +1723,9 @@ export function LeadsWorkspace() {
                         setSelectedLeadId(lead.id);
                         setLeadDetailTab('info');
                       }}
-                      className={`h-8 px-3 rounded-xl text-white text-xs font-bold inline-flex items-center gap-1.5 ${
-                        editable
-                          ? 'bg-[#1E3A8A] hover:bg-[#1E40AF]'
-                          : 'bg-slate-700 hover:bg-slate-800'
-                      }`}
+                      className="h-8 px-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-[#1E3A8A] text-xs font-semibold inline-flex items-center shadow-2xs transition"
                     >
-                      {editable && <Pencil className="w-3.5 h-3.5" />}
-                      <span>{editable ? 'Sửa / Chi tiết' : 'Xem chi tiết'}</span>
+                      <span>Chi tiết</span>
                     </button>
                   </div>
                 </div>
@@ -1687,20 +1733,20 @@ export function LeadsWorkspace() {
             })}
           </div>
 
-          {/* UI-01, UI-02, UI-03: Simplified 7-Column Default Desktop Table with Color-Coded Rows */}
-          <div className="hidden md:block bg-white border border-slate-200/90 rounded-2xl overflow-hidden shadow-xs">
+          {/* UI-01, UI-02, UI-03: Simplified 7-Column Default Desktop Table with Subtle Row Accents */}
+          <div className="hidden md:block bg-white border border-slate-200/90 rounded-2xl overflow-hidden shadow-2xs">
             <div className="overflow-x-auto">
               <table
                 className={`w-full text-left border-collapse text-sm ${
                   showOptionalColumns ? 'min-w-[1280px]' : 'table-fixed'
                 }`}
               >
-                <thead className="bg-linear-to-r from-[#0F172A] via-[#1E3A8A] to-[#1D4ED8] text-white text-xs font-bold uppercase tracking-wider">
+                <thead className="bg-slate-50/90 text-slate-600 border-b border-slate-200/80 text-xs font-bold uppercase tracking-wider">
                   <tr>
                     <th className="py-3 px-3.5 w-[21%]">Khách hàng / Dự án</th>
                     <th className="py-3 px-3 w-[15%]">Liên hệ &amp; Nguồn / Kênh</th>
                     <th className="py-3 px-3 w-[14%]">Sản phẩm LED</th>
-                    <th className="py-3 px-3 w-[18%]">Trạng thái &amp; Chu kỳ B2B</th>
+                    <th className="py-3 px-3 w-[18%]">Trạng thái &amp; Lịch theo dõi</th>
                     <th className="py-3 px-3 w-[10%]">Sales phụ trách</th>
                     <th className="py-3 px-3 w-[8%]">Ngày nhận</th>
                     {showOptionalColumns && (
@@ -2028,19 +2074,14 @@ export function LeadsWorkspace() {
                                   setSelectedLeadId(lead.id);
                                   setLeadDetailTab('info');
                                 }}
-                                className={`h-8 px-2.5 rounded-lg text-white text-xs font-bold inline-flex items-center gap-1 shadow-2xs transition ${
-                                  editable
-                                    ? 'bg-[#1E3A8A] hover:bg-[#1E40AF]'
-                                    : 'bg-slate-700 hover:bg-slate-800'
-                                }`}
+                                className="h-8 px-3 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-[#1E3A8A] text-xs font-semibold inline-flex items-center shadow-2xs transition"
                                 title={
                                   editable
-                                    ? 'Mở chi tiết & sửa trực tiếp thông tin Lead'
-                                    : 'Mở xem chi tiết hồ sơ Lead (Chế độ chỉ xem theo phân quyền)'
+                                    ? 'Mở chi tiết để xem và chỉnh sửa trực tiếp thông tin Lead'
+                                    : 'Mở xem chi tiết hồ sơ Lead'
                                 }
                               >
-                                {editable && <Pencil className="w-3 h-3" />}
-                                <span>{editable ? 'Sửa / Chi tiết' : 'Chi tiết'}</span>
+                                <span>Chi tiết</span>
                               </button>
                             </div>
                           </td>
@@ -2237,9 +2278,8 @@ export function LeadsWorkspace() {
                             <span className="truncate font-semibold text-slate-700">
                               {lead.assignedSalesName || 'Chưa phân bổ'}
                             </span>
-                            <span className="inline-flex items-center gap-1 font-bold text-[#1E3A8A]">
-                              {editable && <Pencil className="w-3 h-3" />}
-                              <span>{editable ? 'Sửa ngay' : 'Chi tiết'}</span>
+                            <span className="inline-flex items-center gap-1 font-semibold text-[#1E3A8A]">
+                              <span>Chi tiết</span>
                             </span>
                           </div>
                         </div>
@@ -2559,11 +2599,11 @@ export function LeadsWorkspace() {
                   <div className="space-y-4 text-sm">
                     {/* Clear RBAC Banner */}
                     {canEditSelectedLead ? (
-                      <div className="p-3 rounded-xl bg-emerald-50/90 border border-emerald-300 text-emerald-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                      <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 text-emerald-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
                         <div className="flex items-center gap-2">
                           <Pencil className="w-4 h-4 text-emerald-700 shrink-0" />
                           <span>
-                            <strong>Chế độ Chỉnh sửa Trực tiếp ({user?.roleName}):</strong> Bạn có thể sửa ngay thông tin khách hàng, dự án, khu vực, sản phẩm, gắn <strong>Chu kỳ chăm sóc khách ngâm B2B</strong> và bấm <strong>Lưu cập nhật Hồ sơ Lead</strong> bên dưới.
+                            <strong>Chế độ Xem &amp; Chỉnh sửa Trực tiếp ({user?.roleName}):</strong> Bạn có thể cập nhật ngay thông tin khách hàng, dự án, khu vực, sản phẩm, đặt <strong>Lịch hẹn liên hệ lại / Kế hoạch theo dõi dự án</strong> và bấm <strong>Lưu cập nhật Hồ sơ Lead</strong> bên dưới.
                           </span>
                         </div>
                         {!selectedLead.receivedConfirmedAt && (
@@ -2589,14 +2629,14 @@ export function LeadsWorkspace() {
 
                     {/* Quick Inline Pipeline Status Bar right inside Tab 1 for Authorized Users */}
                     {canEditSelectedLead && (
-                      <div className="p-3.5 rounded-xl bg-white border border-blue-200 border-l-4 border-l-[#1E3A8A] shadow-2xs flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                      <div className="p-3.5 rounded-xl bg-white border border-slate-200/90 border-l-2 border-l-[#1E3A8A] shadow-2xs flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                         <div>
-                          <span className="text-xs font-extrabold uppercase tracking-wider text-[#1E3A8A] block">
+                          <span className="text-xs font-bold uppercase tracking-wider text-[#1E3A8A] block">
                             Chuyển nhanh Trạng thái Pipeline
                           </span>
-                          <span className="text-xs text-slate-600">
-                            Đổi trạng thái ngay mà không cần chuyển tab (Trạng thái hiện tại:{' '}
-                            <strong>{PIPELINE_STATUS_LABELS[selectedLead.pipelineStatus]}</strong>)
+                          <span className="text-xs text-slate-500">
+                            Đổi trạng thái ngay tại đây (Hiện tại:{' '}
+                            <strong className="text-slate-800">{PIPELINE_STATUS_LABELS[selectedLead.pipelineStatus]}</strong>)
                           </span>
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5">
@@ -2649,8 +2689,8 @@ export function LeadsWorkspace() {
                                 }}
                                 className={`px-3 py-1.5 rounded-lg border text-xs transition ${
                                   isCurrent
-                                    ? `${STATUS_BADGE_STYLES[st]} ring-2 ring-offset-1 ring-blue-500`
-                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200 font-semibold'
+                                    ? `${STATUS_BADGE_STYLES[st]} ring-1 ring-blue-500/40`
+                                    : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200 font-medium'
                                 }`}
                               >
                                 {PIPELINE_STATUS_LABELS[st]}
@@ -2666,7 +2706,7 @@ export function LeadsWorkspace() {
                       <form onSubmit={(e) => void handleUpdateLeadInfo(e)} className="space-y-4">
                         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
                           {/* Left 7 cols: Editable Customer, Project & Location */}
-                          <div className="lg:col-span-7 p-4 rounded-xl border border-slate-200 border-t-4 border-t-[#1E3A8A] bg-white shadow-2xs space-y-3.5">
+                          <div className="lg:col-span-7 p-4 rounded-xl border border-slate-200/90 bg-white shadow-2xs space-y-3.5">
                             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                               <span className="font-bold text-slate-900 text-base flex items-center gap-2">
                                 <Pencil className="w-4 h-4 text-[#1E3A8A]" />
@@ -2813,30 +2853,77 @@ export function LeadsWorkspace() {
                             </div>
                           </div>
 
-                          {/* Right 5 cols: B2B Long Sales Cycle Nurturing & Marketing Attribution */}
+                          {/* Right 5 cols: Project Follow-Up Plan + Next Contact Date & Attribution */}
                           <div className="lg:col-span-5 space-y-4">
-                            {/* B2B Long Sales Cycle Card */}
-                            <div className="p-4 rounded-xl border border-purple-200 border-t-4 border-t-purple-600 bg-white shadow-2xs space-y-2.5">
+                            {/* B2B Follow-Up & Next Contact Date Card */}
+                            <div className="p-4 rounded-xl border border-slate-200/90 bg-white shadow-2xs space-y-3">
                               <div className="flex items-center justify-between">
-                                <span className="font-bold text-purple-950 text-sm flex items-center gap-1.5">
-                                  <Clock className="w-4 h-4 text-purple-700" />
-                                  <span>Chu kỳ Chăm sóc Báo giá B2B</span>
+                                <span className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                                  <Clock className="w-4 h-4 text-[#1E3A8A]" />
+                                  <span>Kế hoạch Theo dõi &amp; Lịch hẹn Liên hệ</span>
                                 </span>
-                                <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-purple-100 text-purple-900">
-                                  Đặc thù dự án LED
+                                <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-blue-50 text-[#1E3A8A] border border-blue-200/70">
+                                  Dự án B2B
                                 </span>
                               </div>
-                              <p className="text-xs text-slate-600 leading-relaxed">
-                                Khách B2B thường hỏi giá để đó vài ngày, hàng tháng chờ duyệt vốn hoặc năm sau mới chốt. Gắn tầng chu kỳ để hệ thống nhắc lịch:
+                              <p className="text-xs text-slate-500 leading-relaxed">
+                                Với các dự án khách hàng cần 1–2 tháng hoặc sang quý/năm sau mới triển khai, chọn mốc lịch hẹn và giai đoạn theo dõi để quản lý chủ động:
                               </p>
+
+                              {/* Quick Schedule Follow-Up Date Picker */}
+                              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/80 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <label className="text-xs font-semibold text-slate-700">
+                                    Ngày hẹn liên hệ tiếp theo:
+                                  </label>
+                                  <input
+                                    type="date"
+                                    value={editFollowUpDate}
+                                    onChange={(e) => setEditFollowUpDate(e.target.value)}
+                                    className="h-8 px-2.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-900"
+                                  />
+                                </div>
+                                <div className="flex flex-wrap gap-1">
+                                  {[
+                                    { label: '+7 ngày', days: 7, horizon: 'remind_7_14d' as const },
+                                    { label: '+15 ngày', days: 15, horizon: 'remind_7_14d' as const },
+                                    { label: '+1 tháng', days: 30, horizon: 'monthly_15_45d' as const },
+                                    { label: '+2 tháng', days: 60, horizon: 'monthly_15_45d' as const },
+                                    { label: '+Quý tới', days: 90, horizon: 'longterm_next_year' as const },
+                                  ].map((presetItem) => (
+                                    <button
+                                      key={presetItem.label}
+                                      type="button"
+                                      onClick={() => {
+                                        const dt = new Date(Date.now() + presetItem.days * 86400000);
+                                        setEditFollowUpDate(dt.toISOString().slice(0, 10));
+                                        setEditB2bHorizon(presetItem.horizon);
+                                      }}
+                                      className="px-2 py-1 rounded-md bg-white hover:bg-blue-50 border border-slate-200 hover:border-blue-300 text-[11px] font-semibold text-slate-700 hover:text-[#1E3A8A] transition"
+                                    >
+                                      {presetItem.label}
+                                    </button>
+                                  ))}
+                                  {editFollowUpDate && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditFollowUpDate('')}
+                                      className="px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-[11px] text-slate-600"
+                                    >
+                                      Xóa lịch
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
                               <div className="space-y-1.5">
                                 {B2B_HORIZON_OPTIONS.map((opt) => (
                                   <label
                                     key={opt.key}
                                     className={`flex items-start gap-2 p-2 rounded-lg border cursor-pointer text-xs transition ${
                                       editB2bHorizon === opt.key
-                                        ? `${opt.badgeClass} font-bold ring-1 ring-current`
-                                        : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                                        ? `${opt.badgeClass} font-semibold`
+                                        : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100'
                                     }`}
                                   >
                                     <input
@@ -2853,12 +2940,12 @@ export function LeadsWorkspace() {
                             </div>
 
                             {/* Attribution Read-only Card */}
-                            <div className="p-4 rounded-xl border border-slate-200 border-t-4 border-t-teal-600 bg-white shadow-2xs space-y-2 text-xs">
+                            <div className="p-4 rounded-xl border border-slate-200/90 bg-white shadow-2xs space-y-2 text-xs">
                               <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
                                 <span className="font-bold text-slate-900 text-sm">
                                   Nguồn Marketing &amp; Chiến dịch
                                 </span>
-                                <span className="px-2 py-0.5 rounded bg-teal-50 border border-teal-200 text-teal-900 font-bold">
+                                <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700 font-semibold">
                                   {CONTACT_CHANNEL_LABELS[selectedLead.contactChannel]}
                                 </span>
                               </div>
@@ -2887,7 +2974,7 @@ export function LeadsWorkspace() {
                         </div>
 
                         {/* Products Selection & Technical Note */}
-                        <div className="p-4 rounded-xl border border-slate-200 border-t-4 border-t-amber-500 bg-white shadow-2xs space-y-3">
+                        <div className="p-4 rounded-xl border border-slate-200/90 bg-white shadow-2xs space-y-3">
                           <div className="flex items-center justify-between">
                             <span className="font-bold text-slate-900 text-sm">
                               Sản phẩm Màn hình LED / Bảng điện tử quan tâm ({editProductIds.length} đã chọn)

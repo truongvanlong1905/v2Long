@@ -258,8 +258,8 @@ export function TrackingWorkspace() {
 
   return (
     <div className="space-y-3.5 text-sm">
-      {/* Header — Color-Accented Violet/Navy Card */}
-      <div className="bg-white border border-slate-200/90 border-t-4 border-t-violet-600 rounded-2xl p-4 shadow-card flex flex-col md:flex-row md:items-center justify-between gap-3.5">
+      {/* Header — Clean Modern White Card */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3.5">
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-xs font-bold text-violet-800 mb-1.5">
             <span>Tracking Nguồn, Đồng bộ Đa kênh & Đối soát</span>

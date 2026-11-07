@@ -7,6 +7,97 @@ import {
   type RoleCode,
 } from '@toantrung/contracts';
 
+export type DepartmentScopeCode =
+  | 'ALL'
+  | 'KINH_DOANH'
+  | 'MARKETING_SEO'
+  | 'ADS'
+  | 'KY_THUAT_THIET_KE';
+
+export const DEPARTMENT_SCOPE_LABELS: Record<DepartmentScopeCode, string> = {
+  ALL: 'Toàn công ty (Tất cả phòng ban)',
+  KINH_DOANH: 'Phòng Kinh doanh',
+  MARKETING_SEO: 'Phòng Marketing & SEO',
+  ADS: 'Bộ phận Quảng cáo Ads',
+  KY_THUAT_THIET_KE: 'Bộ phận Thiết kế Kỹ thuật',
+};
+
+export function getDepartmentScopeForRole(roleCode: RoleCode): DepartmentScopeCode {
+  switch (roleCode) {
+    case 'BOD':
+    case 'ADMIN':
+      return 'ALL';
+    case 'SALES':
+    case 'SALES_LEAD':
+      return 'KINH_DOANH';
+    case 'MKT_STAFF':
+    case 'MKT_LEAD':
+      return 'MARKETING_SEO';
+    case 'ADS':
+      return 'ADS';
+    case 'DESIGNER':
+      return 'KY_THUAT_THIET_KE';
+    default:
+      return 'KINH_DOANH';
+  }
+}
+
+function inferNotificationDepartment(
+  category: string,
+  title: string,
+  summary: string,
+): DepartmentScopeCode {
+  const text = `${category} ${title} ${summary}`.toLowerCase();
+  if (
+    text.includes('phòng kinh doanh') ||
+    text.includes('pipeline') ||
+    text.includes('báo giá') ||
+    text.includes('lead') ||
+    text.includes('nhà máy đông á')
+  ) {
+    return 'KINH_DOANH';
+  }
+  if (
+    text.includes('marketing') ||
+    text.includes('seo') ||
+    text.includes('từ khóa') ||
+    text.includes('bài viết')
+  ) {
+    return 'MARKETING_SEO';
+  }
+  if (
+    text.includes('bộ phận quảng cáo') ||
+    text.includes('chiến dịch ads') ||
+    text.includes('google ads') ||
+    text.includes('cpl')
+  ) {
+    return 'ADS';
+  }
+  if (
+    text.includes('thiết kế') ||
+    text.includes('phối cảnh') ||
+    text.includes('3d') ||
+    text.includes('banner')
+  ) {
+    return 'KY_THUAT_THIET_KE';
+  }
+  return 'ALL';
+}
+
+function sanitizeNotificationCopy(title: string, summary: string, category: string) {
+  let cleanTitle = title.replace(/\s*\(Độc lập\)/gi, '');
+  let cleanSummary = summary
+    .replace(
+      /Toàn bộ 5 phân hệ\s*\(M01[^)]*\)\s*đã được kích hoạt trên môi trường độc lập\.?/gi,
+      'Hệ thống Quản lý Kinh doanh, Marketing & Thiết kế Toàn Trung đã đồng bộ dữ liệu hoạt động trong ngày.',
+    )
+    .replace(/\bM0[1-5]\b\s*/g, '');
+  let cleanCategory = category;
+  if (cleanCategory === 'Pipeline') cleanCategory = 'Phòng Kinh doanh';
+  if (cleanCategory === 'Hệ thống') cleanCategory = 'Thông báo chung';
+  return { cleanTitle, cleanSummary, cleanCategory };
+}
+
 function canAccessNotificationAction(
   roleCode: RoleCode,
   actionUrl: string | null,
@@ -22,23 +113,48 @@ function canAccessNotificationAction(
   return true;
 }
 
+export interface DispatchedReportItemDto {
+  id: number;
+  reportCode: string;
+  status: 'DRAFT' | 'ISSUED';
+  title: string;
+  summary: string;
+  contentHtml: string;
+  targetDepartments: string[];
+  reportingPeriod: string;
+  authorName: string;
+  authorRole: string;
+  createdAt: string;
+}
+
 export async function listUserNotifications(
   userId: number,
   roleCode: RoleCode,
 ): Promise<{
-  items: NotificationDto[];
+  items: Array<NotificationDto & { departmentScope?: DepartmentScopeCode; departmentLabel?: string }>;
   unreadCount: number;
+  userDepartmentCode: DepartmentScopeCode;
+  userDepartmentLabel: string;
+  canSendFullReport: boolean;
+  reports: DispatchedReportItemDto[];
 }> {
+  const userDept = getDepartmentScopeForRole(roleCode);
+  const canSendFullReport = roleCode === 'BOD' || roleCode === 'ADMIN';
+
   const rows = await prisma.notification.findMany({
-    where: { userId },
+    where: canSendFullReport ? { userId } : { userId },
     orderBy: { createdAt: 'desc' },
-    take: 50,
+    take: 60,
   });
 
-  const unreadCount = rows.filter((r) => !r.isRead).length;
-
-  return {
-    items: rows.map((r) => {
+  const filteredItems = rows
+    .map((r) => {
+      const { cleanTitle, cleanSummary, cleanCategory } = sanitizeNotificationCopy(
+        r.title,
+        r.summary,
+        r.category,
+      );
+      const deptScope = inferNotificationDepartment(cleanCategory, cleanTitle, cleanSummary);
       const allowed = canAccessNotificationAction(
         roleCode,
         r.actionUrl,
@@ -46,17 +162,44 @@ export async function listUserNotifications(
       );
       return {
         id: r.id,
-        title: r.title,
-        summary: r.summary,
-        category: r.category,
+        title: cleanTitle,
+        summary: cleanSummary,
+        category: cleanCategory,
+        departmentScope: deptScope,
+        departmentLabel: DEPARTMENT_SCOPE_LABELS[deptScope],
         isRead: r.isRead,
         actionLabel: allowed ? r.actionLabel : null,
         actionUrl: allowed ? r.actionUrl : null,
         createdAt: r.createdAt.toISOString(),
         readAt: r.readAt ? r.readAt.toISOString() : null,
       };
-    }),
+    })
+    .filter((item) => {
+      if (canSendFullReport) return true;
+      // Nhân sự phòng nào chỉ xem thông báo thuộc phòng đó hoặc thông báo chung từ Ban Giám đốc
+      return item.departmentScope === userDept || item.departmentScope === 'ALL';
+    });
+
+  const unreadCount = filteredItems.filter((r) => !r.isRead).length;
+  const allReports = await listDispatchedExecutiveReports(25, userId);
+  const visibleReports = allReports.filter((rpt) => {
+    if (canSendFullReport) return true;
+    if (rpt.status === 'DRAFT') return true;
+    const targets = rpt.targetDepartments || [];
+    return (
+      targets.length === 0 ||
+      targets.includes('ALL') ||
+      targets.includes(userDept)
+    );
+  });
+
+  return {
+    items: filteredItems,
     unreadCount,
+    userDepartmentCode: userDept,
+    userDepartmentLabel: DEPARTMENT_SCOPE_LABELS[userDept],
+    canSendFullReport,
+    reports: visibleReports,
   };
 }
 
@@ -96,6 +239,25 @@ export async function createDispatchNotification(
     authorRole?: string;
   },
 ) {
+  const senderDept = getDepartmentScopeForRole(roleCode);
+  const isExecutive = roleCode === 'BOD' || roleCode === 'ADMIN';
+
+  // Giám đốc / Admin được phép gửi báo cáo full đến mọi phòng ban hoặc chọn phòng cụ thể.
+  // Nhân sự phòng ban gửi báo cáo trong phạm vi phòng mình & trình Ban Giám đốc.
+  const effectiveTargetDepts = isExecutive
+    ? input.targetDepartments && input.targetDepartments.length > 0
+      ? input.targetDepartments
+      : ['ALL']
+    : [senderDept];
+
+  const categoryLabel = isExecutive
+    ? effectiveTargetDepts.includes('ALL')
+      ? 'Báo cáo Ban Giám đốc (Toàn công ty)'
+      : `Báo cáo Điều hành (${effectiveTargetDepts
+          .map((d) => DEPARTMENT_SCOPE_LABELS[d as DepartmentScopeCode] || d)
+          .join(', ')})`
+    : DEPARTMENT_SCOPE_LABELS[senderDept];
+
   let savedReportId: number | null = null;
   if (input.contentHtml && input.contentHtml.trim()) {
     const auditEntry = await prisma.auditLog.create({
@@ -108,7 +270,7 @@ export async function createDispatchNotification(
           title: input.title.trim(),
           summary: input.summary.trim(),
           contentHtml: input.contentHtml,
-          targetDepartments: input.targetDepartments || [],
+          targetDepartments: effectiveTargetDepts,
           authorName: input.authorName || 'Điều hành Toàn Trung',
           authorRole: input.authorRole || roleCode,
         }),
@@ -118,17 +280,17 @@ export async function createDispatchNotification(
   }
 
   const finalActionUrl = savedReportId
-    ? `/reports?viewReportId=${savedReportId}`
-    : input.actionUrl || '/reports';
+    ? `/notifications?reportId=${savedReportId}`
+    : input.actionUrl || '/notifications';
 
-  // Gửi thông báo thực tế đến toàn bộ người dùng thuộc phòng ban nhận + Ban Giám đốc + Người gửi
   const allActiveUsers = await prisma.user.findMany({
     where: { isActive: true, deletedAt: null },
     include: { role: true },
   });
 
-  const targetDepts = input.targetDepartments || [];
-  const isBroadcast = targetDepts.length === 0 || targetDepts.includes('ALL');
+  const isBroadcast =
+    isExecutive &&
+    (effectiveTargetDepts.length === 0 || effectiveTargetDepts.includes('ALL'));
 
   const recipientIds = new Set<number>([userId]);
   for (const u of allActiveUsers) {
@@ -137,16 +299,22 @@ export async function createDispatchNotification(
       recipientIds.add(u.id);
       continue;
     }
-    if (targetDepts.includes('KINH_DOANH') && (rc === 'SALES' || rc === 'SALES_LEAD')) {
+    if (
+      effectiveTargetDepts.includes('KINH_DOANH') &&
+      (rc === 'SALES' || rc === 'SALES_LEAD')
+    ) {
       recipientIds.add(u.id);
     }
-    if (targetDepts.includes('MARKETING_SEO') && (rc === 'MKT_STAFF' || rc === 'MKT_LEAD')) {
+    if (
+      effectiveTargetDepts.includes('MARKETING_SEO') &&
+      (rc === 'MKT_STAFF' || rc === 'MKT_LEAD')
+    ) {
       recipientIds.add(u.id);
     }
-    if (targetDepts.includes('ADS') && rc === 'ADS') {
+    if (effectiveTargetDepts.includes('ADS') && rc === 'ADS') {
       recipientIds.add(u.id);
     }
-    if (targetDepts.includes('KY_THUAT_THIET_KE') && rc === 'DESIGNER') {
+    if (effectiveTargetDepts.includes('KY_THUAT_THIET_KE') && rc === 'DESIGNER') {
       recipientIds.add(u.id);
     }
   }
@@ -156,9 +324,9 @@ export async function createDispatchNotification(
       userId: uid,
       title: input.title.trim().slice(0, 200),
       summary: input.summary.trim().slice(0, 500),
-      category: (input.category || 'Báo cáo & Điều hành').trim().slice(0, 80),
+      category: (input.category || categoryLabel).trim().slice(0, 80),
       isRead: false,
-      actionLabel: input.actionLabel || 'Mở đọc toàn văn báo cáo',
+      actionLabel: input.actionLabel || 'Xem báo cáo chi tiết',
       actionUrl: finalActionUrl,
       requiredPermission: 'DASHBOARD_VIEW',
     })),
@@ -237,7 +405,10 @@ export async function saveReportDraftForUser(
   };
 }
 
-export async function listDispatchedExecutiveReports(limit = 15, actorUserId?: number) {
+export async function listDispatchedExecutiveReports(
+  limit = 20,
+  actorUserId?: number,
+): Promise<DispatchedReportItemDto[]> {
   const logs = await prisma.auditLog.findMany({
     where: {
       OR: [
@@ -286,4 +457,3 @@ export async function listDispatchedExecutiveReports(limit = 15, actorUserId?: n
     };
   });
 }
-

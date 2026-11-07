@@ -1178,29 +1178,70 @@ async function main() {
 
       const count = await prisma.notification.count({ where: { userId: user.id } });
       if (count === 0) {
+        const isExec = acc.roleId === rolesByCode.BOD.id || acc.roleId === rolesByCode.ADMIN.id;
+        const isSales =
+          acc.roleId === rolesByCode.SALES.id || acc.roleId === rolesByCode.SALES_LEAD.id;
+        const isMkt =
+          acc.roleId === rolesByCode.MKT_STAFF.id || acc.roleId === rolesByCode.MKT_LEAD.id;
+        const isAds = acc.roleId === rolesByCode.ADS.id;
+        const isDesign = acc.roleId === rolesByCode.DESIGNER.id;
+
+        const seedNotifications = [];
+        if (isExec || isSales) {
+          seedNotifications.push({
+            userId: user.id,
+            title: 'Nhắc lịch liên hệ lại báo giá dự án B2B',
+            summary:
+              'Hồ sơ TT-20261102-0002 (Nhà máy Đông Á) đã gửi báo giá 9 ngày, cần liên hệ khách hàng cập nhật tiến độ phê duyệt.',
+            category: 'Phòng Kinh doanh',
+            actionLabel: 'Mở hồ sơ Lead',
+            actionUrl: '/leads',
+            requiredPermission: 'LEAD_VIEW_OWN',
+            isRead: false,
+          });
+        }
+        if (isExec || isMkt) {
+          seedNotifications.push({
+            userId: user.id,
+            title: 'Cập nhật nội dung SEO & Từ khóa tìm kiếm tuần mới',
+            summary:
+              'Từ khóa "báo giá màn hình led hội trường P2.5" tăng trưởng tốt ở vị trí #3.2 trên Google Search Console.',
+            category: 'Phòng Marketing & SEO',
+            actionLabel: 'Mở Quảng cáo & SEO',
+            actionUrl: '/ads',
+            requiredPermission: 'SEO_KEYWORD_MANAGE',
+            isRead: false,
+          });
+        }
+        if (isExec || isAds) {
+          seedNotifications.push({
+            userId: user.id,
+            title: 'Đồng bộ số liệu Chiến dịch Google Ads & Đối soát Lead',
+            summary:
+              'Đã đồng bộ chi phí quảng cáo và đối chiếu Lead hợp lệ (L2/L3) từ các chiến dịch đang chạy.',
+            category: 'Bộ phận Quảng cáo Ads',
+            actionLabel: 'Xem Chiến dịch Ads',
+            actionUrl: '/ads',
+            requiredPermission: 'ADS_CAMPAIGN_VIEW',
+            isRead: false,
+          });
+        }
+        if (isExec || isDesign) {
+          seedNotifications.push({
+            userId: user.id,
+            title: 'Bản vẽ Phối cảnh 3D Hội trường đã sẵn sàng bàn giao',
+            summary:
+              'Phương án phối cảnh màn hình LED P2.5 tại Trung tâm Hội nghị Ánh Dương đã hoàn tất dựng hình kỹ thuật.',
+            category: 'Bộ phận Thiết kế',
+            actionLabel: 'Mở Thiết kế AI',
+            actionUrl: '/design',
+            requiredPermission: 'DESIGN_REQUEST_CREATE_VIEW',
+            isRead: false,
+          });
+        }
+
         await prisma.notification.createMany({
-          data: [
-            {
-              userId: user.id,
-              title: 'Hệ thống Toàn Trung V2 (Độc lập) đã sẵn sàng',
-              summary: 'Toàn bộ 5 phân hệ (M01 Lead, M02 Tracking, M03 Từ khóa/SEO, M04 Báo cáo, M05 AI Thiết kế) đã được kích hoạt trên môi trường độc lập.',
-              category: 'Hệ thống',
-              actionLabel: 'Mở Tổng quan',
-              actionUrl: '/dashboard',
-              requiredPermission: 'DASHBOARD_VIEW',
-              isRead: false,
-            },
-            {
-              userId: user.id,
-              title: 'Cảnh báo báo giá quá 7 ngày chưa phản hồi',
-              summary: 'Hồ sơ TT-20261102-0002 (Nhà máy Đông Á) đã gửi báo giá 9 ngày chưa ghi nhận phản hồi.',
-              category: 'Pipeline',
-              actionLabel: 'Kiểm tra Lead',
-              actionUrl: '/leads',
-              requiredPermission: 'LEAD_VIEW_OWN',
-              isRead: false,
-            },
-          ],
+          data: seedNotifications,
         });
       }
     }
