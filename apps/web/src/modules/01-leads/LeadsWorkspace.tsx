@@ -117,34 +117,50 @@ export const B2B_HORIZON_OPTIONS: {
 }[] = [
   {
     key: 'hot_under_7d',
-    tag: '[THEO DÕI DỰ ÁN: ĐANG TƯ VẤN < 7 NGÀY]',
-    legacyTags: ['[CHU KỲ B2B: TƯƠNG TÁC NÓNG 3-7 NGÀY]'],
-    label: 'Đang tư vấn ngắn hạn (Theo dõi sát trong 3–7 ngày đầu)',
-    shortLabel: 'Đang tư vấn (< 7 ngày)',
-    badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
+    tag: '[NHU CẦU KHÁCH: ĐANG CẦN GẤP]',
+    legacyTags: [
+      '[NHU CẦU KHÁCH: CẦN TRIỂN KHAI SỚM]',
+      '[THEO DÕI DỰ ÁN: ĐANG TƯ VẤN < 7 NGÀY]',
+      '[CHU KỲ B2B: TƯƠNG TÁC NÓNG 3-7 NGÀY]',
+    ],
+    label: 'Khách có nhu cầu thực tế, cần tư vấn & triển khai sớm',
+    shortLabel: 'Đang cần gấp',
+    badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   },
   {
     key: 'remind_7_14d',
-    tag: '[THEO DÕI DỰ ÁN: LIÊN HỆ LẠI 7-30 NGÀY]',
-    legacyTags: ['[CHU KỲ B2B: HỎI GIÁ ĐỂ ĐÓ 7-14 NGÀY]'],
-    label: 'Cần liên hệ lại (7–30 ngày — Khách đang cân nhắc phương án)',
-    shortLabel: 'Cần liên hệ lại (7–30 ngày)',
-    badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
+    tag: '[NHU CẦU KHÁCH: ĐANG CÂN NHẮC PHƯƠNG ÁN]',
+    legacyTags: [
+      '[NHU CẦU KHÁCH: ĐANG THAM KHẢO BÁO GIÁ]',
+      '[THEO DÕI DỰ ÁN: LIÊN HỆ LẠI 7-30 NGÀY]',
+      '[CHU KỲ B2B: HỎI GIÁ ĐỂ ĐÓ 7-14 NGÀY]',
+    ],
+    label: 'Khách đã nhận tư vấn, đang xem xét & so sánh phương án',
+    shortLabel: 'Đang cân nhắc',
+    badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
   },
   {
     key: 'monthly_15_45d',
-    tag: '[THEO DÕI DỰ ÁN: ĐỊNH KỲ 1-2 THÁNG]',
-    legacyTags: ['[CHU KỲ B2B: NGÂM HÀNG THÁNG 15-45 NGÀY]'],
-    label: 'Theo dõi định kỳ 1–2 tháng (Chờ trình duyệt ngân sách / đấu thầu)',
-    shortLabel: 'Theo dõi 1–2 tháng',
-    badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+    tag: '[NHU CẦU KHÁCH: ĐANG THAM KHẢO THÔNG TIN]',
+    legacyTags: [
+      '[NHU CẦU KHÁCH: CHỜ TRÌNH DUYỆT NGÂN SÁCH]',
+      '[THEO DÕI DỰ ÁN: ĐỊNH KỲ 1-2 THÁNG]',
+      '[CHU KỲ B2B: NGÂM HÀNG THÁNG 15-45 NGÀY]',
+    ],
+    label: 'Khách mới tìm hiểu sản phẩm, hỏi thông số để tham khảo',
+    shortLabel: 'Đang tham khảo',
+    badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
   },
   {
     key: 'longterm_next_year',
-    tag: '[THEO DÕI DỰ ÁN: DÀI HẠN > 2 THÁNG]',
-    legacyTags: ['[CHU KỲ B2B: DỰ ÁN DÀI HẠN / NĂM SAU CHỐT]'],
-    label: 'Dự án dài hạn (> 2 tháng — Chờ tiến độ công trình / kỳ kế hoạch mới)',
-    shortLabel: 'Dự án dài hạn (> 2 tháng)',
+    tag: '[NHU CẦU KHÁCH: CHỜ MẶT BẰNG / DỰ ÁN TƯƠNG LAI]',
+    legacyTags: [
+      '[NHU CẦU KHÁCH: DỰ ÁN CHUẨN BỊ / TƯƠNG LAI]',
+      '[THEO DÕI DỰ ÁN: DÀI HẠN > 2 THÁNG]',
+      '[CHU KỲ B2B: DỰ ÁN DÀI HẠN / NĂM SAU CHỐT]',
+    ],
+    label: 'Công trình đang xây dựng hoặc kế hoạch lắp đặt sau',
+    shortLabel: 'Chờ mặt bằng / Dự án sau',
     badgeClass: 'bg-violet-50 text-violet-700 border-violet-200',
   },
 ];
@@ -152,13 +168,6 @@ export const B2B_HORIZON_OPTIONS: {
 function extractScheduledFollowUpDate(noteText: string): string {
   const match = noteText.match(/\[HẸN LIÊN HỆ:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\]/);
   return match ? match[1] : '';
-}
-
-function formatIsoDateVi(isoDate: string): string {
-  if (!isoDate) return '';
-  const parts = isoDate.split('-');
-  if (parts.length !== 3) return isoDate;
-  return `${parts[2]}/${parts[1]}/${parts[0]}`;
 }
 
 function getB2bFollowUpHorizon(lead: LeadItemDto): {
@@ -183,9 +192,7 @@ function getB2bFollowUpHorizon(lead: LeadItemDto): {
     ) {
       return {
         key: opt.key,
-        shortLabel: scheduledDate
-          ? `${opt.shortLabel} · Hẹn ${formatIsoDateVi(scheduledDate)}`
-          : opt.shortLabel,
+        shortLabel: opt.shortLabel,
         badgeClass: opt.badgeClass,
         waitingDays,
         scheduledDate,
@@ -196,13 +203,11 @@ function getB2bFollowUpHorizon(lead: LeadItemDto): {
   if (
     combinedNote.toLowerCase().includes('năm sau') ||
     combinedNote.toLowerCase().includes('quý tới') ||
-    combinedNote.toLowerCase().includes('dài hạn')
+    combinedNote.toLowerCase().includes('tương lai')
   ) {
     return {
       key: 'longterm_next_year',
-      shortLabel: scheduledDate
-        ? `Dự án dài hạn · Hẹn ${formatIsoDateVi(scheduledDate)}`
-        : 'Dự án dài hạn (> 2 tháng)',
+      shortLabel: 'Chờ mặt bằng / Dự án sau',
       badgeClass: 'bg-violet-50 text-violet-700 border-violet-200',
       waitingDays,
       scheduledDate,
@@ -211,8 +216,8 @@ function getB2bFollowUpHorizon(lead: LeadItemDto): {
 
   if (lead.pipelineStatus !== 'quote_sent' && lead.pipelineStatus !== 'quoting') {
     return {
-      key: scheduledDate ? 'remind_7_14d' : 'none',
-      shortLabel: scheduledDate ? `Hẹn liên hệ: ${formatIsoDateVi(scheduledDate)}` : '',
+      key: 'none',
+      shortLabel: '',
       badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
       waitingDays,
       scheduledDate,
@@ -222,9 +227,7 @@ function getB2bFollowUpHorizon(lead: LeadItemDto): {
   if (waitingDays > 45) {
     return {
       key: 'longterm_next_year',
-      shortLabel: scheduledDate
-        ? `Hẹn ${formatIsoDateVi(scheduledDate)} · Dự án dài hạn`
-        : `Theo dõi ${waitingDays} ngày · Dự án dài hạn`,
+      shortLabel: 'Chờ mặt bằng / Dự án sau',
       badgeClass: 'bg-violet-50 text-violet-700 border-violet-200',
       waitingDays,
       scheduledDate,
@@ -233,10 +236,8 @@ function getB2bFollowUpHorizon(lead: LeadItemDto): {
   if (waitingDays >= 15) {
     return {
       key: 'monthly_15_45d',
-      shortLabel: scheduledDate
-        ? `Hẹn ${formatIsoDateVi(scheduledDate)} · Theo dõi 1–2 tháng`
-        : `Theo dõi ${waitingDays} ngày · Định kỳ 1–2 tháng`,
-      badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+      shortLabel: 'Đang tham khảo',
+      badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
       waitingDays,
       scheduledDate,
     };
@@ -244,20 +245,16 @@ function getB2bFollowUpHorizon(lead: LeadItemDto): {
   if (waitingDays >= 7 || lead.isQuoteOverdue7Days) {
     return {
       key: 'remind_7_14d',
-      shortLabel: scheduledDate
-        ? `Hẹn ${formatIsoDateVi(scheduledDate)} · Cần liên hệ lại`
-        : `Đã gửi ${Math.max(waitingDays, 7)} ngày · Cần liên hệ lại`,
-      badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
+      shortLabel: 'Đang cân nhắc',
+      badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
       waitingDays: Math.max(waitingDays, 7),
       scheduledDate,
     };
   }
   return {
     key: 'hot_under_7d',
-    shortLabel: scheduledDate
-      ? `Hẹn ${formatIsoDateVi(scheduledDate)} · Đang tư vấn`
-      : `Mới ${waitingDays} ngày · Đang tư vấn`,
-    badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
+    shortLabel: 'Đang cần gấp',
+    badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
     waitingDays,
     scheduledDate,
   };
@@ -855,12 +852,8 @@ export function LeadsWorkspace() {
     setErrorMsg(null);
     try {
       const horizonOpt = B2B_HORIZON_OPTIONS.find((o) => o.key === editB2bHorizon);
-      const followUpTag = editFollowUpDate.trim()
-        ? `[HẸN LIÊN HỆ: ${editFollowUpDate.trim()}]`
-        : '';
       const composedCustomNote = [
         horizonOpt ? horizonOpt.tag : '',
-        followUpTag,
         editCustomProductNote.trim(),
       ]
         .filter(Boolean)
@@ -887,8 +880,8 @@ export function LeadsWorkspace() {
           customProductNote: composedCustomNote || null,
           note:
             editUpdateNote.trim() ||
-            (horizonOpt || editFollowUpDate
-              ? `Cập nhật hồ sơ Lead${horizonOpt ? ` · Lộ trình: ${horizonOpt.shortLabel}` : ''}${editFollowUpDate ? ` · Hẹn liên hệ: ${formatIsoDateVi(editFollowUpDate)}` : ''}`
+            (horizonOpt
+              ? `Cập nhật hồ sơ Lead · Tình trạng nhu cầu: ${horizonOpt.shortLabel}`
               : 'Cập nhật trực tiếp thông tin hồ sơ Lead tại màn hình Chi tiết.'),
         },
       });
@@ -1520,61 +1513,6 @@ export function LeadsWorkspace() {
             </div>
           </div>
         </div>
-
-        {/* Project Follow-Up Plan Filter Strip */}
-        <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="font-semibold text-slate-600 mr-1 inline-flex items-center gap-1">
-            <Clock className="w-3.5 h-3.5 text-[#1E3A8A]" />
-            <span>Lộ trình theo dõi dự án:</span>
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              setB2bHorizonFilter('all');
-              setCurrentPage(1);
-            }}
-            className={`px-2.5 py-1 rounded-lg font-medium border transition ${
-              b2bHorizonFilter === 'all'
-                ? 'bg-slate-800 text-white border-slate-800'
-                : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            Tất cả lộ trình
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setB2bHorizonFilter(
-                b2bHorizonFilter === 'any_long_cycle' ? 'all' : 'any_long_cycle',
-              );
-              setCurrentPage(1);
-            }}
-            className={`px-2.5 py-1 rounded-lg font-medium border transition ${
-              b2bHorizonFilter === 'any_long_cycle'
-                ? 'bg-[#1E3A8A] text-white border-[#1E3A8A]'
-                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            Cần theo dõi định kỳ ({b2bSummaryCounts.longCycleCount})
-          </button>
-          {B2B_HORIZON_OPTIONS.map((opt) => (
-            <button
-              key={opt.key}
-              type="button"
-              onClick={() => {
-                setB2bHorizonFilter(b2bHorizonFilter === opt.key ? 'all' : opt.key);
-                setCurrentPage(1);
-              }}
-              className={`px-2.5 py-1 rounded-lg font-medium border transition ${
-                b2bHorizonFilter === opt.key
-                  ? 'bg-[#1E3A8A] text-white border-[#1E3A8A]'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              {opt.shortLabel}
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* Main Content: Table View vs Kanban View */}
@@ -1634,15 +1572,8 @@ export function LeadsWorkspace() {
                     </span>
                   </div>
 
-                  {/* Separated Status & B2B Horizon & Warning Badges */}
+                  {/* Separated Warning Badges */}
                   <div className="flex flex-wrap gap-1.5">
-                    {horizon.key !== 'none' && (
-                      <span
-                        className={`px-2 py-0.5 rounded-md border text-xs font-bold ${horizon.badgeClass}`}
-                      >
-                        {horizon.shortLabel}
-                      </span>
-                    )}
                     {lead.spamStatus !== 'NONE' &&
                       !(
                         fraud.hasPriceProbeBehavior &&
@@ -1901,7 +1832,7 @@ export function LeadsWorkspace() {
                             )}
                           </td>
 
-                          {/* Col 4: Bold Pipeline Status & B2B Long-Cycle Nurturing Tier & Warnings */}
+                          {/* Col 4: Pipeline Status & Warnings */}
                           <td className="py-2.5 px-3 align-middle">
                             <div className="flex flex-col items-start gap-1">
                               <span
@@ -1912,16 +1843,6 @@ export function LeadsWorkspace() {
                                 <span className="w-1.5 h-1.5 rounded-full bg-current opacity-85" />
                                 <span>{PIPELINE_STATUS_LABELS[lead.pipelineStatus]}</span>
                               </span>
-
-                              {/* B2B Follow-up Horizon Badge (Khách hỏi giá để đó vài ngày / hàng tháng / năm sau chốt) */}
-                              {horizon.key !== 'none' && (
-                                <span
-                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] font-bold whitespace-nowrap ${horizon.badgeClass}`}
-                                >
-                                  <Clock className="w-3 h-3 shrink-0" />
-                                  <span>{horizon.shortLabel}</span>
-                                </span>
-                              )}
 
                               {/* Separate Restrained Warning Pills */}
                               {hasAnyWarning && (
@@ -2252,13 +2173,6 @@ export function LeadsWorkspace() {
                                   +{extraCount}
                                 </span>
                               )}
-                              {horizon.key !== 'none' && (
-                                <span
-                                  className={`text-[11px] px-2 py-0.5 rounded-md border font-bold ${horizon.badgeClass}`}
-                                >
-                                  {horizon.shortLabel}
-                                </span>
-                              )}
                               {showSpamBadge && (
                                 <span className="text-xs px-2 py-0.5 rounded-md bg-red-600 text-white font-semibold inline-flex items-center gap-1">
                                   <Ban className="w-3 h-3" />
@@ -2413,123 +2327,111 @@ export function LeadsWorkspace() {
         );
       })()}
 
-      {/* Modal / Dialog Chi tiết Lead & Chỉnh sửa Trực tiếp theo Phân quyền */}
+      {/* Modal / Dialog Chi tiết Lead & Chỉnh sửa Trực tiếp theo Phân quyền (Giao diện Gọn, Hiện đại) */}
       {selectedLead && (() => {
         const selectedHorizon = getB2bFollowUpHorizon(selectedLead);
         return (
-          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2.5 sm:p-5 overflow-hidden">
-            <div className="bg-white w-full max-w-5xl h-[92vh] rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden text-sm animate-in fade-in zoom-in-95 duration-150">
-              {/* Header hồ sơ: Color-accented Navy/Slate banner + Quick Status & RBAC Indicator */}
-              <div className="px-5 pt-4 pb-3.5 border-b border-slate-200 bg-linear-to-r from-slate-50 via-blue-50/50 to-indigo-50/40 shrink-0">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start gap-3.5 min-w-0">
-                    <div
-                      aria-hidden="true"
-                      className={`w-11 h-11 rounded-xl grid place-items-center shrink-0 text-base font-extrabold shadow-xs ${
-                        selectedLead.spamStatus !== 'NONE'
-                          ? 'bg-red-600 text-white'
-                          : 'bg-[#1E3A8A] text-white'
-                      }`}
-                    >
-                      {(selectedLead.companyName || selectedLead.contactName || '?')
-                        .replace(/^(công ty|cty)\s+/i, '')
-                        .trim()
-                        .charAt(0)
-                        .toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="font-display text-lg font-bold text-slate-900 truncate max-w-[480px]">
-                          {selectedLead.companyName || selectedLead.contactName || selectedLead.phone}
-                        </h2>
+          <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-2.5 sm:p-4 overflow-hidden">
+            <div className="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-xl border border-slate-200 flex flex-col overflow-hidden text-sm animate-in fade-in zoom-in-95 duration-150">
+              {/* Header Gọn Sạch */}
+              <div className="px-5 py-3.5 border-b border-slate-200 bg-white shrink-0">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 font-mono text-xs font-bold text-[#1E3A8A]">
+                        {selectedLead.leadCode}
+                      </span>
+                      <h2 className="font-display text-base sm:text-lg font-bold text-slate-900 truncate max-w-[440px]">
+                        {selectedLead.companyName || selectedLead.contactName || selectedLead.phone}
+                      </h2>
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full border text-xs shrink-0 ${
+                          STATUS_BADGE_STYLES[selectedLead.pipelineStatus]
+                        }`}
+                      >
+                        {PIPELINE_STATUS_LABELS[selectedLead.pipelineStatus]}
+                      </span>
+                      {selectedLead.spamStatus !== 'NONE' && (
                         <span
-                          className={`px-3 py-0.5 rounded-full border text-xs shrink-0 ${
-                            STATUS_BADGE_STYLES[selectedLead.pipelineStatus]
-                          }`}
+                          title={selectedLead.spamReason ? `Lý do: ${selectedLead.spamReason}` : undefined}
+                          className="px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold inline-flex items-center gap-1 shrink-0"
                         >
-                          {PIPELINE_STATUS_LABELS[selectedLead.pipelineStatus]}
+                          <Ban className="w-3 h-3" />
+                          <span>
+                            {selectedLead.spamStatus === 'CONFIRMED' ? 'Đã loại trừ Spam' : 'Spam chờ duyệt'}
+                            {selectedLead.spamReason ? ` (${selectedLead.spamReason})` : ''}
+                          </span>
                         </span>
-                        {selectedHorizon.key !== 'none' && (
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full border text-xs font-bold shrink-0 ${selectedHorizon.badgeClass}`}
-                          >
-                            {selectedHorizon.shortLabel}
-                          </span>
-                        )}
-                        {selectedLead.spamStatus !== 'NONE' && (
-                          <span className="px-2.5 py-0.5 rounded-full bg-red-600 text-white text-xs font-bold inline-flex items-center gap-1 shrink-0">
-                            <Ban className="w-3.5 h-3.5" />
-                            Spam · {selectedLead.spamStatus === 'CONFIRMED' ? 'Đã xác nhận' : 'Chờ duyệt'}
-                          </span>
-                        )}
-                      </div>
-                      {selectedLead.projectName && (
-                        <p className="text-sm font-medium text-[#1E3A8A] mt-0.5 truncate max-w-[640px]">
-                          Dự án: {selectedLead.projectName}
-                        </p>
                       )}
-                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600">
-                        <span className="font-mono font-bold text-slate-800" title="Mã hồ sơ Lead">
-                          {selectedLead.leadCode}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                      {selectedLead.projectName && (
+                        <span className="font-medium text-slate-700 truncate max-w-[300px]">
+                          Dự án: {selectedLead.projectName}
                         </span>
-                        <span className="inline-flex items-center gap-1 font-mono font-semibold text-slate-800">
-                          <Phone className="w-3.5 h-3.5 text-[#1E3A8A]" />
-                          {selectedLead.phone}
-                        </span>
-                        <span className="px-2 py-0.5 rounded bg-white border border-slate-200 font-semibold text-slate-700">
+                      )}
+                      <span className="inline-flex items-center gap-1 font-mono font-semibold text-slate-700">
+                        <Phone className="w-3 h-3 text-slate-400" />
+                        {selectedLead.phone}
+                      </span>
+                      <span>
+                        Nguồn:{' '}
+                        <strong className="text-slate-700 font-medium">
                           {selectedLead.tracking?.marketingSource ||
                             CONTACT_CHANNEL_LABELS[selectedLead.contactChannel] ||
                             selectedLead.contactChannel}
-                        </span>
-                        <span className="inline-flex items-center gap-1">
-                          <Clock className="w-3.5 h-3.5 text-slate-400" />
-                          {new Date(selectedLead.contactedAt).toLocaleString('vi-VN', {
-                            day: '2-digit',
-                            month: '2-digit',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </span>
-                        <span className="inline-flex items-center gap-1 font-semibold text-slate-800">
-                          <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
-                          Sales: {selectedLead.assignedSalesName || 'Chưa phân bổ'}
-                        </span>
-                      </div>
+                        </strong>
+                      </span>
+                      <span>
+                        Phụ trách:{' '}
+                        <strong className="text-slate-700 font-medium">
+                          {selectedLead.assignedSalesName || 'Chưa phân bổ'}
+                        </strong>
+                      </span>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedLeadId(null)}
-                    aria-label="Đóng chi tiết Lead"
-                    className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A]"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-                {selectedLead.spamStatus !== 'NONE' && selectedLead.spamReason && (
-                  <div className="mt-2.5 px-3 py-1.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-800">
-                    <strong className="font-semibold">Lý do Spam:</strong> {selectedLead.spamReason}
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {canEditSelectedLead && !selectedLead.receivedConfirmedAt && (
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={() => void handleConfirmReceive(selectedLead)}
+                        className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs transition"
+                      >
+                        <UserCheck className="w-3.5 h-3.5" />
+                        <span>Xác nhận tiếp nhận</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedLeadId(null)}
+                      aria-label="Đóng chi tiết Lead"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
                   </div>
-                )}
+                </div>
               </div>
 
-              {/* Thanh tab: 4 mục Thông tin & Sửa trực tiếp / Tiến độ / Tệp đính kèm / Lịch sử */}
+              {/* Thanh Tab gọn nhẹ */}
               <div
                 role="tablist"
                 aria-label="Chi tiết hồ sơ Lead"
-                className="flex items-center justify-between px-5 border-b border-slate-200 bg-white shrink-0 gap-2 overflow-x-auto"
+                className="flex items-center justify-between px-5 border-b border-slate-200 bg-slate-50/60 shrink-0 gap-2 overflow-x-auto"
               >
                 <div className="flex items-center gap-1">
                   {(
                     [
                       {
                         id: 'info',
-                        label: canEditSelectedLead ? 'Thông tin & Sửa trực tiếp' : 'Thông tin Lead',
+                        label: 'Thông tin chung',
                         icon: canEditSelectedLead ? Pencil : Info,
                         count: null,
                       },
-                      { id: 'pipeline', label: 'Tiến độ & Bàn giao', icon: Activity, count: null },
+                      { id: 'pipeline', label: 'Tiến độ & Phối hợp', icon: Activity, count: null },
                       {
                         id: 'attachments',
                         label: 'Tệp đính kèm',
@@ -2553,16 +2455,16 @@ export function LeadsWorkspace() {
                         role="tab"
                         aria-selected={isActive}
                         onClick={() => setLeadDetailTab(tab.id)}
-                        className={`relative inline-flex items-center gap-2 px-3.5 py-2.5 text-sm font-bold whitespace-nowrap transition focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#1E3A8A] ${
+                        className={`relative inline-flex items-center gap-1.5 px-3 py-2.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition ${
                           isActive ? 'text-[#1E3A8A]' : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
-                        <TabIcon className="w-4 h-4" />
+                        <TabIcon className="w-3.5 h-3.5" />
                         <span>{tab.label}</span>
-                        {tab.count !== null && (
+                        {tab.count !== null && tab.count > 0 && (
                           <span
-                            className={`min-w-[22px] px-1.5 py-0.5 rounded-full text-xs font-semibold text-center ${
-                              isActive ? 'bg-[#1E3A8A] text-white' : 'bg-slate-100 text-slate-600'
+                            className={`px-1.5 py-0.2 rounded-full text-[11px] font-semibold ${
+                              isActive ? 'bg-blue-100 text-[#1E3A8A]' : 'bg-slate-200/70 text-slate-600'
                             }`}
                           >
                             {tab.count}
@@ -2576,69 +2478,29 @@ export function LeadsWorkspace() {
                   })}
                 </div>
 
-                {/* RBAC Permission Pill in Tab Bar */}
-                <div className="hidden md:flex items-center gap-2 py-1.5">
+                <span className="hidden sm:inline-flex items-center gap-1 text-xs text-slate-500">
                   {canEditSelectedLead ? (
-                    <span className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-bold inline-flex items-center gap-1.5">
-                      <Pencil className="w-3.5 h-3.5 text-emerald-700" />
-                      <span>Quyền sửa trực tiếp ({user?.roleName})</span>
-                    </span>
+                    <>
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      <span>Cho phép sửa trực tiếp</span>
+                    </>
                   ) : (
-                    <span className="px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-300 text-slate-700 text-xs font-semibold inline-flex items-center gap-1.5">
-                      <ShieldAlert className="w-3.5 h-3.5 text-slate-500" />
-                      <span>Chỉ xem theo phân quyền ({user?.roleName})</span>
-                    </span>
+                    <span>Chế độ chỉ xem ({user?.roleName})</span>
                   )}
-                </div>
+                </span>
               </div>
 
-              {/* Scrollable Tab Body */}
-              <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 bg-slate-50/40">
-                {/* TAB 1: THÔNG TIN & CHỈNH SỬA TRỰC TIẾP THEO PHÂN QUYỀN */}
+              {/* Nội dung cuộn */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3.5 bg-slate-50/40">
+                {/* TAB 1: THÔNG TIN CHUNG (GỌN, RÕ RÀNG, KHÔNG RỐI) */}
                 {leadDetailTab === 'info' && (
-                  <div className="space-y-4 text-sm">
-                    {/* Clear RBAC Banner */}
-                    {canEditSelectedLead ? (
-                      <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 text-emerald-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                        <div className="flex items-center gap-2">
-                          <Pencil className="w-4 h-4 text-emerald-700 shrink-0" />
-                          <span>
-                            <strong>Chế độ Xem &amp; Chỉnh sửa Trực tiếp ({user?.roleName}):</strong> Bạn có thể cập nhật ngay thông tin khách hàng, dự án, khu vực, sản phẩm, đặt <strong>Lịch hẹn liên hệ lại / Kế hoạch theo dõi dự án</strong> và bấm <strong>Lưu cập nhật Hồ sơ Lead</strong> bên dưới.
-                          </span>
-                        </div>
-                        {!selectedLead.receivedConfirmedAt && (
-                          <button
-                            type="button"
-                            disabled={submitting}
-                            onClick={() => void handleConfirmReceive(selectedLead)}
-                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold shrink-0 inline-flex items-center gap-1 shadow-2xs"
-                          >
-                            <UserCheck className="w-3.5 h-3.5" />
-                            <span>Xác nhận tiếp nhận Lead</span>
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 flex items-center gap-2 text-xs">
-                        <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
-                        <span>
-                          <strong>Chế độ Chỉ xem theo Phân quyền ({user?.roleName}):</strong> Chỉ Nhân viên Kinh doanh phụ trách trực tiếp hồ sơ này ({selectedLead.assignedSalesName || 'Chưa phân bổ'}), Trưởng nhóm Kinh doanh hoặc Quản trị viên mới được phép chỉnh sửa thông tin Lead.
-                        </span>
-                      </div>
-                    )}
-
-                    {/* Quick Inline Pipeline Status Bar right inside Tab 1 for Authorized Users */}
+                  <div className="space-y-3.5 text-sm">
+                    {/* 1. Thanh chuyển nhanh trạng thái trên 1 dòng duy nhất */}
                     {canEditSelectedLead && (
-                      <div className="p-3.5 rounded-xl bg-white border border-slate-200/90 border-l-2 border-l-[#1E3A8A] shadow-2xs flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                        <div>
-                          <span className="text-xs font-bold uppercase tracking-wider text-[#1E3A8A] block">
-                            Chuyển nhanh Trạng thái Pipeline
-                          </span>
-                          <span className="text-xs text-slate-500">
-                            Đổi trạng thái ngay tại đây (Hiện tại:{' '}
-                            <strong className="text-slate-800">{PIPELINE_STATUS_LABELS[selectedLead.pipelineStatus]}</strong>)
-                          </span>
-                        </div>
+                      <div className="px-3.5 py-2.5 rounded-xl bg-white border border-slate-200/90 flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-slate-600">
+                          Trạng thái hồ sơ:
+                        </span>
                         <div className="flex flex-wrap items-center gap-1.5">
                           {PIPELINE_STATUSES.map((st) => {
                             const isCurrent = selectedLead.pipelineStatus === st;
@@ -2673,7 +2535,7 @@ export function LeadsWorkspace() {
                                         },
                                       });
                                       setFeedbackMsg(
-                                        `Đã cập nhật nhanh trạng thái ${selectedLead.leadCode} sang "${PIPELINE_STATUS_LABELS[st]}".`,
+                                        `Đã cập nhật trạng thái ${selectedLead.leadCode} sang "${PIPELINE_STATUS_LABELS[st]}".`,
                                       );
                                       await fetchLeads();
                                     } catch (err) {
@@ -2687,10 +2549,10 @@ export function LeadsWorkspace() {
                                     }
                                   })();
                                 }}
-                                className={`px-3 py-1.5 rounded-lg border text-xs transition ${
+                                className={`px-2.5 py-1 rounded-lg border text-xs transition whitespace-nowrap ${
                                   isCurrent
-                                    ? `${STATUS_BADGE_STYLES[st]} ring-1 ring-blue-500/40`
-                                    : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200 font-medium'
+                                    ? `${STATUS_BADGE_STYLES[st]} ring-1 ring-blue-500/30`
+                                    : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200 font-medium'
                                 }`}
                               >
                                 {PIPELINE_STATUS_LABELS[st]}
@@ -2701,483 +2563,401 @@ export function LeadsWorkspace() {
                       </div>
                     )}
 
-                    {/* DIRECT INLINE EDIT FORM (for Authorized Users) OR READ-ONLY CARDS */}
                     {canEditSelectedLead ? (
-                      <form onSubmit={(e) => void handleUpdateLeadInfo(e)} className="space-y-4">
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                          {/* Left 7 cols: Editable Customer, Project & Location */}
-                          <div className="lg:col-span-7 p-4 rounded-xl border border-slate-200/90 bg-white shadow-2xs space-y-3.5">
-                            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                              <span className="font-bold text-slate-900 text-base flex items-center gap-2">
-                                <Pencil className="w-4 h-4 text-[#1E3A8A]" />
-                                <span>Thông tin Khách hàng &amp; Dự án (Sửa trực tiếp)</span>
-                              </span>
-                              <span className="font-mono text-xs text-slate-500">
-                                Phiên bản v{selectedLead.version}
-                              </span>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                              <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">
-                                  Số điện thoại khách hàng *
-                                </label>
-                                <input
-                                  type="text"
-                                  required
-                                  value={editPhone}
-                                  onChange={(e) => setEditPhone(e.target.value)}
-                                  className="w-full h-9 px-3 rounded-lg border border-slate-300 font-mono font-bold text-[#1E3A8A] focus:outline-none focus:border-[#1E3A8A]"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">
-                                  Người liên hệ
-                                </label>
-                                <input
-                                  type="text"
-                                  value={editContactName}
-                                  onChange={(e) => setEditContactName(e.target.value)}
-                                  placeholder="Họ tên người liên hệ..."
-                                  className="w-full h-9 px-3 rounded-lg border border-slate-300 font-semibold text-slate-900 focus:outline-none focus:border-[#1E3A8A]"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">
-                                  Đơn vị / Công ty / Chủ đầu tư
-                                </label>
-                                <input
-                                  type="text"
-                                  value={editCompanyName}
-                                  onChange={(e) => setEditCompanyName(e.target.value)}
-                                  placeholder="Tên công ty / đơn vị..."
-                                  className="w-full h-9 px-3 rounded-lg border border-slate-300 font-semibold text-slate-900 focus:outline-none focus:border-[#1E3A8A]"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">
-                                  Tên dự án / Công trình lắp đặt
-                                </label>
-                                <input
-                                  type="text"
-                                  value={editProjectName}
-                                  onChange={(e) => setEditProjectName(e.target.value)}
-                                  placeholder="VD: Màn hình LED Hội trường 300 chỗ..."
-                                  className="w-full h-9 px-3 rounded-lg border border-slate-300 font-semibold text-[#1E3A8A] focus:outline-none focus:border-[#1E3A8A]"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">
-                                  Email nhận báo giá
-                                </label>
-                                <input
-                                  type="email"
-                                  value={editEmail}
-                                  onChange={(e) => setEditEmail(e.target.value)}
-                                  placeholder="email@congty.vn"
-                                  className="w-full h-9 px-3 rounded-lg border border-slate-300 text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">
-                                  Nguồn khách tự khai
-                                </label>
-                                <input
-                                  type="text"
-                                  value={editSelfSource}
-                                  onChange={(e) => setEditSelfSource(e.target.value)}
-                                  placeholder="VD: Tìm Google, đối tác giới thiệu..."
-                                  className="w-full h-9 px-3 rounded-lg border border-slate-300 text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-slate-100">
-                              <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">
-                                  Vùng địa lý công trình
-                                </label>
-                                <select
-                                  value={editAreaType}
-                                  onChange={(e) =>
-                                    setEditAreaType(e.target.value as 'hcm' | 'other_province')
-                                  }
-                                  className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-white font-semibold"
-                                >
-                                  <option value="hcm">Nội thành TP. Hồ Chí Minh</option>
-                                  <option value="other_province">Tỉnh / Thành phố khác</option>
-                                </select>
-                              </div>
-                              <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">
-                                  {editAreaType === 'hcm' ? 'Quận / Huyện TP.HCM' : 'Tỉnh / Thành phố'}
-                                </label>
-                                {editAreaType === 'hcm' ? (
-                                  <select
-                                    value={editDistrict}
-                                    onChange={(e) => setEditDistrict(e.target.value)}
-                                    className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-white font-semibold"
-                                  >
-                                    {HCM_DISTRICTS.map((d) => (
-                                      <option key={d} value={d}>
-                                        {d}
-                                      </option>
-                                    ))}
-                                  </select>
-                                ) : (
-                                  <select
-                                    value={editProvince}
-                                    onChange={(e) => setEditProvince(e.target.value)}
-                                    className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-white font-semibold"
-                                  >
-                                    {VIETNAM_PROVINCES.map((p) => (
-                                      <option key={p} value={p}>
-                                        {p}
-                                      </option>
-                                    ))}
-                                  </select>
-                                )}
-                              </div>
-                              <div className="sm:col-span-2">
-                                <label className="block text-xs font-bold text-slate-700 mb-1">
-                                  Địa chỉ khảo sát / lắp đặt chi tiết
-                                </label>
-                                <input
-                                  type="text"
-                                  value={editAddress}
-                                  onChange={(e) => setEditAddress(e.target.value)}
-                                  placeholder="Số nhà, đường, KCN, tòa nhà khảo sát..."
-                                  className="w-full h-9 px-3 rounded-lg border border-slate-300 text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
-                                />
-                              </div>
-                            </div>
+                      <form onSubmit={(e) => void handleUpdateLeadInfo(e)} className="space-y-3.5">
+                        {/* 2. Khối Thông tin Khách hàng & Công trình (Lưới 3 cột gọn gàng) */}
+                        <div className="p-4 rounded-xl border border-slate-200/90 bg-white space-y-3">
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                            <span className="font-bold text-slate-900 text-sm">
+                              1. Thông tin Khách hàng &amp; Địa điểm Công trình
+                            </span>
+                            <span className="text-[11px] text-slate-400">
+                              Phiên bản v{selectedLead.version}
+                            </span>
                           </div>
 
-                          {/* Right 5 cols: Project Follow-Up Plan + Next Contact Date & Attribution */}
-                          <div className="lg:col-span-5 space-y-4">
-                            {/* B2B Follow-Up & Next Contact Date Card */}
-                            <div className="p-4 rounded-xl border border-slate-200/90 bg-white shadow-2xs space-y-3">
-                              <div className="flex items-center justify-between">
-                                <span className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
-                                  <Clock className="w-4 h-4 text-[#1E3A8A]" />
-                                  <span>Kế hoạch Theo dõi &amp; Lịch hẹn Liên hệ</span>
-                                </span>
-                                <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-blue-50 text-[#1E3A8A] border border-blue-200/70">
-                                  Dự án B2B
-                                </span>
-                              </div>
-                              <p className="text-xs text-slate-500 leading-relaxed">
-                                Với các dự án khách hàng cần 1–2 tháng hoặc sang quý/năm sau mới triển khai, chọn mốc lịch hẹn và giai đoạn theo dõi để quản lý chủ động:
-                              </p>
-
-                              {/* Quick Schedule Follow-Up Date Picker */}
-                              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/80 space-y-2">
-                                <div className="flex items-center justify-between gap-2">
-                                  <label className="text-xs font-semibold text-slate-700">
-                                    Ngày hẹn liên hệ tiếp theo:
-                                  </label>
-                                  <input
-                                    type="date"
-                                    value={editFollowUpDate}
-                                    onChange={(e) => setEditFollowUpDate(e.target.value)}
-                                    className="h-8 px-2.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-900"
-                                  />
-                                </div>
-                                <div className="flex flex-wrap gap-1">
-                                  {[
-                                    { label: '+7 ngày', days: 7, horizon: 'remind_7_14d' as const },
-                                    { label: '+15 ngày', days: 15, horizon: 'remind_7_14d' as const },
-                                    { label: '+1 tháng', days: 30, horizon: 'monthly_15_45d' as const },
-                                    { label: '+2 tháng', days: 60, horizon: 'monthly_15_45d' as const },
-                                    { label: '+Quý tới', days: 90, horizon: 'longterm_next_year' as const },
-                                  ].map((presetItem) => (
-                                    <button
-                                      key={presetItem.label}
-                                      type="button"
-                                      onClick={() => {
-                                        const dt = new Date(Date.now() + presetItem.days * 86400000);
-                                        setEditFollowUpDate(dt.toISOString().slice(0, 10));
-                                        setEditB2bHorizon(presetItem.horizon);
-                                      }}
-                                      className="px-2 py-1 rounded-md bg-white hover:bg-blue-50 border border-slate-200 hover:border-blue-300 text-[11px] font-semibold text-slate-700 hover:text-[#1E3A8A] transition"
-                                    >
-                                      {presetItem.label}
-                                    </button>
-                                  ))}
-                                  {editFollowUpDate && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setEditFollowUpDate('')}
-                                      className="px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-[11px] text-slate-600"
-                                    >
-                                      Xóa lịch
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-
-                              <div className="space-y-1.5">
-                                {B2B_HORIZON_OPTIONS.map((opt) => (
-                                  <label
-                                    key={opt.key}
-                                    className={`flex items-start gap-2 p-2 rounded-lg border cursor-pointer text-xs transition ${
-                                      editB2bHorizon === opt.key
-                                        ? `${opt.badgeClass} font-semibold`
-                                        : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100'
-                                    }`}
-                                  >
-                                    <input
-                                      type="radio"
-                                      name="editB2bHorizon"
-                                      checked={editB2bHorizon === opt.key}
-                                      onChange={() => setEditB2bHorizon(opt.key)}
-                                      className="mt-0.5"
-                                    />
-                                    <span>{opt.label}</span>
-                                  </label>
-                                ))}
-                              </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1">
+                                Số điện thoại *
+                              </label>
+                              <input
+                                type="text"
+                                required
+                                value={editPhone}
+                                onChange={(e) => setEditPhone(e.target.value)}
+                                className="w-full h-9 px-3 rounded-lg border border-slate-200 font-mono font-semibold text-[#1E3A8A] focus:outline-none focus:border-[#1E3A8A]"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1">
+                                Người liên hệ
+                              </label>
+                              <input
+                                type="text"
+                                value={editContactName}
+                                onChange={(e) => setEditContactName(e.target.value)}
+                                placeholder="Họ tên khách hàng..."
+                                className="w-full h-9 px-3 rounded-lg border border-slate-200 font-medium text-slate-900 focus:outline-none focus:border-[#1E3A8A]"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1">
+                                Email nhận báo giá
+                              </label>
+                              <input
+                                type="email"
+                                value={editEmail}
+                                onChange={(e) => setEditEmail(e.target.value)}
+                                placeholder="email@congty.vn"
+                                className="w-full h-9 px-3 rounded-lg border border-slate-200 text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
+                              />
                             </div>
 
-                            {/* Attribution Read-only Card */}
-                            <div className="p-4 rounded-xl border border-slate-200/90 bg-white shadow-2xs space-y-2 text-xs">
-                              <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
-                                <span className="font-bold text-slate-900 text-sm">
-                                  Nguồn Marketing &amp; Chiến dịch
-                                </span>
-                                <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700 font-semibold">
-                                  {CONTACT_CHANNEL_LABELS[selectedLead.contactChannel]}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span className="text-slate-500">Nguồn Marketing:</span>
-                                <strong className="text-[#1E3A8A]">
-                                  {selectedLead.tracking?.marketingSource || 'Trực tiếp'}
-                                </strong>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span className="text-slate-500">Phương thức gắn nguồn:</span>
-                                <code className="font-mono bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                                  {selectedLead.tracking?.attributionMethod || 'NONE'}
-                                </code>
-                              </div>
-                              {selectedLead.tracking?.campaignName && (
-                                <div className="flex items-center justify-between">
-                                  <span className="text-slate-500">Chiến dịch Ads:</span>
-                                  <span className="font-semibold text-slate-900">
-                                    {selectedLead.tracking.campaignName}
-                                  </span>
-                                </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1">
+                                Đơn vị / Công ty
+                              </label>
+                              <input
+                                type="text"
+                                value={editCompanyName}
+                                onChange={(e) => setEditCompanyName(e.target.value)}
+                                placeholder="Tên doanh nghiệp / đơn vị..."
+                                className="w-full h-9 px-3 rounded-lg border border-slate-200 font-medium text-slate-900 focus:outline-none focus:border-[#1E3A8A]"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1">
+                                Tên dự án / Công trình
+                              </label>
+                              <input
+                                type="text"
+                                value={editProjectName}
+                                onChange={(e) => setEditProjectName(e.target.value)}
+                                placeholder="VD: Màn hình LED Hội trường..."
+                                className="w-full h-9 px-3 rounded-lg border border-slate-200 font-medium text-slate-900 focus:outline-none focus:border-[#1E3A8A]"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1">
+                                Nguồn khách tự khai
+                              </label>
+                              <input
+                                type="text"
+                                value={editSelfSource}
+                                onChange={(e) => setEditSelfSource(e.target.value)}
+                                placeholder="VD: Tìm Google, giới thiệu..."
+                                className="w-full h-9 px-3 rounded-lg border border-slate-200 text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1">
+                                Khu vực công trình
+                              </label>
+                              <select
+                                value={editAreaType}
+                                onChange={(e) =>
+                                  setEditAreaType(e.target.value as 'hcm' | 'other_province')
+                                }
+                                className="w-full h-9 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-800"
+                              >
+                                <option value="hcm">Nội thành TP. Hồ Chí Minh</option>
+                                <option value="other_province">Tỉnh / Thành phố khác</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1">
+                                {editAreaType === 'hcm' ? 'Quận / Huyện TP.HCM' : 'Tỉnh / Thành phố'}
+                              </label>
+                              {editAreaType === 'hcm' ? (
+                                <select
+                                  value={editDistrict}
+                                  onChange={(e) => setEditDistrict(e.target.value)}
+                                  className="w-full h-9 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-800"
+                                >
+                                  {HCM_DISTRICTS.map((d) => (
+                                    <option key={d} value={d}>
+                                      {d}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <select
+                                  value={editProvince}
+                                  onChange={(e) => setEditProvince(e.target.value)}
+                                  className="w-full h-9 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-800"
+                                >
+                                  {VIETNAM_PROVINCES.map((p) => (
+                                    <option key={p} value={p}>
+                                      {p}
+                                    </option>
+                                  ))}
+                                </select>
                               )}
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1">
+                                Địa chỉ lắp đặt chi tiết
+                              </label>
+                              <input
+                                type="text"
+                                value={editAddress}
+                                onChange={(e) => setEditAddress(e.target.value)}
+                                placeholder="Số nhà, đường, KCN..."
+                                className="w-full h-9 px-3 rounded-lg border border-slate-200 text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
+                              />
                             </div>
                           </div>
                         </div>
 
-                        {/* Products Selection & Technical Note */}
-                        <div className="p-4 rounded-xl border border-slate-200/90 bg-white shadow-2xs space-y-3">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-slate-900 text-sm">
-                              Sản phẩm Màn hình LED / Bảng điện tử quan tâm ({editProductIds.length} đã chọn)
-                            </span>
-                            <span className="text-xs text-slate-500">
-                              Bấm vào sản phẩm để chọn / bỏ chọn
-                            </span>
+                        {/* 2. Khối Sản phẩm Màn hình LED / Bảng điện tử quan tâm (Chia nhóm rõ ràng, không cắt chữ) */}
+                        <div className="p-4 rounded-xl border border-slate-200/90 bg-white space-y-3.5">
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                            <div className="flex items-center gap-2">
+                              <Layers className="w-4 h-4 text-[#1E3A8A]" />
+                              <span className="font-bold text-slate-900 text-sm">
+                                2. Sản phẩm Màn hình LED / Bảng điện tử quan tâm
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-[#1E3A8A] text-xs font-bold">
+                                Đã chọn {editProductIds.length}
+                              </span>
+                            </div>
+
+                            {/* Hiển thị nhanh các sản phẩm đang được chọn */}
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {products
+                                .filter((p) => editProductIds.includes(p.id))
+                                .map((sel) => (
+                                  <span
+                                    key={sel.id}
+                                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-[#1E3A8A] text-white text-xs font-medium"
+                                  >
+                                    <span>{sel.productName}</span>
+                                    {editProductIds.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setEditProductIds((prev) =>
+                                            prev.filter((id) => id !== sel.id),
+                                          )
+                                        }
+                                        className="hover:text-rose-200 ml-0.5"
+                                        title="Bỏ chọn sản phẩm này"
+                                      >
+                                        ×
+                                      </button>
+                                    )}
+                                  </span>
+                                ))}
+                            </div>
                           </div>
-                          <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1">
-                            {products.map((p) => {
-                              const checked = editProductIds.includes(p.id);
+
+                          {/* Chia 3 nhóm sản phẩm rõ ràng, không dùng thanh cuộn hẹp làm mất chữ */}
+                          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                            {(
+                              [
+                                {
+                                  category: 'MAN_HINH_LED' as const,
+                                  title: 'Màn hình LED (Indoor / Outdoor)',
+                                  dot: 'bg-blue-600',
+                                  activeCls:
+                                    'bg-blue-50 text-[#1E3A8A] border-blue-300 font-semibold shadow-2xs',
+                                },
+                                {
+                                  category: 'BANG_DIEN_TU' as const,
+                                  title: 'Bảng điện tử & Hiển thị số',
+                                  dot: 'bg-emerald-600',
+                                  activeCls:
+                                    'bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold shadow-2xs',
+                                },
+                                {
+                                  category: 'KHAC' as const,
+                                  title: 'Dịch vụ / Nhu cầu khác',
+                                  dot: 'bg-amber-500',
+                                  activeCls:
+                                    'bg-amber-50 text-amber-900 border-amber-300 font-semibold shadow-2xs',
+                                },
+                              ]
+                            ).map((grp) => {
+                              const grpProducts = products.filter(
+                                (p) => p.category === grp.category,
+                              );
                               return (
-                                <button
-                                  key={p.id}
-                                  type="button"
-                                  onClick={() => {
-                                    setEditProductIds((prev) =>
-                                      prev.includes(p.id)
-                                        ? prev.length > 1
-                                          ? prev.filter((id) => id !== p.id)
-                                          : prev
-                                        : [...prev, p.id],
-                                    );
-                                  }}
-                                  className={`px-2.5 py-1 rounded-lg border text-xs font-semibold transition ${
-                                    checked
-                                      ? 'bg-[#1E3A8A] text-white border-[#1E3A8A] shadow-2xs'
-                                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                                  }`}
+                                <div
+                                  key={grp.category}
+                                  className="p-3 rounded-xl bg-slate-50/70 border border-slate-200/80 space-y-2"
                                 >
-                                  {checked ? '✓ ' : '+ '}
-                                  {p.productName}
-                                </button>
+                                  <div className="flex items-center justify-between">
+                                    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                                      <span className={`w-2 h-2 rounded-full ${grp.dot}`} />
+                                      <span>{grp.title}</span>
+                                    </span>
+                                    <span className="text-[11px] text-slate-400">
+                                      {grpProducts.length} mục
+                                    </span>
+                                  </div>
+
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {grpProducts.map((p) => {
+                                      const checked = editProductIds.includes(p.id);
+                                      return (
+                                        <button
+                                          key={p.id}
+                                          type="button"
+                                          onClick={() => {
+                                            setEditProductIds((prev) =>
+                                              prev.includes(p.id)
+                                                ? prev.length > 1
+                                                  ? prev.filter((id) => id !== p.id)
+                                                  : prev
+                                                : [...prev, p.id],
+                                            );
+                                          }}
+                                          className={`px-2.5 py-1 rounded-lg border text-xs transition ${
+                                            checked
+                                              ? grp.activeCls
+                                              : 'bg-white text-slate-600 border-slate-200/90 hover:border-slate-300 hover:text-slate-900'
+                                          }`}
+                                        >
+                                          {checked ? '✓ ' : '+ '}
+                                          {p.productName}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
                               );
                             })}
                           </div>
 
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
                             <div>
-                              <label className="block text-xs font-bold text-slate-700 mb-1">
-                                Ghi chú kích thước / cấu hình kỹ thuật &amp; Hẹn chăm sóc B2B
+                              <label className="block text-xs font-medium text-slate-600 mb-1">
+                                Ghi chú kích thước / cấu hình kỹ thuật
                               </label>
                               <input
                                 type="text"
                                 value={editCustomProductNote}
                                 onChange={(e) => setEditCustomProductNote(e.target.value)}
-                                placeholder="VD: Kích thước 4m x 2.5m, khách hẹn đầu quý sau duyệt ngân sách..."
-                                className="w-full h-9 px-3 rounded-lg border border-slate-300 text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
+                                placeholder="VD: Kích thước 4m x 2.5m, lắp hội trường..."
+                                className="w-full h-9 px-3 rounded-lg border border-slate-200 text-slate-800 text-xs focus:outline-none focus:border-[#1E3A8A]"
                               />
                             </div>
                             <div>
-                              <label className="block text-xs font-bold text-slate-700 mb-1">
-                                Ghi chú nhật ký cập nhật lần này
+                              <label className="block text-xs font-medium text-slate-600 mb-1">
+                                Ghi chú cập nhật lần này
                               </label>
                               <input
                                 type="text"
                                 value={editUpdateNote}
                                 onChange={(e) => setEditUpdateNote(e.target.value)}
-                                placeholder="VD: Đã gọi lại xác nhận tên dự án & hẹn gửi lại phương án..."
-                                className="w-full h-9 px-3 rounded-lg border border-slate-300 text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
+                                placeholder="VD: Đã gửi phương án sơ bộ qua Zalo..."
+                                className="w-full h-9 px-3 rounded-lg border border-slate-200 text-slate-800 text-xs focus:outline-none focus:border-[#1E3A8A]"
                               />
                             </div>
                           </div>
+                        </div>
 
-                          <div className="pt-2 flex items-center justify-end gap-2.5">
-                            <button
-                              type="submit"
-                              disabled={submitting}
-                              className="h-10 px-5 rounded-xl bg-[#1E3A8A] hover:bg-[#1E40AF] text-white font-bold inline-flex items-center gap-2 shadow-sm transition"
-                            >
-                              <Pencil className="w-4 h-4" />
-                              <span>
-                                {submitting
-                                  ? 'Đang lưu cập nhật...'
-                                  : 'Lưu cập nhật Hồ sơ Lead'}
-                              </span>
-                            </button>
-                          </div>
+                        {/* Thanh Lưu cố định gọn gàng */}
+                        <div className="flex items-center justify-end gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedLeadId(null)}
+                            className="h-9 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-xs font-semibold transition"
+                          >
+                            Đóng
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={submitting}
+                            className="h-9 px-5 rounded-xl bg-[#1E3A8A] hover:bg-blue-800 text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs transition"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                            <span>
+                              {submitting ? 'Đang lưu...' : 'Lưu cập nhật'}
+                            </span>
+                          </button>
                         </div>
                       </form>
                     ) : (
-                      /* Read-Only View for BOD / Marketing / Ads / Designer / Unassigned Sales */
-                      <>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="p-4 rounded-xl border border-slate-200 border-t-4 border-t-[#1E3A8A] bg-white space-y-3">
-                            <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
-                              <span className="font-bold text-slate-900 text-base">
-                                Hồ sơ khách hàng
-                              </span>
-                              <span className="font-mono text-slate-500 text-xs">
-                                {new Date(selectedLead.contactedAt).toLocaleString('vi-VN')}
-                              </span>
-                            </div>
-                            <div className="space-y-2 text-slate-700">
-                              <div className="flex items-center justify-between">
-                                <span className="text-slate-500">Số điện thoại:</span>
-                                <span className="font-mono font-bold text-[#1E3A8A] text-sm">
-                                  {selectedLead.phone}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span className="text-slate-500">Người liên hệ:</span>
-                                <span className="font-semibold text-slate-900">
-                                  {selectedLead.contactName || 'Chưa cập nhật'}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span className="text-slate-500">Đơn vị / Công ty:</span>
-                                <span className="font-semibold text-slate-900">
-                                  {selectedLead.companyName || 'Chưa cập nhật'}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span className="text-slate-500">Tên dự án:</span>
-                                <span className="font-semibold text-[#1E3A8A]">
-                                  {selectedLead.projectName || 'Chưa có'}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span className="text-slate-500">Khu vực lắp đặt:</span>
-                                <span className="font-semibold">
-                                  {selectedLead.areaType === 'hcm'
-                                    ? `TP.HCM · ${selectedLead.hcmDistrict || ''}`
-                                    : selectedLead.province || 'Chưa chọn tỉnh'}
-                                </span>
-                              </div>
-                              {selectedLead.installationAddress && (
-                                <div className="pt-1 border-t border-slate-200/60">
-                                  <span className="text-slate-500 block mb-0.5">
-                                    Địa chỉ chi tiết:
-                                  </span>
-                                  <span className="text-slate-800 font-medium">
-                                    {selectedLead.installationAddress}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
+                      /* Chế độ Chỉ xem gọn gàng */
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                        <div className="p-4 rounded-xl border border-slate-200 bg-white space-y-2.5">
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                            <span className="font-bold text-slate-900 text-sm">
+                              Hồ sơ khách hàng
+                            </span>
+                            <span className="font-mono text-slate-400 text-xs">
+                              {new Date(selectedLead.contactedAt).toLocaleDateString('vi-VN')}
+                            </span>
                           </div>
-
-                          <div className="p-4 rounded-xl border border-slate-200 border-t-4 border-t-teal-600 bg-white space-y-3">
-                            <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
-                              <span className="font-bold text-slate-900 text-base">
-                                Nguồn Marketing &amp; Chu kỳ B2B
-                              </span>
-                              <span className="px-2.5 py-0.5 rounded bg-blue-100 text-blue-800 text-xs font-bold">
-                                {CONTACT_CHANNEL_LABELS[selectedLead.contactChannel]}
+                          <div className="space-y-1.5 text-xs text-slate-700">
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-500">Số điện thoại:</span>
+                              <span className="font-mono font-bold text-[#1E3A8A]">
+                                {selectedLead.phone}
                               </span>
                             </div>
-                            <div className="space-y-2 text-slate-700">
-                              <div className="flex items-center justify-between">
-                                <span className="text-slate-500">Nguồn Marketing:</span>
-                                <strong className="text-[#1E3A8A]">
-                                  {selectedLead.tracking?.marketingSource || 'Trực tiếp'}
-                                </strong>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span className="text-slate-500">Phương thức gắn nguồn:</span>
-                                <code className="font-mono bg-slate-50 px-2 py-0.5 rounded border border-slate-200 text-xs">
-                                  {selectedLead.tracking?.attributionMethod || 'NONE'}
-                                </code>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span className="text-slate-500">Nguồn khách tự khai:</span>
-                                <span className="font-semibold text-slate-800">
-                                  {selectedLead.selfReportedSource || 'Chưa ghi nhận'}
-                                </span>
-                              </div>
-                              {selectedHorizon.key !== 'none' && (
-                                <div className="flex items-center justify-between pt-1 border-t border-slate-100">
-                                  <span className="text-slate-500">Chu kỳ theo dõi B2B:</span>
-                                  <span
-                                    className={`px-2 py-0.5 rounded border text-xs font-bold ${selectedHorizon.badgeClass}`}
-                                  >
-                                    {selectedHorizon.shortLabel}
-                                  </span>
-                                </div>
-                              )}
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-500">Người liên hệ:</span>
+                              <span className="font-semibold text-slate-900">
+                                {selectedLead.contactName || 'Chưa cập nhật'}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-500">Đơn vị / Công ty:</span>
+                              <span className="font-semibold text-slate-900">
+                                {selectedLead.companyName || 'Chưa cập nhật'}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-500">Tên dự án:</span>
+                              <span className="font-semibold text-[#1E3A8A]">
+                                {selectedLead.projectName || 'Chưa có'}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-500">Khu vực:</span>
+                              <span className="font-semibold">
+                                {selectedLead.areaType === 'hcm'
+                                  ? `TP.HCM · ${selectedLead.hcmDistrict || ''}`
+                                  : selectedLead.province || 'Chưa chọn tỉnh'}
+                              </span>
                             </div>
                           </div>
                         </div>
 
-                        <div className="p-4 rounded-xl border border-slate-200 border-t-4 border-t-amber-500 bg-white space-y-2">
-                          <span className="font-bold text-slate-900 text-base">
-                            Sản phẩm &amp; Phương án quan tâm ({selectedLead.products.length})
-                          </span>
-                          <div className="flex flex-wrap gap-2 pt-1">
+                        <div className="p-4 rounded-xl border border-slate-200 bg-white space-y-2.5">
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                            <span className="font-bold text-slate-900 text-sm">
+                              Sản phẩm &amp; Theo dõi
+                            </span>
+                            {selectedHorizon.key !== 'none' && (
+                              <span
+                                className={`px-2 py-0.5 rounded border text-[11px] font-semibold ${selectedHorizon.badgeClass}`}
+                              >
+                                {selectedHorizon.shortLabel}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
                             {selectedLead.products.map((p) => (
                               <span
                                 key={p.id}
-                                className="px-3 py-1 rounded-lg bg-blue-50 border border-blue-200 text-[#1E3A8A] font-semibold text-sm"
+                                className="px-2.5 py-1 rounded-md bg-blue-50 border border-blue-200/80 text-[#1E3A8A] font-medium text-xs"
                               >
                                 {p.productName}
                               </span>
                             ))}
                           </div>
                           {selectedLead.customProductNote && (
-                            <p className="text-slate-700 mt-2 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                              <strong>Ghi chú kỹ thuật &amp; chăm sóc:</strong>{' '}
+                            <p className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200/80">
                               {selectedLead.customProductNote}
                             </p>
                           )}
                         </div>
-                      </>
+                      </div>
                     )}
                   </div>
                 )}
