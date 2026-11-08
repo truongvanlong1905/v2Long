@@ -345,17 +345,6 @@ export function SeoKeywordsWorkspace() {
         </div>
       </div>
 
-      {/* Role Notice when logged in as ADS */}
-      {isAdsReadOnly && (
-        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-sm text-amber-900 flex items-start gap-3">
-          <Lock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <div>
-            <strong>Phân quyền Chuyên viên Quảng cáo (Ads):</strong> Tài khoản{' '}
-            <strong>{user?.fullName}</strong> (Vai trò: {user?.roleName}) được tra cứu số liệu chiến dịch, bảng từ khóa và xu hướng tìm kiếm để phối hợp cùng Marketing. Các chức năng &ldquo;Tạo bài viết AI&rdquo;, &ldquo;Sửa bài&rdquo;, &ldquo;Duyệt bài&rdquo;, &ldquo;Lên lịch&rdquo; và &ldquo;Xem hiệu quả bài viết&rdquo; dành cho Nhân viên / Trưởng phòng Marketing.
-          </div>
-        </div>
-      )}
-
       {errorMsg && (
         <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700 flex items-center justify-between">
           <span>{errorMsg}</span>
@@ -637,7 +626,11 @@ export function SeoKeywordsWorkspace() {
             }`}
           >
             <Sparkles className="w-4 h-4" />
-            <span>Từ khóa & Soạn thảo SEO bằng AI ({articles.length} bài)</span>
+            <span>
+              {isAdsReadOnly
+                ? 'Bảng Phân tích Từ khóa & Xu hướng'
+                : `Từ khóa & Soạn thảo SEO bằng AI (${articles.length} bài)`}
+            </span>
           </button>
         </div>
 

@@ -23,6 +23,7 @@ import {
   Users,
 } from 'lucide-react';
 import { formatMoney } from '@/core/format/money';
+import { apiRequest, peekApiCache } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
 import { ReportDocComposer } from './ReportDocComposer';
 
@@ -38,30 +39,37 @@ export function ReportsWorkspace() {
   const [preset, setPreset] = useState<ReportPreset>('all');
   const [fromDate, setFromDate] = useState('2026-10-01');
   const [toDate, setToDate] = useState('2026-11-06');
-  const [data, setData] = useState<ReportsDashboardDto | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<ReportsDashboardDto | null>(() =>
+    peekApiCache<ReportsDashboardDto>('/api/v1/reports?preset=all')
+  );
+  const [loading, setLoading] = useState(
+    () => !peekApiCache<ReportsDashboardDto>('/api/v1/reports?preset=all')
+  );
   const [error, setError] = useState<string | null>(null);
   const [reportViewMode, setReportViewMode] = useState<'dashboard' | 'doc_composer'>('dashboard');
 
   const canExport = Boolean(user && hasBaPermission(user.roleCode, 'EXPORT_DATA'));
 
-  const loadReports = useCallback(async () => {
-    setLoading(true);
+  const loadReports = useCallback(async (manual = false) => {
+    const params = new URLSearchParams({ preset });
+    if (preset === 'custom') {
+      params.set('fromDate', fromDate);
+      params.set('toDate', toDate);
+    }
+    const url = `/api/v1/reports?${params.toString()}`;
+    const cached = !manual ? peekApiCache<ReportsDashboardDto>(url) : null;
+    if (cached) {
+      setData(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError(null);
     try {
-      const params = new URLSearchParams({ preset });
-      if (preset === 'custom') {
-        params.set('fromDate', fromDate);
-        params.set('toDate', toDate);
-      }
-      const res = await fetch(`/api/v1/reports?${params.toString()}`, {
-        cache: 'no-store',
+      const resData = await apiRequest<ReportsDashboardDto>(url, {
+        skipCache: manual,
       });
-      const json = await res.json();
-      if (!res.ok || json.error || !json.data) {
-        throw new Error(json.error?.message || 'Không thể tải báo cáo phân quyền.');
-      }
-      setData(json.data);
+      setData(resData);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Lỗi tải báo cáo');
     } finally {
@@ -390,180 +398,190 @@ export function ReportsWorkspace() {
           </div>
 
           {/* Unanswered Quotes > 7 days Alert Table */}
-          <section className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-card">
-            <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="font-display text-base font-bold text-ink flex items-center gap-2">
-                  <span>Danh sách báo giá đã gửi đang chờ khách hàng phản hồi</span>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold whitespace-nowrap">
-                    Cảnh báo khi &ge; 7 ngày
+          {user && ['ADMIN', 'BOD', 'SALES_LEAD', 'SALES'].includes(user.roleCode) && (
+            <section className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-card">
+              <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-display text-base font-bold text-ink flex items-center gap-2">
+                    <span>Danh sách báo giá đã gửi đang chờ khách hàng phản hồi</span>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold whitespace-nowrap">
+                      Cảnh báo khi &ge; 7 ngày
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Hỗ trợ Trưởng nhóm Sales và Ban Giám đốc đôn đốc các hồ sơ đã gửi báo giá nhưng khách chưa phản hồi
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold whitespace-nowrap">
+                    <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                    <span>{data.unansweredQuotes.length} hồ sơ chờ phản hồi</span>
                   </span>
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Hỗ trợ Trưởng nhóm Sales và Ban Giám đốc đôn đốc các hồ sơ đã gửi báo giá nhưng khách chưa phản hồi
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold whitespace-nowrap">
-                  <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                  <span>{data.unansweredQuotes.length} hồ sơ chờ phản hồi</span>
-                </span>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-sm">
-                <thead>
-                  <tr className="bg-slate-50/90 text-slate-600 border-b border-slate-200 text-xs uppercase tracking-wider">
-                    <th className="py-3.5 px-4 font-bold whitespace-nowrap">Mã Lead</th>
-                    <th className="py-3.5 px-4 font-bold min-w-[220px]">Khách hàng / Đơn vị</th>
-                    <th className="py-3.5 px-4 font-bold whitespace-nowrap">Số điện thoại</th>
-                    <th className="py-3.5 px-4 font-bold whitespace-nowrap">Sales phụ trách</th>
-                    <th className="py-3.5 px-4 font-bold min-w-[200px]">Sản phẩm báo giá</th>
-                    <th className="py-3.5 px-4 font-bold whitespace-nowrap">Thời điểm gửi</th>
-                    <th className="py-3.5 px-4 font-bold text-right whitespace-nowrap">Số ngày chờ</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {data.unansweredQuotes.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="py-6 text-center text-slate-400">
-                        Không có hồ sơ báo giá nào đang tồn đọng chờ phản hồi.
-                      </td>
-                    </tr>
-                  ) : (
-                    data.unansweredQuotes.map((q) => {
-                      const productItems = q.productSummary
-                        ? q.productSummary
-                            .split(',')
-                            .map((s) => s.trim())
-                            .filter(Boolean)
-                        : [];
-                      return (
-                        <tr
-                          key={q.leadId}
-                          className={
-                            q.isOverdue7Days
-                              ? 'bg-rose-50/40 hover:bg-rose-50/75 transition-colors'
-                              : 'hover:bg-slate-50/80 transition-colors'
-                          }
-                        >
-                          <td className="py-3.5 px-4 whitespace-nowrap">
-                            <a
-                              href={`/leads?highlight=${q.leadId}`}
-                              className="inline-flex items-center px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200/80 text-brand font-bold text-xs tabular-nums whitespace-nowrap transition-colors"
-                              title="Mở hồ sơ Lead để cập nhật phản hồi báo giá"
-                            >
-                              {q.leadCode}
-                            </a>
-                          </td>
-                          <td className="py-3.5 px-4 font-bold text-ink">
-                            {q.companyOrContact.replace(/\s*\(Dữ liệu tổng hợp\)/gi, '')}
-                          </td>
-                          <td className="py-3.5 px-4 tabular-nums font-semibold text-slate-700 whitespace-nowrap">
-                            {q.phone}
-                          </td>
-                          <td className="py-3.5 px-4 font-medium text-slate-700 whitespace-nowrap">
-                            {q.assignedSalesName}
-                          </td>
-                          <td className="py-3.5 px-4">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              {productItems.length > 0 ? (
-                                productItems.map((prod, idx) => (
-                                  <span
-                                    key={idx}
-                                    className="inline-flex items-center px-2.5 py-0.5 rounded-md bg-white border border-slate-200 text-slate-700 text-xs font-medium whitespace-nowrap shadow-2xs"
-                                  >
-                                    {prod}
-                                  </span>
-                                ))
-                              ) : (
-                                <span className="text-xs text-slate-400">{q.productSummary}</span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="py-3.5 px-4 tabular-nums text-slate-600 font-medium whitespace-nowrap">
-                            {new Date(q.quoteSentAt).toLocaleDateString('vi-VN')}
-                          </td>
-                          <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                            <span
-                              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-bold text-xs whitespace-nowrap ${
-                                q.isOverdue7Days
-                                  ? 'bg-rose-600 text-white shadow-2xs'
-                                  : 'bg-amber-100 text-amber-800 border border-amber-200'
-                              }`}
-                            >
-                              {q.isOverdue7Days ? (
-                                <>
-                                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                                  <span>Quá hạn · {q.daysWaiting} ngày</span>
-                                </>
-                              ) : (
-                                <span>Chờ {q.daysWaiting} ngày</span>
-                              )}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          {/* Sales Performance & Product Insights */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-            <section className="lg:col-span-7 bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-card">
-              <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-                <h2 className="font-display text-base font-bold text-ink">
-                  Hiệu suất xử lý theo nhân sự Sales
-                </h2>
-                <Filter className="w-4 h-4 text-brand" />
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-sm">
                   <thead>
                     <tr className="bg-slate-50/90 text-slate-600 border-b border-slate-200 text-xs uppercase tracking-wider">
-                      <th className="py-3 px-4 font-bold whitespace-nowrap">Nhân sự Sales</th>
-                      <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Tổng</th>
-                      <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Đang BG</th>
-                      <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Đã gửi BG</th>
-                      <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Chốt Won</th>
-                      <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Win Rate</th>
+                      <th className="py-3.5 px-4 font-bold whitespace-nowrap">Mã Lead</th>
+                      <th className="py-3.5 px-4 font-bold min-w-[220px]">Khách hàng / Đơn vị</th>
+                      <th className="py-3.5 px-4 font-bold whitespace-nowrap">Số điện thoại</th>
+                      <th className="py-3.5 px-4 font-bold whitespace-nowrap">Sales phụ trách</th>
+                      <th className="py-3.5 px-4 font-bold min-w-[200px]">Sản phẩm báo giá</th>
+                      <th className="py-3.5 px-4 font-bold whitespace-nowrap">Thời điểm gửi</th>
+                      <th className="py-3.5 px-4 font-bold text-right whitespace-nowrap">Số ngày chờ</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {data.salesPerformance.map((sp) => (
-                      <tr key={sp.salesUserId} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3 px-4 font-semibold text-ink whitespace-nowrap">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`w-2 h-2 rounded-full shrink-0 ${
-                                sp.isOnline ? 'bg-emerald-500' : 'bg-slate-300'
-                              }`}
-                            />
-                            <span>{sp.salesFullName}</span>
-                          </div>
-                        </td>
-                        <td className="py-3 px-3 text-center tabular-nums font-bold whitespace-nowrap">
-                          {sp.totalLeads}
-                        </td>
-                        <td className="py-3 px-3 text-center tabular-nums whitespace-nowrap">{sp.quotingLeads}</td>
-                        <td className="py-3 px-3 text-center tabular-nums whitespace-nowrap">{sp.quoteSentLeads}</td>
-                        <td className="py-3 px-3 text-center tabular-nums text-emerald-700 font-bold whitespace-nowrap">
-                          {sp.wonLeads}
-                        </td>
-                        <td className="py-3 px-3 text-center tabular-nums font-semibold text-brand whitespace-nowrap">
-                          {sp.winRateText}
+                    {data.unansweredQuotes.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-6 text-center text-slate-400">
+                          Không có hồ sơ báo giá nào đang tồn đọng chờ phản hồi.
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      data.unansweredQuotes.map((q) => {
+                        const productItems = q.productSummary
+                          ? q.productSummary
+                              .split(',')
+                              .map((s) => s.trim())
+                              .filter(Boolean)
+                          : [];
+                        return (
+                          <tr
+                            key={q.leadId}
+                            className={
+                              q.isOverdue7Days
+                                ? 'bg-rose-50/40 hover:bg-rose-50/75 transition-colors'
+                                : 'hover:bg-slate-50/80 transition-colors'
+                            }
+                          >
+                            <td className="py-3.5 px-4 whitespace-nowrap">
+                              <a
+                                href={`/leads?highlight=${q.leadId}`}
+                                className="inline-flex items-center px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200/80 text-brand font-bold text-xs tabular-nums whitespace-nowrap transition-colors"
+                                title="Mở hồ sơ Lead để cập nhật phản hồi báo giá"
+                              >
+                                {q.leadCode}
+                              </a>
+                            </td>
+                            <td className="py-3.5 px-4 font-bold text-ink">
+                              {q.companyOrContact.replace(/\s*\(Dữ liệu tổng hợp\)/gi, '')}
+                            </td>
+                            <td className="py-3.5 px-4 tabular-nums font-semibold text-slate-700 whitespace-nowrap">
+                              {q.phone}
+                            </td>
+                            <td className="py-3.5 px-4 font-medium text-slate-700 whitespace-nowrap">
+                              {q.assignedSalesName}
+                            </td>
+                            <td className="py-3.5 px-4">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {productItems.length > 0 ? (
+                                  productItems.map((prod, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="inline-flex items-center px-2.5 py-0.5 rounded-md bg-white border border-slate-200 text-slate-700 text-xs font-medium whitespace-nowrap shadow-2xs"
+                                    >
+                                      {prod}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="text-xs text-slate-400">{q.productSummary}</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-3.5 px-4 tabular-nums text-slate-600 font-medium whitespace-nowrap">
+                              {new Date(q.quoteSentAt).toLocaleDateString('vi-VN')}
+                            </td>
+                            <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                              <span
+                                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-bold text-xs whitespace-nowrap ${
+                                  q.isOverdue7Days
+                                    ? 'bg-rose-600 text-white shadow-2xs'
+                                    : 'bg-amber-100 text-amber-800 border border-amber-200'
+                                }`}
+                              >
+                                {q.isOverdue7Days ? (
+                                  <>
+                                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                                    <span>Quá hạn · {q.daysWaiting} ngày</span>
+                                  </>
+                                ) : (
+                                  <span>Chờ {q.daysWaiting} ngày</span>
+                                )}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
             </section>
+          )}
 
-            <section className="lg:col-span-5 bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-card">
+          {/* Sales Performance & Product Insights */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            {user && ['ADMIN', 'BOD', 'SALES_LEAD', 'SALES'].includes(user.roleCode) && (
+              <section className="lg:col-span-7 bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-card">
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                  <h2 className="font-display text-base font-bold text-ink">
+                    Hiệu suất xử lý theo nhân sự Sales
+                  </h2>
+                  <Filter className="w-4 h-4 text-brand" />
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-sm">
+                    <thead>
+                      <tr className="bg-slate-50/90 text-slate-600 border-b border-slate-200 text-xs uppercase tracking-wider">
+                        <th className="py-3 px-4 font-bold whitespace-nowrap">Nhân sự Sales</th>
+                        <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Tổng</th>
+                        <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Đang BG</th>
+                        <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Đã gửi BG</th>
+                        <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Chốt Won</th>
+                        <th className="py-3 px-3 font-bold text-center whitespace-nowrap">Win Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {data.salesPerformance.map((sp) => (
+                        <tr key={sp.salesUserId} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-3 px-4 font-semibold text-ink whitespace-nowrap">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`w-2 h-2 rounded-full shrink-0 ${
+                                  sp.isOnline ? 'bg-emerald-500' : 'bg-slate-300'
+                                }`}
+                              />
+                              <span>{sp.salesFullName}</span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 text-center tabular-nums font-bold whitespace-nowrap">
+                            {sp.totalLeads}
+                          </td>
+                          <td className="py-3 px-3 text-center tabular-nums whitespace-nowrap">{sp.quotingLeads}</td>
+                          <td className="py-3 px-3 text-center tabular-nums whitespace-nowrap">{sp.quoteSentLeads}</td>
+                          <td className="py-3 px-3 text-center tabular-nums text-emerald-700 font-bold whitespace-nowrap">
+                            {sp.wonLeads}
+                          </td>
+                          <td className="py-3 px-3 text-center tabular-nums font-semibold text-brand whitespace-nowrap">
+                            {sp.winRateText}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
+
+            <section
+              className={`${
+                user && ['ADMIN', 'BOD', 'SALES_LEAD', 'SALES'].includes(user.roleCode)
+                  ? 'lg:col-span-5'
+                  : 'lg:col-span-12'
+              } bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-card`}
+            >
               <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
                 <h2 className="font-display text-base font-bold text-ink">
                   Thống kê nhu cầu theo sản phẩm LED

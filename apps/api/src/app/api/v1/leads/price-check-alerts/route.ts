@@ -6,6 +6,7 @@ import { requirePermissionSession } from '../../../../../core/permissions';
 import { readPrivateBusinessFile } from '../../../../../core/storage/private-files.service';
 import {
   createCompetitorPriceCheckAlert,
+  dismissCompetitorPriceCheckAlert,
   shouldAnonymizeLeadForRole,
 } from '../../../../../modules/01-leads/service';
 
@@ -107,4 +108,36 @@ export async function POST(req: Request) {
     );
   }
 }
+
+export async function PATCH(req: Request) {
+  const auth = await requirePermissionSession(req, 'LEAD_UPDATE_PIPELINE');
+  if (!auth.ok) return auth.response;
+
+  try {
+    const raw = (await req.json()) as { alertId?: number; dismissReason?: string };
+    const alertId = Number(raw?.alertId || 0);
+    const dismissReason = String(raw?.dismissReason || '').trim();
+    if (!alertId || !dismissReason) {
+      return jsonError(
+        'VALIDATION_ERROR',
+        'Vui lòng chọn cảnh báo và nhập lý do gỡ cảnh báo bắt buộc (UC01 5.3).',
+        400,
+      );
+    }
+
+    const updated = await dismissCompetitorPriceCheckAlert({
+      actor: auth.user,
+      alertId,
+      dismissReason,
+    });
+    return jsonSuccess({ id: updated.id, status: updated.status }, 200);
+  } catch (err) {
+    return jsonError(
+      'PRICE_CHECK_DISMISS_FAILED',
+      err instanceof Error ? err.message : 'Không thể gỡ cảnh báo dò giá.',
+      400,
+    );
+  }
+}
+
 

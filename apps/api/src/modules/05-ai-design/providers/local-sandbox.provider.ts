@@ -224,18 +224,23 @@ export function renderSyntheticLedPngBuffer(opts: {
 
 export class LocalSandboxAiProvider implements AiDesignProvider {
   readonly providerId = 'local_sandbox' as const;
+  private readonly activeModel: string;
+
+  constructor(activeModel?: string | null) {
+    this.activeModel = activeModel || 'toantrung-studio-v3';
+  }
 
   getStatusInfo(): ProviderStatusInfo {
     return {
       provider: 'local_sandbox',
-      providerName: 'Toàn Trung Local Sandbox AI Engine',
+      providerName: 'Toàn Trung Studio Engine v3 (Sẵn sàng ngay)',
       isConfigured: true,
-      statusLabel: 'Chế độ mô phỏng Sandbox (Chưa kết nối AI trả phí)',
-      activeModel: 'toantrung-synthetic-v2',
+      statusLabel: 'Đang hoạt động · Không cần API Key bên ngoài',
+      activeModel: this.activeModel,
       costPerImageUsd: 0.0,
       supportsInpainting: true,
       notes:
-        'Chế độ cục bộ an toàn: sinh bản nháp phối cảnh và banner tổng hợp mà không phát sinh chi phí bên thứ ba.',
+        'Engine kết xuất phối cảnh 3D & Banner LED nội bộ Toàn Trung: hoạt động tức thì, bảo mật 100% và không phát sinh chi phí bên thứ ba.',
     };
   }
 
@@ -245,13 +250,14 @@ export class LocalSandboxAiProvider implements AiDesignProvider {
     const started = Date.now();
     await new Promise((r) => setTimeout(r, 85));
     const durationMs = Date.now() - started;
+    const modelUsed = input.modelId || this.activeModel;
 
     if (input.simulateTimeout) {
       return {
         imageBuffer: Buffer.alloc(0),
         mimeType: 'image/png',
         durationMs,
-        modelUsed: 'imagen-3.0-generate-002',
+        modelUsed,
         provider: 'local_sandbox',
         promptTokens: 0,
         completionTokens: 0,
@@ -271,7 +277,7 @@ export class LocalSandboxAiProvider implements AiDesignProvider {
     const imageBuffer = renderSyntheticLedPngBuffer({
       mode: 'perspective_3d',
       prompt: input.prompt,
-      seedKey: input.idempotencyKey,
+      seedKey: `${modelUsed}:${input.idempotencyKey}`,
       quad: input.placementQuad,
     });
 
@@ -279,7 +285,7 @@ export class LocalSandboxAiProvider implements AiDesignProvider {
       imageBuffer,
       mimeType: 'image/png',
       durationMs,
-      modelUsed: 'imagen-3.0-generate-002',
+      modelUsed,
       provider: 'local_sandbox',
       promptTokens,
       completionTokens,
@@ -294,13 +300,14 @@ export class LocalSandboxAiProvider implements AiDesignProvider {
     const started = Date.now();
     await new Promise((r) => setTimeout(r, 75));
     const durationMs = Date.now() - started;
+    const modelUsed = input.modelId || this.activeModel;
 
     if (input.simulateTimeout) {
       return {
         imageBuffer: Buffer.alloc(0),
         mimeType: 'image/png',
         durationMs,
-        modelUsed: 'imagen-3.0-generate-002',
+        modelUsed,
         provider: 'local_sandbox',
         promptTokens: 0,
         completionTokens: 0,
@@ -320,14 +327,14 @@ export class LocalSandboxAiProvider implements AiDesignProvider {
     const imageBuffer = renderSyntheticLedPngBuffer({
       mode: 'banner',
       prompt: input.prompt,
-      seedKey: input.idempotencyKey,
+      seedKey: `${modelUsed}:${input.idempotencyKey}`,
     });
 
     return {
       imageBuffer,
       mimeType: 'image/png',
       durationMs,
-      modelUsed: 'imagen-3.0-generate-002',
+      modelUsed,
       provider: 'local_sandbox',
       promptTokens,
       completionTokens,

@@ -14,6 +14,7 @@ import {
   type AddProjectPhotoDto,
   type ApproveDesignVersionDto,
   type ChatDesignRequestDto,
+  type ConfigureAiProvidersDto,
   type CreateDesignRequestDto,
   type DesignAssetVersionItemDto,
   type DesignChatMessageDto,
@@ -179,6 +180,28 @@ export async function getAiDesignStatus(): Promise<ProviderStatusInfo> {
   return AiDesignProviderFactory.getActiveProviderInfo();
 }
 
+export async function configureAiProviders(
+  actor: SessionUserDto,
+  input: ConfigureAiProvidersDto
+): Promise<ProviderStatusInfo> {
+  const updatedStatus = AiDesignProviderFactory.updateConfiguration(input);
+  await prisma.auditLog.create({
+    data: {
+      actorUserId: actor.id,
+      action: 'AI_DESIGN_PROVIDER_CONFIGURED',
+      targetType: 'SystemSetting',
+      targetId: input.defaultProviderId,
+      detailsJson: JSON.stringify({
+        defaultProviderId: input.defaultProviderId,
+        defaultModelId: input.defaultModelId,
+        autoFallbackToLocal: input.autoFallbackToLocal,
+        configuredProvider: input.providerConfig?.providerId,
+      }),
+    },
+  });
+  return updatedStatus;
+}
+
 export async function listDesignRequestsForUser(user: SessionUserDto): Promise<{
   requests: DesignRequestItemDto[];
   leadOptions: Array<{ id: number; leadCode: string; label: string }>;
@@ -238,29 +261,41 @@ export async function listDesignRequestsForUser(user: SessionUserDto): Promise<{
     const dims = parseDimensions(r.screenDimensions);
     const meta = parseProjectMetadata(r.installPositionJson);
 
-    const assetVersions: DesignAssetVersionItemDto[] = r.assetVersions.map((v) => ({
-      id: v.id,
-      designRequestId: v.designRequestId,
-      versionNumber: v.versionNumber,
-      sourceType: v.versionType === 'final_render' ? 'DESIGNER_FINAL_UPLOAD' : 'AI_DRAFT',
-      storageObjectKey: v.storageObjectKey,
-      downloadUrl: `/api/v1/design/asset/${v.id}`,
-      mimeType: v.mimeType,
-      fileSizeBytes: v.fileSizeBytes,
-      widthPx: dims.bannerWidthPx ?? 1920,
-      heightPx: dims.bannerHeightPx ?? 1080,
-      aspectRatio: r.aspectRatio,
-      promptUsed: v.promptUsed,
-      processingDurationMs: v.aiUsageLog?.durationMs ?? r.processingTimeMs,
-      tokenUsed: v.aiUsageLog?.totalTokens ?? r.tokenCost,
-      cost:
-        v.aiUsageLog?.costMicros != null
-          ? toMonetaryAmountDto(v.aiUsageLog.costMicros, 'USD', 'micros')
-          : null,
-      isApprovedFinal: v.isApprovedFinal,
-      uploadedByName: v.uploadedBy?.fullName || r.assignedDesigner?.fullName || 'Hệ thống AI',
-      createdAt: v.createdAt.toISOString(),
-    }));
+    const assetVersions: DesignAssetVersionItemDto[] = r.assetVersions.map((v) => {
+      let parsedVerParams: { providerId?: string; modelUsed?: string } = {};
+      if (v.parametersJson) {
+        try {
+          parsedVerParams = JSON.parse(v.parametersJson);
+        } catch {
+          parsedVerParams = {};
+        }
+      }
+      return {
+        id: v.id,
+        designRequestId: v.designRequestId,
+        versionNumber: v.versionNumber,
+        sourceType: v.versionType === 'final_render' ? 'DESIGNER_FINAL_UPLOAD' : 'AI_DRAFT',
+        providerId: parsedVerParams.providerId ?? null,
+        modelUsed: parsedVerParams.modelUsed ?? v.aiUsageLog?.modelName ?? null,
+        storageObjectKey: v.storageObjectKey,
+        downloadUrl: `/api/v1/design/asset/${v.id}`,
+        mimeType: v.mimeType,
+        fileSizeBytes: v.fileSizeBytes,
+        widthPx: dims.bannerWidthPx ?? 1920,
+        heightPx: dims.bannerHeightPx ?? 1080,
+        aspectRatio: r.aspectRatio,
+        promptUsed: v.promptUsed,
+        processingDurationMs: v.aiUsageLog?.durationMs ?? r.processingTimeMs,
+        tokenUsed: v.aiUsageLog?.totalTokens ?? r.tokenCost,
+        cost:
+          v.aiUsageLog?.costMicros != null
+            ? toMonetaryAmountDto(v.aiUsageLog.costMicros, 'USD', 'micros')
+            : null,
+        isApprovedFinal: v.isApprovedFinal,
+        uploadedByName: v.uploadedBy?.fullName || r.assignedDesigner?.fullName || 'Hệ thống AI',
+        createdAt: v.createdAt.toISOString(),
+      };
+    });
 
     const latestAiDraft = [...assetVersions].reverse().find((v) => v.sourceType === 'AI_DRAFT');
     const latestFinal = [...assetVersions]
@@ -454,37 +489,43 @@ export async function createDesignRequestWithAiDraft(
   const dbRequestType: 'banner' | '3d_perspective' =
     input.designType === 'banner' ? 'banner' : '3d_perspective';
 
-  const provider = AiDesignProviderFactory.getProvider();
-
-  // Call provider adapter
+  // Call provider adapter with Multi-AI selection & auto-fallback
   const providerResult =
     input.designType === 'perspective_3d'
-      ? await provider.generatePerspectiveDraft({
-          workflow: 'perspective_3d',
-          prompt: input.aiPrompt,
-          referenceImageUrl: sitePhotoUrl || DEFAULT_SHOWROOM_PHOTO,
-          placementQuad: input.placementQuad || DEFAULT_PLACEMENT_QUAD,
-          dimensions: {
-            widthM: input.screenWidthM,
-            heightM: input.screenHeightM,
-            aspectRatio,
+      ? await AiDesignProviderFactory.executePerspectiveWithFallback(
+          {
+            workflow: 'perspective_3d',
+            prompt: input.aiPrompt,
+            referenceImageUrl: sitePhotoUrl || DEFAULT_SHOWROOM_PHOTO,
+            placementQuad: input.placementQuad || DEFAULT_PLACEMENT_QUAD,
+            dimensions: {
+              widthM: input.screenWidthM,
+              heightM: input.screenHeightM,
+              aspectRatio,
+            },
+            quality: input.quality || 'draft',
+            modelId: input.modelId,
+            idempotencyKey: `design-create-${Date.now()}`,
+            simulateTimeout: input.simulateAiTimeout,
           },
-          quality: input.quality || 'draft',
-          idempotencyKey: `design-create-${Date.now()}`,
-          simulateTimeout: input.simulateAiTimeout,
-        })
-      : await provider.generateBannerDraft({
-          workflow: 'banner',
-          prompt: input.aiPrompt,
-          dimensions: {
-            widthPx: input.bannerWidthPx,
-            heightPx: input.bannerHeightPx,
-            aspectRatio,
+          input.providerId
+        )
+      : await AiDesignProviderFactory.executeBannerWithFallback(
+          {
+            workflow: 'banner',
+            prompt: input.aiPrompt,
+            dimensions: {
+              widthPx: input.bannerWidthPx,
+              heightPx: input.bannerHeightPx,
+              aspectRatio,
+            },
+            quality: input.quality || 'draft',
+            modelId: input.modelId,
+            idempotencyKey: `design-create-banner-${Date.now()}`,
+            simulateTimeout: input.simulateAiTimeout,
           },
-          quality: input.quality || 'draft',
-          idempotencyKey: `design-create-banner-${Date.now()}`,
-          simulateTimeout: input.simulateAiTimeout,
-        });
+          input.providerId
+        );
 
   if (providerResult.status === 'timeout' || input.simulateAiTimeout) {
     const pendingReq = await prisma.designRequest.create({
@@ -660,9 +701,11 @@ export async function createDesignRequestWithAiDraft(
       {
         id: `msg-ai-1-${Date.now()}`,
         role: 'assistant',
-        text: 'Bản nháp mới đã được thêm vào thư viện.',
+        text: `Bản nháp mới (v1 · ${providerResult.modelUsed}) đã được thêm vào thư viện.`,
         timestamp: new Date().toISOString(),
         versionNumber: 1,
+        providerId: providerResult.provider,
+        modelUsed: providerResult.modelUsed,
         durationSec: Number((providerResult.durationMs / 1000).toFixed(2)),
         tokenUsed: providerResult.totalTokens,
         cost: `$${(Number(providerResult.costMicros) / 1_000_000).toFixed(3)}`,
@@ -730,6 +773,8 @@ export async function createDesignRequestWithAiDraft(
         screenDimensions,
         aspectRatio,
         quality: input.quality || 'draft',
+        providerId: providerResult.provider,
+        modelUsed: providerResult.modelUsed,
       }),
       aiUsageLogId: aiLog.log.id,
       uploadedByUserId: actor.id,
@@ -790,38 +835,45 @@ export async function processChatDesignRequest(
   const nextVersionNumber = (existing.assetVersions[0]?.versionNumber ?? 0) + 1;
   const currentMeta = parseProjectMetadata(existing.installPositionJson);
 
-  const provider = AiDesignProviderFactory.getProvider();
   const dbType: 'banner' | '3d_perspective' =
     existing.requestType === 'banner' ? 'banner' : '3d_perspective';
 
   const providerResult =
     dbType === '3d_perspective'
-      ? await provider.generatePerspectiveDraft({
-          workflow: 'perspective_3d',
-          prompt: input.prompt,
-          referenceImageUrl: input.selectedPhotoUrl || existing.sitePhotoUrl || DEFAULT_SHOWROOM_PHOTO,
-          placementQuad: input.placementQuad || currentMeta.placementQuad || DEFAULT_PLACEMENT_QUAD,
-          dimensions: {
-            widthM: input.screenWidthM || 4.8,
-            heightM: input.screenHeightM || 2.7,
-            aspectRatio: input.aspectRatio || existing.aspectRatio || '16:9',
+      ? await AiDesignProviderFactory.executePerspectiveWithFallback(
+          {
+            workflow: 'perspective_3d',
+            prompt: input.prompt,
+            referenceImageUrl: input.selectedPhotoUrl || existing.sitePhotoUrl || DEFAULT_SHOWROOM_PHOTO,
+            placementQuad: input.placementQuad || currentMeta.placementQuad || DEFAULT_PLACEMENT_QUAD,
+            dimensions: {
+              widthM: input.screenWidthM || 4.8,
+              heightM: input.screenHeightM || 2.7,
+              aspectRatio: input.aspectRatio || existing.aspectRatio || '16:9',
+            },
+            quality: input.quality || 'draft',
+            modelId: input.modelId,
+            idempotencyKey: input.idempotencyKey || `chat-design-${requestId}-v${nextVersionNumber}-${Date.now()}`,
+            simulateTimeout: input.simulateAiTimeout,
           },
-          quality: input.quality || 'draft',
-          idempotencyKey: input.idempotencyKey || `chat-design-${requestId}-v${nextVersionNumber}-${Date.now()}`,
-          simulateTimeout: input.simulateAiTimeout,
-        })
-      : await provider.generateBannerDraft({
-          workflow: 'banner',
-          prompt: input.prompt,
-          dimensions: {
-            widthPx: input.bannerWidthPx || 1920,
-            heightPx: input.bannerHeightPx || 1080,
-            aspectRatio: input.aspectRatio || existing.aspectRatio || '16:9',
+          input.providerId
+        )
+      : await AiDesignProviderFactory.executeBannerWithFallback(
+          {
+            workflow: 'banner',
+            prompt: input.prompt,
+            dimensions: {
+              widthPx: input.bannerWidthPx || 1920,
+              heightPx: input.bannerHeightPx || 1080,
+              aspectRatio: input.aspectRatio || existing.aspectRatio || '16:9',
+            },
+            quality: input.quality || 'draft',
+            modelId: input.modelId,
+            idempotencyKey: input.idempotencyKey || `chat-banner-${requestId}-v${nextVersionNumber}-${Date.now()}`,
+            simulateTimeout: input.simulateAiTimeout,
           },
-          quality: input.quality || 'draft',
-          idempotencyKey: input.idempotencyKey || `chat-banner-${requestId}-v${nextVersionNumber}-${Date.now()}`,
-          simulateTimeout: input.simulateAiTimeout,
-        });
+          input.providerId
+        );
 
   if (providerResult.status === 'timeout' || input.simulateAiTimeout) {
     await recordAiUsageAttempt(prisma, {
@@ -881,6 +933,8 @@ export async function processChatDesignRequest(
         regeneratedFromVersion: existing.version,
         placementQuad: input.placementQuad || currentMeta.placementQuad,
         quality: input.quality,
+        providerId: providerResult.provider,
+        modelUsed: providerResult.modelUsed,
       }),
       aiUsageLogId: aiLog.log.id,
       uploadedByUserId: actor.id,
@@ -901,10 +955,12 @@ export async function processChatDesignRequest(
     {
       id: `msg-ai-${Date.now()}`,
       role: 'assistant',
-      text: `Bản nháp mới (v${nextVersionNumber}) đã được thêm vào thư viện.`,
+      text: `Bản nháp mới (v${nextVersionNumber} · ${providerResult.modelUsed}) đã được thêm vào thư viện.`,
       timestamp: new Date().toISOString(),
       versionNumber: nextVersionNumber,
       versionId: createdVersion.id,
+      providerId: providerResult.provider,
+      modelUsed: providerResult.modelUsed,
       durationSec: Number((providerResult.durationMs / 1000).toFixed(2)),
       tokenUsed: providerResult.totalTokens,
       cost: `$${(Number(providerResult.costMicros) / 1_000_000).toFixed(3)}`,
@@ -1299,6 +1355,8 @@ export async function regenerateDesignDraftByAi(
     expectedVersion: input.expectedVersion,
     prompt: input.aiPrompt,
     quality: input.quality || 'draft',
+    providerId: input.providerId,
+    modelId: input.modelId,
     screenWidthM: input.screenWidthM,
     screenHeightM: input.screenHeightM,
     bannerWidthPx: input.bannerWidthPx,
@@ -1306,6 +1364,103 @@ export async function regenerateDesignDraftByAi(
     aspectRatio: input.aspectRatio,
     simulateAiTimeout: input.simulateAiTimeout,
   });
+}
+
+export async function saveCompositedDraftVersion(
+  actor: SessionUserDto,
+  requestId: number,
+  params: {
+    fileName: string;
+    mimeType: string;
+    buffer: Buffer;
+    note?: string;
+    placementQuad?: QuadCoordinatesDto;
+  }
+) {
+  const existing = await prisma.designRequest.findUnique({
+    where: { id: requestId },
+    include: {
+      assetVersions: {
+        orderBy: { versionNumber: 'desc' },
+        take: 1,
+      },
+    },
+  });
+
+  if (!existing) {
+    throw new Error('Không tìm thấy yêu cầu thiết kế.');
+  }
+
+  const savedFile = savePrivateBusinessFile({
+    bucket: 'design',
+    prefix: `studio-composite-req-${requestId}`,
+    fileBuffer: params.buffer,
+    declaredMimeType: params.mimeType || 'image/png',
+    originalFileName: params.fileName,
+  });
+
+  const nextVersionNumber = (existing.assetVersions[0]?.versionNumber ?? 0) + 1;
+  const currentMeta = parseProjectMetadata(existing.installPositionJson);
+
+  const createdVersion = await prisma.designAssetVersion.create({
+    data: {
+      designRequestId: requestId,
+      versionNumber: nextVersionNumber,
+      versionType: 'ai_draft',
+      storageObjectKey: savedFile.storageObjectKey,
+      mimeType: savedFile.mimeType,
+      fileSizeBytes: savedFile.fileSizeBytes,
+      promptUsed: params.note || `Bản ghép phối cảnh 3D trực tiếp trên ảnh hiện trạng (v${nextVersionNumber})`,
+      parametersJson: JSON.stringify({
+        studioComposite: true,
+        providerId: 'local_sandbox',
+        modelUsed: 'Toàn Trung Live 3D Compositor',
+        placementQuad: params.placementQuad || currentMeta.placementQuad,
+      }),
+      uploadedByUserId: actor.id,
+      isApprovedFinal: false,
+    },
+  });
+
+  const existingChat = currentMeta.chatMessages || [];
+  const updatedChat: DesignChatMessageDto[] = [
+    ...existingChat,
+    {
+      id: `msg-composite-${Date.now()}`,
+      role: 'assistant',
+      text: `Đã kết xuất & lưu bản ghép phối cảnh 3D thực tế (v${nextVersionNumber} · Toàn Trung Live 3D Compositor) vào thư viện Bản thiết kế.`,
+      timestamp: new Date().toISOString(),
+      versionNumber: nextVersionNumber,
+      versionId: createdVersion.id,
+      providerId: 'local_sandbox',
+      modelUsed: 'Toàn Trung Live 3D Compositor',
+      durationSec: 0.4,
+      cost: '$0.000',
+      status: 'success',
+    },
+  ];
+
+  const updatedMetadata: StoredMetadata = {
+    ...currentMeta,
+    placementQuad: params.placementQuad || currentMeta.placementQuad,
+    chatMessages: updatedChat,
+  };
+
+  await prisma.designRequest.update({
+    where: { id: requestId },
+    data: {
+      aiDraftImageUrl: savedFile.storageObjectKey,
+      installPositionJson: JSON.stringify(updatedMetadata),
+      designStatus: 'ai_drafting',
+      version: { increment: 1 },
+    },
+  });
+
+  return {
+    requestId,
+    versionId: createdVersion.id,
+    versionNumber: createdVersion.versionNumber,
+  };
 }
 
 export async function uploadDesignerFinalRender(

@@ -18,26 +18,36 @@ import {
   type ProviderStatusInfo,
 } from './types';
 
+export interface OpenAiImageProviderOptions {
+  apiKey?: string | null;
+  apiEndpoint?: string | null;
+  activeModel?: string | null;
+}
+
 export class OpenAiImageProvider implements AiDesignProvider {
   readonly providerId = 'openai_dalle' as const;
   private readonly apiKey: string | null;
+  private readonly apiEndpoint: string;
+  private readonly activeModel: string;
 
-  constructor() {
-    this.apiKey = process.env.OPENAI_API_KEY || null;
+  constructor(opts?: OpenAiImageProviderOptions) {
+    this.apiKey = opts?.apiKey || process.env.OPENAI_API_KEY || null;
+    this.apiEndpoint = opts?.apiEndpoint || 'https://api.openai.com/v1/images/generations';
+    this.activeModel = opts?.activeModel || 'gpt-image-1';
   }
 
   getStatusInfo(): ProviderStatusInfo {
     const isConfigured = Boolean(this.apiKey);
     return {
       provider: 'openai_dalle',
-      providerName: 'OpenAI DALL-E / Images Edit',
+      providerName: 'OpenAI GPT-Image-1 & DALL-E 3',
       isConfigured,
-      statusLabel: isConfigured ? 'AI sẵn sàng' : 'Chưa cấu hình API Key (OPENAI_API_KEY)',
-      activeModel: 'dall-e-3 / dall-e-2-edit',
-      costPerImageUsd: 0.02,
+      statusLabel: isConfigured ? 'Đã kết nối API Key' : 'Chưa cấu hình API Key (OPENAI_API_KEY)',
+      activeModel: this.activeModel,
+      costPerImageUsd: 0.04,
       supportsInpainting: true,
       notes:
-        'Hỗ trợ chỉnh sửa ảnh theo vùng mask (Inpainting) và sinh Banner tỷ lệ tùy chọn theo API OpenAI.',
+        'Hỗ trợ chỉnh sửa ảnh theo vùng mask (Inpainting), hiển thị chữ sắc nét trên Banner LED và phối cảnh theo API OpenAI.',
     };
   }
 

@@ -143,6 +143,12 @@ export default function NotificationsPage() {
     void loadNotificationCenter();
   }, [loadNotificationCenter]);
 
+  useEffect(() => {
+    if (!feedbackMsg) return;
+    const t = window.setTimeout(() => setFeedbackMsg(null), 3800);
+    return () => window.clearTimeout(t);
+  }, [feedbackMsg]);
+
   const handleMarkOne = async (notificationId: number) => {
     if (!user) return;
     setBusy(true);

@@ -2,7 +2,11 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import type { ReportPreset, ReportsDashboardDto } from '@toantrung/contracts';
+import {
+  hasBaPermission,
+  type ReportPreset,
+  type ReportsDashboardDto,
+} from '@toantrung/contracts';
 import {
   Activity,
   AlertCircle,
@@ -25,6 +29,7 @@ import {
   Users,
 } from 'lucide-react';
 import { useSession } from '@/core/session/SessionContext';
+import { apiRequest, peekApiCache } from '@/core/http/client';
 import { formatMoney, formatMoneyCompact } from '@/core/format/money';
 
 const PERIODS: Array<{ label: string; value: ReportPreset }> = [
@@ -39,32 +44,35 @@ export default function DashboardPage() {
   const { user } = useSession();
   const [preset, setPreset] = useState<ReportPreset>('all');
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('leads');
-  const [report, setReport] = useState<ReportsDashboardDto | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [report, setReport] = useState<ReportsDashboardDto | null>(() =>
+    peekApiCache<ReportsDashboardDto>('/api/v1/reports?preset=all')
+  );
+  const [isLoading, setIsLoading] = useState<boolean>(
+    () => !peekApiCache<ReportsDashboardDto>('/api/v1/reports?preset=all')
+  );
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
 
   const loadDashboard = useCallback(
     async (selectedPreset: ReportPreset, manual = false) => {
+      const url = `/api/v1/reports?preset=${selectedPreset}`;
+      const cached = !manual ? peekApiCache<ReportsDashboardDto>(url) : null;
       if (manual) {
         setIsRefreshing(true);
+      } else if (cached) {
+        setReport(cached);
+        setIsLoading(false);
       } else {
         setIsLoading(true);
       }
       setFetchError(null);
 
       try {
-        const res = await fetch(`/api/v1/reports?preset=${selectedPreset}`, {
-          cache: 'no-store',
+        const data = await apiRequest<ReportsDashboardDto>(url, {
+          skipCache: manual,
         });
-        const json = await res.json();
-        if (!res.ok || json.error || (!json.ok && !json.data)) {
-          throw new Error(
-            json.error?.message || 'Không thể tải dữ liệu tổng quan từ máy chủ.'
-          );
-        }
-        setReport(json.data as ReportsDashboardDto);
+        setReport(data);
         setLastFetchedAt(new Date().toISOString());
       } catch (err) {
         setFetchError(
@@ -128,11 +136,25 @@ export default function DashboardPage() {
     };
   }, [unansweredQuotes]);
 
-  const canViewMarketingSummary =
-    !user ||
-    ['ADMIN', 'BOD', 'MKT_LEAD', 'MKT_STAFF', 'ADS', 'SALES_LEAD'].includes(
-      user.roleCode
-    );
+  const canViewSalesTeam = Boolean(
+    user && ['ADMIN', 'BOD', 'SALES_LEAD', 'SALES'].includes(user.roleCode)
+  );
+  const canViewMarketingSummary = Boolean(
+    user && hasBaPermission(user.roleCode, 'TRACKING_ADS_OPTIMIZE')
+  );
+  const canViewSeoAds = Boolean(
+    user && hasBaPermission(user.roleCode, 'AI_MARKETING_SEO')
+  );
+  const canViewDesignStudio = Boolean(
+    user && hasBaPermission(user.roleCode, 'AI_DESIGN')
+  );
+  const card4Href = canViewSeoAds
+    ? '/ads'
+    : canViewMarketingSummary
+      ? '/tracking'
+      : canViewDesignStudio
+        ? '/design'
+        : '/reports';
 
   const cleanScopeDescription = (report?.scopeDescription || '')
     .replace(/\s*\(theo[^)]*\)/gi, '')
@@ -366,7 +388,7 @@ export default function DashboardPage() {
 
           {/* Card 4: Quảng cáo, SEO & Kỹ thuật 3D */}
           <Link
-            href={canViewMarketingSummary ? '/ads' : '/design'}
+            href={card4Href}
             className="rounded-2xl bg-white border border-slate-200/90 p-4 shadow-2xs hover:border-violet-300 transition flex flex-col justify-between"
           >
             <div className="flex items-start justify-between gap-3">
@@ -578,50 +600,52 @@ export default function DashboardPage() {
             </div>
 
             {/* Danh sách Báo giá cần gọi lại ngay */}
-            <div className="pt-3 border-t border-slate-100 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Báo giá chờ phản hồi ({unansweredQuotes.length})</span>
-                </span>
-                <Link
-                  href="/leads?status=quote_sent"
-                  className="text-xs font-semibold text-[#1E3A8A] hover:underline"
-                >
-                  Tất cả →
-                </Link>
-              </div>
+            {canViewSalesTeam && (
+              <div className="pt-3 border-t border-slate-100 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Báo giá chờ phản hồi ({unansweredQuotes.length})</span>
+                  </span>
+                  <Link
+                    href="/leads?status=quote_sent"
+                    className="text-xs font-semibold text-[#1E3A8A] hover:underline"
+                  >
+                    Tất cả →
+                  </Link>
+                </div>
 
-              {unansweredQuotes.length === 0 ? (
-                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 text-xs text-slate-500 text-center">
-                  Không có báo giá nào đang tồn đọng.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {unansweredQuotes.slice(0, 3).map((q) => (
-                    <div
-                      key={q.leadId}
-                      className="p-2.5 rounded-xl bg-slate-50/80 border border-slate-200/90 flex items-center justify-between gap-2"
-                    >
-                      <div className="min-w-0">
-                        <strong className="text-xs font-bold text-slate-900 block truncate">
-                          {q.companyOrContact}
-                        </strong>
-                        <span className="text-[11px] text-slate-500 block truncate">
-                          {q.assignedSalesName} · Chờ {q.daysWaiting} ngày
-                        </span>
-                      </div>
-                      <Link
-                        href={`/leads?highlight=${q.leadId}`}
-                        className="h-7 px-2.5 rounded-lg bg-white hover:bg-blue-50 border border-slate-200 text-[#1E3A8A] text-xs font-semibold inline-flex items-center shrink-0"
+                {unansweredQuotes.length === 0 ? (
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 text-xs text-slate-500 text-center">
+                    Không có báo giá nào đang tồn đọng.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {unansweredQuotes.slice(0, 3).map((q) => (
+                      <div
+                        key={q.leadId}
+                        className="p-2.5 rounded-xl bg-slate-50/80 border border-slate-200/90 flex items-center justify-between gap-2"
                       >
-                        Chi tiết
-                      </Link>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                        <div className="min-w-0">
+                          <strong className="text-xs font-bold text-slate-900 block truncate">
+                            {q.companyOrContact}
+                          </strong>
+                          <span className="text-[11px] text-slate-500 block truncate">
+                            {q.assignedSalesName} · Chờ {q.daysWaiting} ngày
+                          </span>
+                        </div>
+                        <Link
+                          href={`/leads?highlight=${q.leadId}`}
+                          className="h-7 px-2.5 rounded-lg bg-white hover:bg-blue-50 border border-slate-200 text-[#1E3A8A] text-xs font-semibold inline-flex items-center shrink-0"
+                        >
+                          Chi tiết
+                        </Link>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
@@ -649,12 +673,16 @@ export default function DashboardPage() {
                 count: detailedLeads.length,
                 icon: FileSpreadsheet,
               },
-              {
-                id: 'sales' as const,
-                label: 'Hiệu suất Đội ngũ Sales',
-                count: salesPerformance.length,
-                icon: Users,
-              },
+              ...(canViewSalesTeam
+                ? [
+                    {
+                      id: 'sales' as const,
+                      label: 'Hiệu suất Đội ngũ Sales',
+                      count: salesPerformance.length,
+                      icon: Users,
+                    },
+                  ]
+                : []),
               ...(canViewMarketingSummary
                 ? [
                     {
@@ -723,10 +751,10 @@ export default function DashboardPage() {
             )}
             {activeTab === 'campaigns' && (
               <Link
-                href="/ads"
+                href={canViewSeoAds ? '/ads' : '/tracking'}
                 className="text-xs font-semibold text-[#1E3A8A] hover:underline inline-flex items-center gap-1"
               >
-                <span>Mở Quản lý Quảng cáo &amp; SEO</span>
+                <span>{canViewSeoAds ? 'Mở Quản lý Quảng cáo & SEO' : 'Mở Chiến dịch Marketing'}</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             )}

@@ -17,29 +17,39 @@ import {
   type ProviderStatusInfo,
 } from './types';
 
+export interface GoogleImagenProviderOptions {
+  apiKey?: string | null;
+  projectId?: string | null;
+  apiEndpoint?: string | null;
+  activeModel?: string | null;
+}
+
 export class GoogleImagenProvider implements AiDesignProvider {
   readonly providerId = 'google_imagen' as const;
   private readonly apiKey: string | null;
   private readonly projectId: string | null;
   private readonly apiEndpoint: string;
+  private readonly activeModel: string;
 
-  constructor() {
-    this.apiKey = process.env.IMAGEN_API_KEY || process.env.GEMINI_API_KEY || null;
-    this.projectId = process.env.GOOGLE_CLOUD_PROJECT || null;
+  constructor(opts?: GoogleImagenProviderOptions) {
+    this.apiKey = opts?.apiKey || process.env.IMAGEN_API_KEY || process.env.GEMINI_API_KEY || null;
+    this.projectId = opts?.projectId || process.env.GOOGLE_CLOUD_PROJECT || null;
+    this.activeModel = opts?.activeModel || 'imagen-3.0-generate-002';
     this.apiEndpoint =
+      opts?.apiEndpoint ||
       process.env.VERTEX_AI_ENDPOINT ||
-      'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict';
+      `https://generativelanguage.googleapis.com/v1beta/models/${this.activeModel}:predict`;
   }
 
   getStatusInfo(): ProviderStatusInfo {
     const isConfigured = Boolean(this.apiKey || this.projectId);
     return {
       provider: 'google_imagen',
-      providerName: 'Google Imagen 3 (Vertex AI / Gemini API)',
+      providerName: 'Google Imagen 3 & Gemini Image',
       isConfigured,
-      statusLabel: isConfigured ? 'AI sẵn sàng' : 'Chưa cấu hình API Key (IMAGEN_API_KEY)',
-      activeModel: 'imagen-3.0-generate-002',
-      costPerImageUsd: 0.03,
+      statusLabel: isConfigured ? 'Đã kết nối API Key' : 'Chưa cấu hình API Key (IMAGEN_API_KEY)',
+      activeModel: this.activeModel,
+      costPerImageUsd: this.activeModel.includes('fast') ? 0.02 : 0.03,
       supportsInpainting: true,
       notes:
         'Hỗ trợ Inpainting bảo tồn bối cảnh phòng & kiến trúc showroom, kết xuất ánh sáng LED chân thực theo chuẩn Google Cloud.',

@@ -4,6 +4,7 @@ import {
   CONTACT_CHANNEL_LABELS,
   PIPELINE_STATUS_LABELS,
   ReportQuerySchema,
+  hasBaPermission,
   isL2Valid,
   isL3Effective,
   toMonetaryAmountDto,
@@ -555,11 +556,9 @@ export async function getScopedReportsDashboard(
   // Prioritized Actionable Tasks scoped by user role (HOME-03)
   const actionableTasks: ActionableTaskItemDto[] = [];
   const canWorkLeads = ['ADMIN', 'BOD', 'SALES_LEAD', 'SALES'].includes(user.roleCode);
-  const canWorkDesigns = ['ADMIN', 'BOD', 'DESIGNER', 'MKT_LEAD', 'SALES_LEAD', 'SALES'].includes(
-    user.roleCode
-  );
-  const canWorkSeo = ['ADMIN', 'BOD', 'MKT_LEAD', 'MKT_STAFF', 'ADS'].includes(user.roleCode);
-  const canWorkTracking = ['ADMIN', 'BOD', 'MKT_LEAD', 'ADS'].includes(user.roleCode);
+  const canWorkDesigns = hasBaPermission(user.roleCode, 'AI_DESIGN');
+  const canWorkSeo = hasBaPermission(user.roleCode, 'AI_MARKETING_SEO');
+  const canWorkTracking = hasBaPermission(user.roleCode, 'TRACKING_ADS_OPTIMIZE');
 
   if (canWorkLeads) {
     actionableTasks.push({

@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -25,7 +25,11 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import type { NotificationDto } from '@toantrung/contracts';
+import {
+  hasBaPermission,
+  type BaPermissionKey,
+  type NotificationDto,
+} from '@toantrung/contracts';
 import { apiRequest } from '../http/client';
 import { useSession } from '../session/SessionContext';
 
@@ -36,9 +40,21 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   badge?: number;
   adminOnly?: boolean;
+  requiredPermission?: BaPermissionKey;
   accentColor?: string;
   activeBg?: string;
 }
+
+const ROUTE_REQUIRED_PERMISSION: Record<string, BaPermissionKey> = {
+  '/dashboard': 'DASHBOARD_VIEW',
+  '/leads': 'LEAD_VIEW_OWN',
+  '/tracking': 'TRACKING_ADS_OPTIMIZE',
+  '/ads': 'AI_MARKETING_SEO',
+  '/reports': 'DASHBOARD_VIEW',
+  '/design': 'AI_DESIGN',
+  '/admin/users': 'SYSTEM_USER_ADMIN',
+  '/settings': 'SYSTEM_USER_ADMIN',
+};
 
 const BREADCRUMB_LABELS: Record<string, string> = {
   '/dashboard': 'Tổng quan điều hành',
@@ -62,6 +78,7 @@ export function getInitials(name: string): string {
 
 export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/dashboard';
+  const router = useRouter();
   const { user, loading, branding, unreadCount, setUnreadCountState, logout } = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
@@ -133,12 +150,26 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
 
   const isFullBleed = pathname === '/design';
 
+  const requiredPermForCurrentRoute = ROUTE_REQUIRED_PERMISSION[pathname];
+  const isRouteUnauthorized = Boolean(
+    user &&
+      requiredPermForCurrentRoute &&
+      !hasBaPermission(user.roleCode, requiredPermForCurrentRoute),
+  );
+
+  useEffect(() => {
+    if (!loading && isRouteUnauthorized) {
+      router.replace('/dashboard');
+    }
+  }, [loading, isRouteUnauthorized, router]);
+
   const workNav: NavItem[] = [
     {
       href: '/dashboard',
       label: 'Tổng quan điều hành',
       shortLabel: 'Tổng quan',
       icon: LayoutGrid,
+      requiredPermission: 'DASHBOARD_VIEW',
       accentColor: 'text-blue-600',
       activeBg: 'bg-blue-50 text-blue-900 border border-blue-200/80',
     },
@@ -147,6 +178,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       label: 'Leads & Giao dịch',
       shortLabel: 'Leads',
       icon: FileSpreadsheet,
+      requiredPermission: 'LEAD_VIEW_OWN',
       accentColor: 'text-indigo-600',
       activeBg: 'bg-indigo-50 text-indigo-900 border border-indigo-200/80',
     },
@@ -155,6 +187,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       label: 'Chiến dịch Marketing',
       shortLabel: 'Chiến dịch',
       icon: Crosshair,
+      requiredPermission: 'TRACKING_ADS_OPTIMIZE',
       accentColor: 'text-sky-600',
       activeBg: 'bg-sky-50 text-sky-900 border border-sky-200/80',
     },
@@ -163,6 +196,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       label: 'Từ khóa & SEO',
       shortLabel: 'SEO/Ads',
       icon: Megaphone,
+      requiredPermission: 'AI_MARKETING_SEO',
       accentColor: 'text-violet-600',
       activeBg: 'bg-violet-50 text-violet-900 border border-violet-200/80',
     },
@@ -171,6 +205,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       label: 'Phân tích & Báo cáo',
       shortLabel: 'Báo cáo',
       icon: BarChart3,
+      requiredPermission: 'DASHBOARD_VIEW',
       accentColor: 'text-emerald-600',
       activeBg: 'bg-emerald-50 text-emerald-900 border border-emerald-200/80',
     },
@@ -179,6 +214,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       label: 'AI Mockup Studio',
       shortLabel: 'AI Studio',
       icon: Sparkles,
+      requiredPermission: 'AI_DESIGN',
       accentColor: 'text-amber-600',
       activeBg: 'bg-amber-50 text-amber-900 border border-amber-200/80',
     },
@@ -202,8 +238,16 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       shortLabel: 'Nhân sự',
       icon: Users,
       adminOnly: true,
+      requiredPermission: 'SYSTEM_USER_ADMIN',
     },
-    { href: '/settings', label: 'Cài đặt hệ thống', shortLabel: 'Cài đặt', icon: Settings },
+    {
+      href: '/settings',
+      label: 'Cài đặt hệ thống',
+      shortLabel: 'Cài đặt',
+      icon: Settings,
+      adminOnly: true,
+      requiredPermission: 'SYSTEM_USER_ADMIN',
+    },
   ];
 
   const currentBreadcrumb = BREADCRUMB_LABELS[pathname] || 'Tổng quan';
@@ -222,29 +266,40 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!user) {
+  if (!user || isRouteUnauthorized) {
     return null;
   }
 
-  const visibleSystemNav = systemNav.filter(
-    (item) => !item.adminOnly || user.roleCode === 'ADMIN',
+  const visibleWorkNav = workNav.filter(
+    (item) =>
+      (!item.adminOnly || user.roleCode === 'ADMIN') &&
+      (!item.requiredPermission || hasBaPermission(user.roleCode, item.requiredPermission)),
   );
 
-  const renderNavGroup = (title: string, items: NavItem[]) => (
-    <div className="mb-5">
-      {!sidebarCollapsed && (
-        <p className="px-3 mb-2 text-[11px] font-bold tracking-wider uppercase text-slate-400 hidden xl:block">
-          {title}
-        </p>
-      )}
-      <div className="space-y-1">
-        {items.map((item) => {
-          const Icon = item.icon;
-          const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
+  const visibleSystemNav = systemNav.filter(
+    (item) =>
+      (!item.adminOnly || user.roleCode === 'ADMIN') &&
+      (!item.requiredPermission || hasBaPermission(user.roleCode, item.requiredPermission)),
+  );
+
+  const renderNavGroup = (title: string, items: NavItem[]) => {
+    if (items.length === 0) return null;
+    return (
+      <div className="mb-5">
+        {!sidebarCollapsed && (
+          <p className="px-3 mb-2 text-[11px] font-bold tracking-wider uppercase text-slate-400 hidden xl:block">
+            {title}
+          </p>
+        )}
+        <div className="space-y-1">
+          {items.map((item) => {
+            const Icon = item.icon;
+            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                prefetch={true}
               onClick={() => setMobileOpen(false)}
               title={item.label}
               className={`group relative flex items-center gap-3 h-10 rounded-xl px-3 text-sm transition-all ${
@@ -297,7 +352,8 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
         })}
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div className="min-h-screen bg-slate-50/60 text-slate-800 flex w-full overflow-hidden">
@@ -369,7 +425,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
 
         {/* Navigation Links */}
         <nav className="flex-1 overflow-y-auto px-3 py-4">
-          {renderNavGroup('ĐIỀU HÀNH & KINH DOANH', workNav)}
+          {renderNavGroup('ĐIỀU HÀNH & KINH DOANH', visibleWorkNav)}
           {renderNavGroup('CÁ NHÂN', personalNav)}
           {renderNavGroup('QUẢN TRỊ HỆ THỐNG', visibleSystemNav)}
         </nav>
@@ -673,7 +729,9 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
         >
           {[
             { href: '/leads', label: 'Leads', icon: FileSpreadsheet },
-            { href: '/design', label: 'AI Studio', icon: Sparkles },
+            ...(hasBaPermission(user.roleCode, 'AI_DESIGN')
+              ? [{ href: '/design', label: 'AI Studio', icon: Sparkles }]
+              : []),
             { href: '/reports', label: 'Báo cáo', icon: BarChart3 },
             { href: '/notifications', label: 'Thông báo', icon: Bell, badge: unreadCount },
           ].map((item) => {

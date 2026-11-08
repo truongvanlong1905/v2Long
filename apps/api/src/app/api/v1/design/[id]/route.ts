@@ -15,6 +15,7 @@ import {
   deleteProjectPhoto,
   processChatDesignRequest,
   regenerateDesignDraftByAi,
+  saveCompositedDraftVersion,
   updateDesignProject,
   uploadDesignerFinalRender,
 } from '../../../../../modules/05-ai-design/service';
@@ -123,6 +124,21 @@ export async function POST(
           return jsonError('VALIDATION_ERROR', parsed.error.issues[0]?.message || 'Dữ liệu ảnh không hợp lệ.', 400);
         }
         const res = await addProjectPhoto(auth.user, requestId, parsed.data);
+        return jsonSuccess(res, 201);
+      }
+
+      if (action === 'save_composited_version') {
+        const b64 = String(raw.base64Data || '');
+        if (!b64) {
+          return jsonError('VALIDATION_ERROR', 'Dữ liệu ảnh bản ghép 3D không được để trống.', 400);
+        }
+        const res = await saveCompositedDraftVersion(auth.user, requestId, {
+          fileName: String(raw.fileName || `studio-composite-req-${requestId}.png`),
+          mimeType: String(raw.mimeType || 'image/png'),
+          buffer: Buffer.from(b64, 'base64'),
+          note: raw.note ? String(raw.note) : undefined,
+          placementQuad: raw.placementQuad as any,
+        });
         return jsonSuccess(res, 201);
       }
 

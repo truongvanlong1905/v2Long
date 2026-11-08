@@ -286,6 +286,14 @@ test('M05-03: Shared Database Integration & Project Model Lifecycle (Create -> C
   assert.equal(finished.designStatus, 'completed');
   assert.equal(finished.approvedVersionId, v2.id);
   assert.equal(finished.approvedVersion?.isApprovedFinal, true);
+
+  // Clean up test rows so live studio database stays clean
+  await prisma.designRequest.update({
+    where: { id: created.id },
+    data: { approvedVersionId: null },
+  });
+  await prisma.designAssetVersion.deleteMany({ where: { designRequestId: created.id } });
+  await prisma.designRequest.delete({ where: { id: created.id } });
 });
 
 test('M05-04: Standalone Banner creation without Lead requirement (UC06 Luồng phụ 2a)', async (t) => {
@@ -309,6 +317,8 @@ test('M05-04: Standalone Banner creation without Lead requirement (UC06 Luồng 
   assert.ok(bannerReq.id > 0);
   assert.equal(bannerReq.leadId, null, 'Lead ID must be null for independent banner');
   assert.equal(bannerReq.requestType, 'banner');
+
+  await prisma.designRequest.delete({ where: { id: bannerReq.id } });
 });
 
 test('M05-05: AI Usage Log records timing, tokens, and micro-costs per attempt', async (t) => {
@@ -339,4 +349,6 @@ test('M05-05: AI Usage Log records timing, tokens, and micro-costs per attempt',
   assert.equal(log.costMicros, 30000n);
   assert.equal(log.status, 'success');
   assert.equal(log.moduleCode, '05-ai-design');
+
+  await prisma.aiUsageLog.delete({ where: { id: log.id } });
 });

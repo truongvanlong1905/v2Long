@@ -129,26 +129,36 @@ export async function inspectDuplicateAndPriceCheck(params: {
     orConditions.push({ normalizedLookupKey: lookupKey });
   }
 
-  const candidateLeads = await prisma.lead.findMany({
-    where: {
-      ...(params.excludeLeadId ? { id: { not: params.excludeLeadId } } : {}),
-      OR: orConditions,
-    },
-    orderBy: { createdAt: 'desc' },
-    take: 5,
-  });
+    const candidateLeads = await prisma.lead.findMany({
+      where: {
+        ...(params.excludeLeadId ? { id: { not: params.excludeLeadId } } : {}),
+        isSpam: false,
+        NOT: {
+          AND: [
+            { pipelineStatus: 'lost' },
+            { lostReason: { in: ['Sai số/nhầm máy', 'Sai số', 'Nhầm máy', 'SĐT không tồn tại', 'Trùng Lead', 'Spam'] } },
+          ],
+        },
+        OR: orConditions,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+    });
 
-  let isDuplicateAlert = false;
-  let duplicateStatus = 'none';
-  let matchedOldLead: (typeof candidateLeads)[number] | null = null;
+    let isDuplicateAlert = false;
+    let duplicateStatus = 'none';
+    let matchedOldLead: (typeof candidateLeads)[number] | null = null;
 
-  if (candidateLeads.length > 0) {
-    // Ưu tiên Lead cũ đang ở 'new_lead' để tô đỏ cảnh báo theo UC01 4.3
-    const activeNewLead = candidateLeads.find((l) => l.pipelineStatus === 'new_lead' && !l.isSpam);
-    matchedOldLead = activeNewLead || candidateLeads[0];
-    isDuplicateAlert = true;
-    duplicateStatus = activeNewLead ? 'duplicate_red' : 'has_old_lead';
-  }
+    if (candidateLeads.length > 0) {
+      // Ưu tiên Lead cũ đang mở ('new_lead', 'quoting', 'quote_sent') để cảnh báo trùng theo UC01 1.5 Kịch bản 1
+      const activeOpenLead = candidateLeads.find(
+        (l) => (l.pipelineStatus === 'new_lead' || l.pipelineStatus === 'quoting' || l.pipelineStatus === 'quote_sent') && !l.isSpam,
+      );
+      const activeNewLead = candidateLeads.find((l) => l.pipelineStatus === 'new_lead' && !l.isSpam);
+      matchedOldLead = activeNewLead || activeOpenLead || candidateLeads[0];
+      isDuplicateAlert = true;
+      duplicateStatus = activeNewLead ? 'duplicate_red' : 'has_old_lead';
+    }
 
   const priceAlerts = await prisma.priceCheckAlert.findMany({
     where: {
@@ -392,13 +402,12 @@ export async function listLeadsForUser(
     prisma.lead.count({ where: whereClause }),
     listProductsAndSalesOptions(user),
     prisma.priceCheckAlert.findMany({
-      where: { status: 'active' },
       include: {
         lead: { select: { leadCode: true } },
         createdBy: { select: { id: true, fullName: true } },
       },
       orderBy: { createdAt: 'desc' },
-      take: 50,
+      take: 100,
     }),
   ]);
 
@@ -721,6 +730,9 @@ export async function createManualLead(actor: SessionUserDto, input: CreateManua
   });
 
   await prisma.$transaction(async (tx) => {
+    const manualContactTime = input.contactedAt ? new Date(input.contactedAt) : new Date();
+    const isManualAutoReceived =
+      input.contactChannel === 'hotline' || input.contactChannel === 'zalo';
     await tx.lead.update({
       where: { id: ingested.lead.id },
       data: {
@@ -730,7 +742,14 @@ export async function createManualLead(actor: SessionUserDto, input: CreateManua
         duplicateStatus: dupCheck.duplicateStatus,
         matchedOldLeadId: dupCheck.matchedOldLead?.id ?? null,
         isSuspectedPriceCheck: dupCheck.isSuspectedPriceCheck,
-        contactedAt: input.contactedAt ? new Date(input.contactedAt) : new Date(),
+        contactedAt: manualContactTime,
+        // UC01 2.3 & Module 1.2 Bước 5: Lead thủ công (Hotline/Zalo) có Mốc tiếp nhận = Thời điểm khách liên hệ và được coi là đã tiếp nhận ngay
+        ...(isManualAutoReceived
+          ? {
+            receivedAt: manualContactTime,
+            receivedByUserId: actor.id,
+          }
+          : {}),
       },
     });
 
@@ -962,6 +981,8 @@ export async function transitionLeadPipeline(
   }
 
   const now = new Date();
+  const shouldAutoConfirmReceive =
+    !existing.receivedAt && (input.toStatus === 'quoting' || input.toStatus === 'lost');
 
   // Không ghi quoteValueVnd/dealValueVnd: quy tắc không công khai giá. Giá trị cũ trong DB được giữ nguyên.
   return transitionLeadWithVersion(prisma, {
@@ -970,6 +991,13 @@ export async function transitionLeadPipeline(
     patch: {
       pipelineStatus: input.toStatus,
       lostReason: input.toStatus === 'lost' ? input.reason?.trim() || null : existing.lostReason,
+      // UC01 4.6e: Chuyển sang "Đang soạn báo giá" hoặc "Thất bại" mà chưa tiếp nhận -> hệ thống tự ghi tiếp nhận tại thời điểm đó
+      ...(shouldAutoConfirmReceive
+        ? {
+          receivedAt: now,
+          receivedByUserId: actor.id,
+        }
+        : {}),
       firstQuoteSentAt:
         input.toStatus === 'quote_sent' && !existing.firstQuoteSentAt
           ? now
@@ -1055,6 +1083,13 @@ export async function reassignLeadSales(
     expectedVersion: input.expectedVersion,
     patch: {
       assignedSalesId: targetSales.id,
+      // UC01 4.5d: Nếu người chuyển chưa bấm tiếp nhận thì hệ thống ghi tiếp nhận tại lúc chuyển
+      ...(!existing.receivedAt
+        ? {
+          receivedAt: new Date(),
+          receivedByUserId: actor.id,
+        }
+        : {}),
     },
     activity: {
       actionType: 'reassign_sales',
@@ -1268,18 +1303,42 @@ export async function createCompetitorPriceCheckAlert(params: {
   const companyNorm = normalizeLookupText(lead.companyName);
 
   const alert = await prisma.$transaction(async (tx) => {
-    const created = await tx.priceCheckAlert.create({
-      data: {
-        leadId: lead.id,
-        phone: lead.phone,
-        companyName: lead.companyName,
-        normalizedLookupKey: companyNorm || null,
-        reason: params.reasonEvidence,
-        chatScreenshotUrl,
+    // E8: Cảnh báo dò giá trùng -> nếu SĐT hoặc Tên công ty đã có cảnh báo "Đang hiển thị" (active), gộp thông tin bổ sung vào cảnh báo đang có
+    const existingActiveAlert = await tx.priceCheckAlert.findFirst({
+      where: {
         status: 'active',
-        createdByUserId: params.actor.id,
+        OR: [
+          { phone: lead.phone },
+          ...(companyNorm ? [{ normalizedLookupKey: { contains: companyNorm } }] : []),
+        ],
       },
+      orderBy: { createdAt: 'desc' },
     });
+
+    let savedAlert;
+    if (existingActiveAlert) {
+      const mergedReason = `${existingActiveAlert.reason}\n[Bổ sung bởi ${params.actor.fullName} lúc ${new Date().toLocaleString('vi-VN')}]: ${params.reasonEvidence}`;
+      savedAlert = await tx.priceCheckAlert.update({
+        where: { id: existingActiveAlert.id },
+        data: {
+          reason: mergedReason,
+          ...(chatScreenshotUrl ? { chatScreenshotUrl } : {}),
+        },
+      });
+    } else {
+      savedAlert = await tx.priceCheckAlert.create({
+        data: {
+          leadId: lead.id,
+          phone: lead.phone,
+          companyName: lead.companyName,
+          normalizedLookupKey: companyNorm || null,
+          reason: params.reasonEvidence,
+          chatScreenshotUrl,
+          status: 'active',
+          createdByUserId: params.actor.id,
+        },
+      });
+    }
 
     await tx.lead.updateMany({
       where: {
@@ -1299,11 +1358,13 @@ export async function createCompetitorPriceCheckAlert(params: {
         actionType: 'price_check_alert',
         actionById: params.actor.id,
         actorType: 'user',
-        note: `Đăng cảnh báo nghi đối thủ dò giá: ${params.reasonEvidence}`,
+        note: existingActiveAlert
+          ? `Bổ sung thông tin vào cảnh báo dò giá #${existingActiveAlert.id} (E8): ${params.reasonEvidence}`
+          : `Đăng cảnh báo nghi đối thủ dò giá: ${params.reasonEvidence}`,
       },
     });
 
-    return created;
+    return savedAlert;
   });
 
   // Gửi thông báo cho toàn bộ NVKD, Marketing và Ads theo UC01 4.5
@@ -1331,6 +1392,84 @@ export async function createCompetitorPriceCheckAlert(params: {
   }
 
   return alert;
+}
+
+/**
+ * UC01 5.3: Gỡ cảnh báo dò giá ("Đã gỡ") — Chỉ người đăng cảnh báo (hoặc Admin) được gỡ, bắt buộc nhập lý do.
+ * Sau khi gỡ, các Lead liên quan tự động bỏ cờ "Nghi dò giá".
+ */
+export async function dismissCompetitorPriceCheckAlert(params: {
+  actor: SessionUserDto;
+  alertId: number;
+  dismissReason: string;
+}) {
+  const reasonTrimmed = (params.dismissReason || '').trim();
+  if (!reasonTrimmed) {
+    throw new Error('Bắt buộc nhập lý do gỡ cảnh báo dò giá (ví dụ: nhầm khách thật) theo UC01 5.3.');
+  }
+
+  const alert = await prisma.priceCheckAlert.findUnique({
+    where: { id: params.alertId },
+  });
+  if (!alert) {
+    throw new Error('Không tìm thấy cảnh báo dò giá.');
+  }
+  if (alert.status === 'dismissed') {
+    throw new Error('Cảnh báo dò giá này đã được gỡ trước đó.');
+  }
+  if (alert.createdByUserId !== params.actor.id && params.actor.roleCode !== 'ADMIN') {
+    throw new Error('Theo UC01 5.3, chỉ nhân viên đã đăng cảnh báo này (hoặc Admin) mới được phép gỡ cảnh báo.');
+  }
+
+  const companyNorm = alert.normalizedLookupKey || normalizeLookupText(alert.companyName);
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.priceCheckAlert.update({
+      where: { id: alert.id },
+      data: {
+        status: 'dismissed',
+        reason: `${alert.reason}\n[Đã gỡ bởi ${params.actor.fullName} lúc ${new Date().toLocaleString('vi-VN')} — Lý do: ${reasonTrimmed}]`,
+      },
+    });
+
+    // Kiểm tra xem còn cảnh báo active nào khác cho cùng SĐT / Công ty không
+    const remainingActive = await tx.priceCheckAlert.count({
+      where: {
+        id: { not: alert.id },
+        status: 'active',
+        OR: [
+          { phone: alert.phone },
+          ...(companyNorm ? [{ normalizedLookupKey: { contains: companyNorm } }] : []),
+        ],
+      },
+    });
+
+    if (remainingActive === 0) {
+      await tx.lead.updateMany({
+        where: {
+          OR: [
+            { phone: alert.phone },
+            ...(companyNorm ? [{ normalizedLookupKey: { contains: companyNorm } }] : []),
+          ],
+        },
+        data: {
+          isSuspectedPriceCheck: false,
+        },
+      });
+    }
+
+    await tx.leadActivity.create({
+      data: {
+        leadId: alert.leadId,
+        actionType: 'price_check_alert',
+        actionById: params.actor.id,
+        actorType: 'user',
+        note: `Đã gỡ cảnh báo dò giá #${alert.id} (UC01 5.3) · Lý do: ${reasonTrimmed}`,
+      },
+    });
+
+    return updated;
+  });
 }
 
 /**

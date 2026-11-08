@@ -29,6 +29,41 @@ export const DESIGN_STATUS_LABELS: Record<DesignStatus, string> = {
   completed: 'Đã phê duyệt & bàn giao',
 };
 
+export const AI_PROVIDER_IDS = [
+  'google_imagen',
+  'openai_dalle',
+  'flux_bfl',
+  'stability_ai',
+  'custom_endpoint',
+  'local_sandbox',
+] as const;
+
+export type AiProviderId = (typeof AI_PROVIDER_IDS)[number];
+
+export interface AiModelOptionDto {
+  id: string;
+  name: string;
+  badge: string;
+  costPerImageUsd: number;
+  supportsInpainting: boolean;
+  description: string;
+}
+
+export interface AiProviderCatalogItemDto {
+  providerId: AiProviderId;
+  providerName: string;
+  shortName: string;
+  isConfigured: boolean;
+  isDefault: boolean;
+  activeModel: string;
+  apiEndpoint?: string;
+  hasApiKey: boolean;
+  maskedApiKey?: string | null;
+  statusLabel: string;
+  notes: string;
+  models: AiModelOptionDto[];
+}
+
 export interface QuadCoordinatesDto {
   topLeft: { x: number; y: number };
   topRight: { x: number; y: number };
@@ -53,6 +88,8 @@ export interface DesignChatMessageDto {
   timestamp: string;
   versionId?: number;
   versionNumber?: number;
+  providerId?: string;
+  modelUsed?: string;
   durationSec?: number;
   tokenUsed?: number;
   cost?: string;
@@ -88,6 +125,8 @@ export interface DesignAssetVersionItemDto {
   designRequestId: number;
   versionNumber: number;
   sourceType: 'AI_DRAFT' | 'DESIGNER_FINAL_UPLOAD';
+  providerId?: string | null;
+  modelUsed?: string | null;
   storageObjectKey: string;
   downloadUrl: string;
   mimeType: string;
@@ -198,6 +237,8 @@ export const CreatePerspective3dRequestSchema = z.object({
     .min(5, 'Prompt mô tả phối cảnh cần tối thiểu 5 ký tự.')
     .max(1500),
   quality: z.enum(['draft', 'high_quality']).default('draft'),
+  providerId: z.enum(AI_PROVIDER_IDS).optional(),
+  modelId: z.string().trim().max(120).optional(),
   simulateAiTimeout: z.boolean().optional(),
 });
 
@@ -220,6 +261,8 @@ export const CreateBannerRequestSchema = z.object({
     .min(5, 'Prompt mô tả nội dung Banner cần tối thiểu 5 ký tự.')
     .max(1500),
   quality: z.enum(['draft', 'high_quality']).default('draft'),
+  providerId: z.enum(AI_PROVIDER_IDS).optional(),
+  modelId: z.string().trim().max(120).optional(),
   simulateAiTimeout: z.boolean().optional(),
 });
 
@@ -264,6 +307,8 @@ export const ChatDesignRequestSchema = z.object({
   expectedVersion: z.number().int().positive(),
   prompt: z.string().trim().min(5, 'Yêu cầu chỉnh sửa cần tối thiểu 5 ký tự.').max(1500),
   quality: z.enum(['draft', 'high_quality']).default('draft'),
+  providerId: z.enum(AI_PROVIDER_IDS).optional(),
+  modelId: z.string().trim().max(120).optional(),
   placementQuad: QuadCoordinatesSchema.optional().nullable(),
   selectedPhotoUrl: z.string().trim().optional().nullable(),
   productId: z.number().int().positive().optional().nullable(),
@@ -281,6 +326,8 @@ export type ChatDesignRequestDto = z.infer<typeof ChatDesignRequestSchema>;
 export const RegenerateDesignDraftSchema = z.object({
   expectedVersion: z.number().int().positive(),
   aiPrompt: z.string().trim().min(5).max(1500),
+  providerId: z.enum(AI_PROVIDER_IDS).optional(),
+  modelId: z.string().trim().max(120).optional(),
   ledModuleSpec: z.string().trim().max(120).optional().nullable(),
   screenWidthM: z.number().positive().max(200).optional().nullable(),
   screenHeightM: z.number().positive().max(100).optional().nullable(),
@@ -292,6 +339,22 @@ export const RegenerateDesignDraftSchema = z.object({
 });
 
 export type RegenerateDesignDraftDto = z.infer<typeof RegenerateDesignDraftSchema>;
+
+export const ConfigureAiProvidersSchema = z.object({
+  defaultProviderId: z.enum(AI_PROVIDER_IDS),
+  defaultModelId: z.string().trim().min(1).max(120).optional(),
+  autoFallbackToLocal: z.boolean().default(true),
+  providerConfig: z
+    .object({
+      providerId: z.enum(AI_PROVIDER_IDS),
+      apiKey: z.string().trim().max(300).optional().nullable(),
+      apiEndpoint: z.string().trim().max(400).optional().nullable(),
+      activeModel: z.string().trim().max(120).optional().nullable(),
+    })
+    .optional(),
+});
+
+export type ConfigureAiProvidersDto = z.infer<typeof ConfigureAiProvidersSchema>;
 
 export const ApproveDesignVersionSchema = z.object({
   expectedVersion: z.number().int().positive(),

@@ -1,11 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
+  reactStrictMode: false,
   transpilePackages: ['@toantrung/contracts', '@toantrung/api', '@toantrung/database'],
   experimental: {
     externalDir: true,
-    workerThreads: false,
-    cpus: 1,
+    optimizePackageImports: ['lucide-react', '@toantrung/contracts'],
   },
   async headers() {
     return [

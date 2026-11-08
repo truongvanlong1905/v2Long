@@ -1,9 +1,15 @@
-import { CreateDesignRequestSchema, hasBaPermission } from '@toantrung/contracts';
+import {
+  ConfigureAiProvidersSchema,
+  CreateDesignRequestSchema,
+  hasBaPermission,
+} from '@toantrung/contracts';
 import { prisma } from '@toantrung/database';
 import { jsonError, jsonSuccess } from '../../../../core/http';
 import { requireAuthenticatedSession } from '../../../../core/permissions';
 import {
+  configureAiProviders,
   createDesignRequestWithAiDraft,
+  deleteDesignProject,
   listDesignRequestsForUser,
 } from '../../../../modules/05-ai-design/service';
 
@@ -28,7 +34,55 @@ export async function POST(req: Request) {
   if (!auth.ok) return auth.response;
 
   try {
-    const raw = await req.json();
+    const raw = (await req.json()) as Record<string, unknown>;
+
+    if (raw.action === 'configure_ai_providers') {
+      if (!hasBaPermission(auth.user.roleCode, 'AI_DESIGN')) {
+        return jsonError(
+          'FORBIDDEN_PERMISSION',
+          'Chỉ Quản trị viên, Ban Giám đốc, Trưởng phòng hoặc Designer được cấu hình hệ thống Đa AI.',
+          403
+        );
+      }
+      const parsedCfg = ConfigureAiProvidersSchema.safeParse(raw);
+      if (!parsedCfg.success) {
+        return jsonError(
+          'VALIDATION_ERROR',
+          parsedCfg.error.issues[0]?.message || 'Cấu hình Đa AI không hợp lệ.',
+          400
+        );
+      }
+      const providerStatus = await configureAiProviders(auth.user, parsedCfg.data);
+      return jsonSuccess({ ok: true, providerStatus });
+    }
+
+    if (raw.action === 'bulk_delete_projects') {
+      if (!hasBaPermission(auth.user.roleCode, 'AI_DESIGN')) {
+        return jsonError(
+          'FORBIDDEN_PERMISSION',
+          'Tài khoản không có quyền xóa dự án thiết kế.',
+          403
+        );
+      }
+      const rawIds = Array.isArray(raw.projectIds) ? raw.projectIds : [];
+      const ids = rawIds
+        .map((v) => Number(v))
+        .filter((n) => Number.isInteger(n) && n > 0);
+      if (ids.length === 0) {
+        return jsonError('VALIDATION_ERROR', 'Vui lòng chọn ít nhất 1 dự án để xóa.', 400);
+      }
+      let deletedCount = 0;
+      for (const pid of ids) {
+        try {
+          await deleteDesignProject(auth.user, pid);
+          deletedCount += 1;
+        } catch {
+          // Skip projects already deleted or invalid
+        }
+      }
+      return jsonSuccess({ ok: true, deletedCount });
+    }
+
     const parsed = CreateDesignRequestSchema.safeParse(raw);
     if (!parsed.success) {
       return jsonError(

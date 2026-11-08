@@ -280,7 +280,7 @@ export default function SettingsPage() {
     };
   }, [dragMode]);
 
-  if (!user) return null;
+  if (!user || !isAdmin) return null;
 
   // --- Section 1: "Logo hiển thị" Handlers ---
   const handleSaveLogo = async () => {
@@ -880,17 +880,7 @@ export default function SettingsPage() {
       {/* =====================================================================
           SUB-TAB 2: DEDICATED "THƯƠNG HIỆU & THÔNG TIN CÔNG TY" (ENHANCEMENT 9)
       ===================================================================== */}
-      {activeSettingsTab === 'branding_identity' && (!isAdmin ? (
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-8 text-center shadow-card">
-          <p className="text-sm font-bold text-ink">
-            Quyền chỉnh sửa Thương hiệu & Thông tin công ty chỉ dành cho Quản trị viên (ADMIN)
-          </p>
-          <p className="text-xs text-ink-muted mt-1">
-            Vai trò hiện tại của bạn ({user.roleName}) không có quyền thay đổi cấu hình thương hiệu
-            chung.
-          </p>
-        </div>
-      ) : (
+      {activeSettingsTab === 'branding_identity' && (
         <div id="branding" className="space-y-6">
           {/* =====================================================================
               SECTION 0: THÔNG TIN PHÁP NHÂN & HỒ SƠ CÔNG TY (COMPANY PROFILE)
@@ -1905,7 +1895,7 @@ export default function SettingsPage() {
             </div>
           </section>
         </div>
-      ))}
+      )}
     </div>
   );
 }

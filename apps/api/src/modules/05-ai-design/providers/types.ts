@@ -3,6 +3,8 @@
  * Module 05: Hỗ trợ Thiết kế & Phối cảnh AI (UC06)
  */
 
+import type { AiProviderCatalogItemDto, AiProviderId } from '@toantrung/contracts';
+
 export interface QuadCoordinates {
   topLeft: { x: number; y: number };
   topRight: { x: number; y: number };
@@ -27,6 +29,7 @@ export interface PerspectiveGenerationInput {
     screenStyle?: string;
   };
   quality: 'draft' | 'high_quality';
+  modelId?: string;
   idempotencyKey: string;
   simulateTimeout?: boolean;
 }
@@ -44,6 +47,7 @@ export interface BannerGenerationInput {
     productName?: string;
   };
   quality: 'draft' | 'high_quality';
+  modelId?: string;
   idempotencyKey: string;
   simulateTimeout?: boolean;
 }
@@ -55,7 +59,7 @@ export interface ProviderGenerationResult {
   mimeType: string;
   durationMs: number;
   modelUsed: string;
-  provider: 'google_imagen' | 'openai_dalle' | 'local_sandbox';
+  provider: AiProviderId;
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
@@ -63,10 +67,11 @@ export interface ProviderGenerationResult {
   costCurrency: 'USD' | 'VND';
   status: 'success' | 'failed' | 'timeout';
   errorMessage?: string;
+  fallbackNotice?: string;
 }
 
 export interface ProviderStatusInfo {
-  provider: 'google_imagen' | 'openai_dalle' | 'local_sandbox';
+  provider: AiProviderId;
   providerName: string;
   isConfigured: boolean;
   statusLabel: string;
@@ -74,10 +79,14 @@ export interface ProviderStatusInfo {
   costPerImageUsd: number;
   supportsInpainting: boolean;
   notes: string;
+  defaultProviderId?: AiProviderId;
+  defaultModelId?: string;
+  autoFallbackToLocal?: boolean;
+  availableProviders?: AiProviderCatalogItemDto[];
 }
 
 export interface AiDesignProvider {
-  readonly providerId: 'google_imagen' | 'openai_dalle' | 'local_sandbox';
+  readonly providerId: AiProviderId;
   getStatusInfo(): ProviderStatusInfo;
   generatePerspectiveDraft(input: PerspectiveGenerationInput): Promise<ProviderGenerationResult>;
   generateBannerDraft(input: BannerGenerationInput): Promise<ProviderGenerationResult>;

@@ -529,21 +529,7 @@ export function ReportDocComposer({ user, data }: ReportDocComposerProps) {
               </div>
             )}
           </div>
-        ) : (
-          <div className="p-4 rounded-xl bg-amber-50/80 border border-amber-200 flex items-center justify-between gap-3 text-sm text-amber-900">
-            <div className="flex items-center gap-2">
-              <Lock className="w-4 h-4 text-amber-700 shrink-0" />
-              <span>
-                <strong>Khóa phạm vi Phòng ban:</strong> Tài khoản Trưởng bộ phận / Nhân
-                viên chỉ được gửi báo cáo trong nội bộ{' '}
-                <strong>
-                  {DEPARTMENTS.find((d) => d.id === lockedDeptId)?.label || 'Phòng ban của mình'}
-                </strong>{' '}
-                (không tự ý phát tán chéo sang bộ phận khác).
-              </span>
-            </div>
-          </div>
-        )}
+        ) : null}
       </div>
 
       {/* Kho Lưu Trữ Văn Bản Báo Cáo Điều Hành Đã Phát Hành */}

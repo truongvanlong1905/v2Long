@@ -251,6 +251,8 @@ export function ManualLeadModal({
     const installationAddress = String(fd.get('installationAddress') || '').trim() || undefined;
     const customProductNote = String(fd.get('customProductNote') || '').trim() || undefined;
     const initialNote = String(fd.get('initialNote') || '').trim() || undefined;
+    const contactedAtRaw = String(fd.get('contactedAt') || '').trim();
+    const contactedAt = contactedAtRaw ? new Date(contactedAtRaw).toISOString() : undefined;
 
     const rawPayload = {
       contactChannel: channel,
@@ -260,6 +262,7 @@ export function ManualLeadModal({
       projectName,
       email,
       selfReportedSource,
+      contactedAt,
       areaType,
       hcmDistrict: areaType === 'hcm' ? district : undefined,
       province: areaType === 'other_province' ? province : undefined,
@@ -349,7 +352,7 @@ export function ManualLeadModal({
           {/* Grid Row 1: Contact Source, Phone, Contact Name */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
             <div>
-              <label className="block font-bold text-slate-700 mb-1">Kênh liên hệ *</label>
+              <label className="block font-bold text-slate-700 mb-1">Nguồn / Kênh liên hệ *</label>
               <select
                 value={channel}
                 onChange={(e) =>
@@ -357,16 +360,16 @@ export function ManualLeadModal({
                 }
                 className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white font-semibold text-slate-800"
               >
-                <option value="hotline">Hotline</option>
-                <option value="zalo">Zalo OA / Cá nhân</option>
-                <option value="email">Email</option>
+                <option value="hotline">Hotline (Đã tiếp nhận ngay)</option>
+                <option value="zalo">Zalo OA / Cá nhân (Đã tiếp nhận ngay)</option>
+                <option value="email">Email nhận Lead</option>
                 <option value="form_web">Form Website</option>
               </select>
             </div>
 
             <div>
               <label className="block font-bold text-slate-700 mb-1">
-                Số điện thoại * <span className="text-slate-400 font-normal">(Tự chuẩn hóa)</span>
+                Số điện thoại * <span className="text-slate-400 font-normal">(Tự chuẩn hóa E2)</span>
               </label>
               <div className="relative">
                 <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -393,7 +396,7 @@ export function ManualLeadModal({
             </div>
           </div>
 
-          {/* Grid Row 2: Company, Project, Self-reported Source */}
+          {/* Grid Row 2: Company, Project, Email */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
             <div>
               <label className="block font-bold text-slate-700 mb-1">
@@ -421,24 +424,51 @@ export function ManualLeadModal({
 
             <div>
               <label className="block font-bold text-slate-700 mb-1">
-                Nguồn khách tự khai & Email
+                Email nhận báo giá
               </label>
-              <div className="grid grid-cols-2 gap-1.5">
-                <input
-                  name="selfReportedSource"
-                  type="text"
-                  defaultValue=""
-                  placeholder="Google, Quen..."
-                  className="w-full h-10 px-2.5 rounded-xl border border-slate-200"
-                />
-                <input
-                  name="email"
-                  type="email"
-                  defaultValue=""
-                  placeholder="Email..."
-                  className="w-full h-10 px-2.5 rounded-xl border border-slate-200"
-                />
-              </div>
+              <input
+                name="email"
+                type="email"
+                defaultValue=""
+                placeholder="khachhang@congty.vn"
+                className="w-full h-10 px-3 rounded-xl border border-slate-200 focus:border-[#2563EB] outline-none"
+              />
+            </div>
+          </div>
+
+          {/* Grid Row 2.5 (UC01 2.1): Thời điểm khách liên hệ & Kênh biết đến */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 p-3 rounded-xl bg-blue-50/40 border border-blue-100">
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">
+                Thời điểm khách liên hệ <span className="text-xs font-normal text-slate-500">(Theo nhật ký cuộc gọi / Zalo — UC01 2.1)</span>
+              </label>
+              <input
+                name="contactedAt"
+                type="datetime-local"
+                defaultValue={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
+                className="w-full h-9 px-3 rounded-xl border border-slate-200 bg-white font-medium text-slate-800"
+              />
+            </div>
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">
+                Kênh biết đến Toàn Trung <span className="text-xs font-normal text-slate-500">(Hỏi khách khi tư vấn — UC01 2.1)</span>
+              </label>
+              <input
+                name="selfReportedSource"
+                type="text"
+                list="manual-self-reported-sources"
+                defaultValue=""
+                placeholder="Chọn hoặc nhập: Tìm Google, Bạn bè giới thiệu, Bảng hiệu..."
+                className="w-full h-9 px-3 rounded-xl border border-slate-200 bg-white"
+              />
+              <datalist id="manual-self-reported-sources">
+                <option value="Tìm trên Google" />
+                <option value="Bạn bè / Đối tác giới thiệu" />
+                <option value="Thấy bảng hiệu / Showroom Toàn Trung" />
+                <option value="Zalo / Facebook Toàn Trung" />
+                <option value="Khách hàng cũ quay lại" />
+                <option value="Hội thảo / Triển lãm" />
+              </datalist>
             </div>
           </div>
 
