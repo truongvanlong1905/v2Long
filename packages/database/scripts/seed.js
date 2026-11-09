@@ -141,7 +141,14 @@ async function syncAuthoritativeProducts(client = prisma) {
 }
 
 function createSamplePngBuffer() {
-  // Valid 1x1 blue PNG for synthetic attachment/design storage files
+  // Use real showroom photo if available so seeded design versions are real photos, not 1x1 blue pixels
+  const realShowroomPath = path.resolve(
+    __dirname,
+    '../../../apps/web/public/brand/login-hero-led-building.jpg'
+  );
+  if (fs.existsSync(realShowroomPath)) {
+    return fs.readFileSync(realShowroomPath);
+  }
   return Buffer.from(
     '89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c4944415408d7636060f80f00010401005f9527b00000000049454e44ae426082',
     'hex',
@@ -1159,13 +1166,10 @@ async function main() {
       const user = await prisma.user.upsert({
         where: { email: acc.email },
         update: {
-          fullName: acc.fullName,
+          // Preserve user-customized fullName, phone, avatarUrl, and passwordHash across builds/seeds!
           roleId: acc.roleId,
           department: acc.department,
           specialtyGroup: acc.specialtyGroup,
-          isReceivingLeads: acc.isReceivingLeads,
-          isOnline: acc.isOnline,
-          passwordHash,
           isActive: true,
         },
         create: {

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -14,6 +14,7 @@ import {
   ExternalLink,
   Eye,
   FileEdit,
+  FolderUp,
   Globe,
   History,
   Layers,
@@ -56,6 +57,17 @@ export function SeoKeywordsWorkspace() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
   const [activeBottomTab, setActiveBottomTab] = useState<'campaigns' | 'seo'>('campaigns');
+  const adsImportInputRef = useRef<HTMLInputElement | null>(null);
+  const [showDirectSyncModal, setShowDirectSyncModal] = useState(false);
+  const [directSyncTab, setDirectSyncTab] = useState<'gsheet' | 'api' | 'script'>('gsheet');
+  const [gsheetUrl, setGsheetUrl] = useState('');
+  const [gadsCustomerId, setGadsCustomerId] = useState('');
+  const [gadsLoginCustomerId, setGadsLoginCustomerId] = useState('');
+  const [gadsDevToken, setGadsDevToken] = useState('');
+  const [gadsClientId, setGadsClientId] = useState('');
+  const [gadsClientSecret, setGadsClientSecret] = useState('');
+  const [gadsRefreshToken, setGadsRefreshToken] = useState('');
+  const [gadsAccessToken, setGadsAccessToken] = useState('');
 
   // Add Keyword state
   const [newKeywordText, setNewKeywordText] = useState('');
@@ -305,13 +317,8 @@ export function SeoKeywordsWorkspace() {
       {/* 1. Header — Clean Modern White Card */}
       <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3.5">
         <div>
-          <div className="flex items-center gap-2 text-xs font-bold text-brand uppercase tracking-wider mb-1">
-            <span>QUẢNG CÁO & SEO</span>
-            <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-slate-600">Hiệu suất Chiến dịch & Từ khóa SEO</span>
-          </div>
           <h1 className="font-display text-2xl font-bold text-ink">
-            Quảng cáo & từ khóa
+            Từ khóa SEO
           </h1>
           <p className="text-slate-500 text-sm mt-1">
             Theo dõi hiệu suất chiến dịch Google Ads, phân tích nhu cầu tìm kiếm và quản lý nội dung SEO
@@ -321,8 +328,73 @@ export function SeoKeywordsWorkspace() {
         <div className="flex flex-wrap items-center gap-2.5">
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-brand text-xs font-bold">
             <span className="w-2 h-2 rounded-full bg-brand" />
-            <span>Dữ liệu đồng bộ định kỳ</span>
+            <span>Google Ads · Đồng bộ 1 chiều (Quyền Chỉ xem)</span>
           </span>
+
+          <input
+            ref={adsImportInputRef}
+            type="file"
+            accept=".xlsx,.csv,.tsv"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file || !user) return;
+              setBusy(true);
+              setErrorMsg(null);
+              void (async () => {
+                try {
+                  const fd = new FormData();
+                  fd.append('file', file);
+                  const res = await apiRequest<{
+                    importedCampaigns: number;
+                    importedKeywords: number;
+                  }>('/api/v1/ads/export', {
+                    method: 'POST',
+                    csrfToken: user.csrfToken,
+                    isFormData: true,
+                    body: fd,
+                  });
+                  setFeedbackMsg(
+                    `Đã nhập thành công file "${file.name}" từ Google Ads: cập nhật ${res.importedCampaigns} chiến dịch và ${res.importedKeywords} từ khóa tìm kiếm.`,
+                  );
+                  await fetchSeoData();
+                } catch (err) {
+                  setErrorMsg(
+                    err instanceof Error
+                      ? err.message
+                      : 'Không thể nhập file báo cáo Google Ads.',
+                  );
+                } finally {
+                  setBusy(false);
+                  if (adsImportInputRef.current) {
+                    adsImportInputRef.current.value = '';
+                  }
+                }
+              })();
+            }}
+          />
+
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setShowDirectSyncModal(true)}
+            className="h-9 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold inline-flex items-center gap-1.5 transition-colors shadow-xs"
+            title="Đồng bộ trực tiếp từ Google Ads (qua Link Google Sheets trực tiếp, Google Ads API, hoặc Script)"
+          >
+            <RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} />
+            <span>⚡ Đồng bộ trực tiếp Google Ads</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => adsImportInputRef.current?.click()}
+            className="h-9 px-3.5 rounded-xl border border-emerald-200 bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 text-sm font-semibold inline-flex items-center gap-1.5 transition-colors shadow-xs"
+            title="Nhập file báo cáo Chiến dịch hoặc Từ khóa tải về từ Google Ads (.xlsx / .csv)"
+          >
+            <FolderUp className="w-4 h-4 text-emerald-700" />
+            <span>Nhập file (.xlsx / .csv)</span>
+          </button>
 
           <button
             type="button"
@@ -360,6 +432,292 @@ export function SeoKeywordsWorkspace() {
           <button type="button" onClick={() => setFeedbackMsg(null)} className="font-bold hover:underline">
             Đóng
           </button>
+        </div>
+      )}
+
+      {/* Modal Kết nối & Đồng bộ Trực tiếp Google Ads */}
+      {showDirectSyncModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-auto">
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h2 className="font-display font-bold text-slate-900 text-lg">
+                  ⚡ Kết nối &amp; Đồng bộ Trực tiếp từ Google Ads
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Hỗ trợ cả tài khoản đang ở quyền Chỉ xem (Read-Only) lẫn tài khoản có khóa API đầy đủ
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDirectSyncModal(false)}
+                className="px-2.5 py-1 rounded-lg text-slate-500 hover:bg-slate-200/60 font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Tabs */}
+            <div className="px-6 pt-3 bg-slate-50/60 border-b border-slate-200 flex gap-2 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setDirectSyncTab('gsheet')}
+                className={`px-3.5 py-2 rounded-t-xl border-b-2 transition ${
+                  directSyncTab === 'gsheet'
+                    ? 'border-[#1E3A8A] text-[#1E3A8A] bg-white'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                1. Qua Link Google Sheets trực tiếp (Quyền Chỉ xem)
+              </button>
+              <button
+                type="button"
+                onClick={() => setDirectSyncTab('api')}
+                className={`px-3.5 py-2 rounded-t-xl border-b-2 transition ${
+                  directSyncTab === 'api'
+                    ? 'border-[#1E3A8A] text-[#1E3A8A] bg-white'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                2. Google Ads REST API trực tiếp (Customer ID &amp; Token)
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-sm">
+              {directSyncTab === 'gsheet' ? (
+                <div className="space-y-3">
+                  <div className="p-3.5 rounded-xl bg-blue-50 border border-blue-200 text-xs text-slate-700 space-y-1.5 leading-relaxed">
+                    <p className="font-bold text-[#1E3A8A]">
+                      Cách đồng bộ trực tiếp ngay cả khi chỉ có quyền Chỉ xem trên Google Ads:
+                    </p>
+                    <ol className="list-decimal list-inside space-y-1">
+                      <li>
+                        Trên bảng <strong>Chiến dịch</strong> hoặc <strong>Từ khóa</strong> của Google Ads, bấm nút{' '}
+                        <strong>Tải xuống (Download)</strong> &rarr; chọn <strong>Google Trang tính (Google Sheets)</strong> (hoặc bật <em>Lập lịch</em> tự động đẩy sang Google Sheets mỗi ngày).
+                      </li>
+                      <li>
+                        Mở trang tính vừa tạo, bấm nút <strong>Chia sẻ (Share)</strong> ở góc phải &rarr; chọn{' '}
+                        <strong>Bất kỳ ai có đường liên kết đều có thể xem</strong>.
+                      </li>
+                      <li>
+                        Copy đường link Google Sheets đó dán vào ô bên dưới và bấm <strong>Đồng bộ trực tiếp ngay</strong>.
+                      </li>
+                    </ol>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Đường dẫn Google Sheets báo cáo Google Ads *
+                    </label>
+                    <input
+                      type="url"
+                      value={gsheetUrl}
+                      onChange={(e) => setGsheetUrl(e.target.value)}
+                      placeholder="https://docs.google.com/spreadsheets/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ/edit..."
+                      className="w-full h-10 px-3.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:border-[#1E3A8A]"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowDirectSyncModal(false)}
+                      className="h-9 px-4 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700"
+                    >
+                      Đóng
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy || !gsheetUrl.trim()}
+                      onClick={() => {
+                        if (!user || !gsheetUrl.trim()) return;
+                        setBusy(true);
+                        setErrorMsg(null);
+                        void (async () => {
+                          try {
+                            const res = await apiRequest<{
+                              importedCampaigns: number;
+                              importedKeywords: number;
+                            }>('/api/v1/ads/export', {
+                              method: 'POST',
+                              csrfToken: user.csrfToken,
+                              body: {
+                                mode: 'gsheet_url',
+                                sheetUrl: gsheetUrl.trim(),
+                              },
+                            });
+                            setShowDirectSyncModal(false);
+                            setFeedbackMsg(
+                              `Đã đồng bộ trực tiếp từ Google Sheets thành công: cập nhật ${res.importedCampaigns} chiến dịch và ${res.importedKeywords} từ khóa Google Ads.`,
+                            );
+                            await fetchSeoData();
+                          } catch (err) {
+                            setErrorMsg(
+                              err instanceof Error ? err.message : 'Lỗi đồng bộ từ Google Sheets.',
+                            );
+                          } finally {
+                            setBusy(false);
+                          }
+                        })();
+                      }}
+                      className="h-9 px-5 rounded-xl bg-[#1E3A8A] hover:bg-blue-900 text-white text-xs font-bold disabled:opacity-40"
+                    >
+                      {busy ? 'Đang kéo dữ liệu trực tiếp...' : '⚡ Đồng bộ trực tiếp ngay'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                    Kết nối thẳng tới <code>googleads.googleapis.com/v17</code> bằng truy vấn GAQL để kéo trực tiếp Chiến dịch &amp; Chi phí 30 ngày qua.
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Mã tài khoản Google Ads (Customer ID) *
+                      </label>
+                      <input
+                        type="text"
+                        value={gadsCustomerId}
+                        onChange={(e) => setGadsCustomerId(e.target.value)}
+                        placeholder="VD: 123-456-7890"
+                        className="w-full h-9 px-3 rounded-xl border border-slate-300 text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Developer Token *
+                      </label>
+                      <input
+                        type="password"
+                        value={gadsDevToken}
+                        onChange={(e) => setGadsDevToken(e.target.value)}
+                        placeholder="Nhập Google Ads Developer Token..."
+                        className="w-full h-9 px-3 rounded-xl border border-slate-300 text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        MCC Login Customer ID (Nếu qua MCC)
+                      </label>
+                      <input
+                        type="text"
+                        value={gadsLoginCustomerId}
+                        onChange={(e) => setGadsLoginCustomerId(e.target.value)}
+                        placeholder="VD: 999-888-7777 (Không bắt buộc)"
+                        className="w-full h-9 px-3 rounded-xl border border-slate-300 text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        OAuth Access Token (Hoặc dùng Refresh Token dưới)
+                      </label>
+                      <input
+                        type="password"
+                        value={gadsAccessToken}
+                        onChange={(e) => setGadsAccessToken(e.target.value)}
+                        placeholder="ya29.a0AfH6SM..."
+                        className="w-full h-9 px-3 rounded-xl border border-slate-300 text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        OAuth Client ID
+                      </label>
+                      <input
+                        type="text"
+                        value={gadsClientId}
+                        onChange={(e) => setGadsClientId(e.target.value)}
+                        placeholder="...apps.googleusercontent.com"
+                        className="w-full h-9 px-3 rounded-xl border border-slate-300 text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        OAuth Client Secret
+                      </label>
+                      <input
+                        type="password"
+                        value={gadsClientSecret}
+                        onChange={(e) => setGadsClientSecret(e.target.value)}
+                        placeholder="GOCSPX-..."
+                        className="w-full h-9 px-3 rounded-xl border border-slate-300 text-xs font-mono"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        OAuth Refresh Token
+                      </label>
+                      <input
+                        type="password"
+                        value={gadsRefreshToken}
+                        onChange={(e) => setGadsRefreshToken(e.target.value)}
+                        placeholder="1//0g..."
+                        className="w-full h-9 px-3 rounded-xl border border-slate-300 text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowDirectSyncModal(false)}
+                      className="h-9 px-4 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700"
+                    >
+                      Đóng
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy || !gadsCustomerId.trim() || !gadsDevToken.trim()}
+                      onClick={() => {
+                        if (!user) return;
+                        setBusy(true);
+                        setErrorMsg(null);
+                        void (async () => {
+                          try {
+                            const res = await apiRequest<{
+                              importedCampaigns: number;
+                              importedKeywords: number;
+                            }>('/api/v1/ads/export', {
+                              method: 'POST',
+                              csrfToken: user.csrfToken,
+                              body: {
+                                mode: 'google_ads_api',
+                                customerId: gadsCustomerId.trim(),
+                                loginCustomerId: gadsLoginCustomerId.trim(),
+                                developerToken: gadsDevToken.trim(),
+                                clientId: gadsClientId.trim(),
+                                clientSecret: gadsClientSecret.trim(),
+                                refreshToken: gadsRefreshToken.trim(),
+                                accessToken: gadsAccessToken.trim(),
+                              },
+                            });
+                            setShowDirectSyncModal(false);
+                            setFeedbackMsg(
+                              `Đã đồng bộ trực tiếp từ Google Ads API (${gadsCustomerId}): cập nhật ${res.importedCampaigns} chiến dịch.`,
+                            );
+                            await fetchSeoData();
+                          } catch (err) {
+                            setErrorMsg(
+                              err instanceof Error
+                                ? err.message
+                                : 'Lỗi kết nối trực tiếp Google Ads API.',
+                            );
+                          } finally {
+                            setBusy(false);
+                          }
+                        })();
+                      }}
+                      className="h-9 px-5 rounded-xl bg-[#1E3A8A] hover:bg-blue-900 text-white text-xs font-bold disabled:opacity-40"
+                    >
+                      {busy ? 'Đang gọi Google Ads API...' : '⚡ Kéo trực tiếp từ Google Ads API'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -422,7 +780,7 @@ export function SeoKeywordsWorkspace() {
             </span>
           </div>
           <p className="mt-2 text-xs text-slate-500">
-            Tổng ngân sách ghi nhận từ Google & Facebook
+            Tổng ngân sách ghi nhận từ Google Ads
           </p>
         </div>
 
@@ -643,7 +1001,7 @@ export function SeoKeywordsWorkspace() {
                   Danh sách chiến dịch quảng cáo trực tuyến
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Ghi nhận từ Google Ads & Facebook Ads liên kết nguồn tiếp nhận Lead
+                  Đồng bộ 1 chiều từ tài khoản Google Ads (Quyền Chỉ xem) liên kết nguồn tiếp nhận Lead
                 </p>
               </div>
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold text-xs whitespace-nowrap">

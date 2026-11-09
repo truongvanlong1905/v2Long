@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
   Crosshair,
+  FolderUp,
   Info,
   Play,
   Plus,
@@ -46,6 +47,7 @@ export function TrackingWorkspace() {
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+  const adsImportInputRef = useRef<HTMLInputElement | null>(null);
 
   // Declare Campaign state (A3)
   const [newCampPlatform, setNewCampPlatform] = useState<'EXTERNAL' | 'GOOGLE_ADS' | 'FANPAGE'>('EXTERNAL');
@@ -261,11 +263,8 @@ export function TrackingWorkspace() {
       {/* Header — Clean Modern White Card */}
       <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3.5">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-xs font-bold text-violet-800 mb-1.5">
-            <span>Tracking Nguồn, Đồng bộ Đa kênh & Đối soát</span>
-          </div>
           <h1 className="font-display text-2xl font-bold text-ink tracking-tight">
-            Tracking Nguồn & Đồng bộ Dữ liệu Đa kênh
+            Chiến dịch
           </h1>
           <p className="text-sm text-ink-muted mt-0.5">
             Ưu tiên tín hiệu <code className="font-mono">gclid &gt; UTM &gt; Referrer</code>, phân tầng 3 cấp Lead (L1/L2/L3) và đối soát Google Lead Form tự động.
@@ -278,11 +277,10 @@ export function TrackingWorkspace() {
               key={d}
               type="button"
               onClick={() => setPeriodDays(d)}
-              className={`h-9 px-3.5 rounded-xl text-sm font-semibold ${
-                periodDays === d
+              className={`h-9 px-3.5 rounded-xl text-sm font-semibold ${periodDays === d
                   ? 'bg-brand text-white'
                   : 'bg-white border border-slate-200 text-slate-600'
-              }`}
+                }`}
             >
               {d} ngày
             </button>
@@ -296,6 +294,60 @@ export function TrackingWorkspace() {
           >
             <Play className="w-4 h-4" />
             <span>Chạy Đồng bộ + Tra lại gclid</span>
+          </button>
+
+          <input
+            ref={adsImportInputRef}
+            type="file"
+            accept=".xlsx,.csv,.tsv"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file || !user) return;
+              setBusy(true);
+              setErrorMsg(null);
+              void (async () => {
+                try {
+                  const fd = new FormData();
+                  fd.append('file', file);
+                  const res = await apiRequest<{
+                    importedCampaigns: number;
+                    importedKeywords: number;
+                  }>('/api/v1/ads/export', {
+                    method: 'POST',
+                    csrfToken: user.csrfToken,
+                    isFormData: true,
+                    body: fd,
+                  });
+                  setFeedbackMsg(
+                    `Đã nhập thành công file "${file.name}" từ Google Ads: cập nhật ${res.importedCampaigns} chiến dịch và ${res.importedKeywords} từ khóa tìm kiếm.`,
+                  );
+                  await fetchDashboard();
+                } catch (err) {
+                  setErrorMsg(
+                    err instanceof Error
+                      ? err.message
+                      : 'Không thể nhập file báo cáo Google Ads.',
+                  );
+                } finally {
+                  setBusy(false);
+                  if (adsImportInputRef.current) {
+                    adsImportInputRef.current.value = '';
+                  }
+                }
+              })();
+            }}
+          />
+
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => adsImportInputRef.current?.click()}
+            className="h-9 px-3.5 rounded-xl border border-emerald-200 bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 text-sm font-semibold inline-flex items-center gap-1.5"
+            title="Nhập file báo cáo Chiến dịch hoặc Từ khóa tải về từ Google Ads (.xlsx / .csv)"
+          >
+            <FolderUp className="w-4 h-4 text-emerald-700" />
+            <span>Nhập file Google Ads (.xlsx / .csv)</span>
           </button>
 
           <a
@@ -993,11 +1045,10 @@ export function TrackingWorkspace() {
                     <div className="flex items-center justify-between gap-2">
                       <strong className="text-sm text-slate-900 font-bold">{item.name}</strong>
                       <span
-                        className={`px-2.5 py-0.5 rounded-full text-xs font-bold shrink-0 ${
-                          item.mode === 'LIVE_CONNECTED'
+                        className={`px-2.5 py-0.5 rounded-full text-xs font-bold shrink-0 ${item.mode === 'LIVE_CONNECTED'
                             ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                             : 'bg-amber-100 text-amber-900 border border-amber-300'
-                        }`}
+                          }`}
                       >
                         {item.mode === 'LIVE_CONNECTED' ? '● Live API' : '◐ Mô phỏng (Chờ cấp Key)'}
                       </span>

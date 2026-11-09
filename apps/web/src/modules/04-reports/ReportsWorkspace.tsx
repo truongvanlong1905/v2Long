@@ -147,12 +147,8 @@ export function ReportsWorkspace() {
       {/* Header & Filter Bar — Clean Modern White Card */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3.5 bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs">
         <div>
-          <div className="flex items-center gap-2 text-xs font-bold text-brand uppercase tracking-wider">
-            <BarChart3 className="w-4 h-4" />
-            <span>Báo cáo & Phân tích điều hành</span>
-          </div>
-          <h1 className="font-display text-2xl font-bold text-ink mt-1">
-            Báo cáo & Phân tích hiệu suất đa phòng ban
+          <h1 className="font-display text-2xl font-bold text-ink">
+            Báo cáo
           </h1>
           {data && (
             <p className="text-sm text-slate-600 mt-1 flex items-center gap-1.5">

@@ -631,7 +631,7 @@ export default function SettingsPage() {
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-2xl sm:text-3xl font-bold text-ink tracking-tight">
-            Cài đặt hệ thống & Thương hiệu
+            Cài đặt
           </h1>
           <p className="text-[13px] text-ink-muted mt-1">
             Quản lý sức khỏe vận hành, sao lưu dữ liệu 1-chạm và nhận diện thương hiệu công ty.

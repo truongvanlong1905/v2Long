@@ -269,8 +269,13 @@ interface FraudEvaluationResult {
   priceProbeReason: string | null;
   hasBlacklistedOrSpam: boolean;
   spamOrBurnerReason: string | null;
-  // UC01 1.5 — 3 Kịch bản Kiểm tra Trùng Lead thực tế
-  duplicateScenario: 'NONE' | 'SCENARIO_1_ACTIVE_DUP' | 'SCENARIO_2_RETURNING_CUSTOMER' | 'SCENARIO_3_MULTI_CONTRACTOR';
+  // UC01 1.5 — 4 Kịch bản Kiểm tra Trùng Lead thực tế (phân biệt Khách cũ đã mua vs Khách thất bại quay lại)
+  duplicateScenario:
+    | 'NONE'
+    | 'SCENARIO_1_ACTIVE_DUP'
+    | 'SCENARIO_2_WON_RETURNING'
+    | 'SCENARIO_2_LOST_RETURNING'
+    | 'SCENARIO_3_MULTI_CONTRACTOR';
   matchedCustomerLead: LeadItemDto | null;
   projectContractors: Array<{
     leadId: number;
@@ -323,15 +328,15 @@ function evaluateLeadFraudCriteria(
     const diff = Math.abs(nowMs - new Date(other.contactedAt).getTime());
     return diff <= thirtyDaysMs;
   });
-  const phoneSubmitCount30d = Math.max(
-    samePhoneWithin30d.length,
-    lead.duplicateType !== 'NONE' ? 2 : 1,
-  );
-  const hasDuplicatePhone = phoneSubmitCount30d >= 2 || lead.duplicateType !== 'NONE';
+  const isCurrentLeadClosed =
+    lead.pipelineStatus === 'won' || lead.pipelineStatus === 'lost';
 
-  // Tìm các Lead trùng Khách hàng (Cùng SĐT, hoặc Cùng Email, hoặc Cùng Tên Công Ty) — loại trừ Lead không hợp lệ (E0)
+  // Tìm các Lead trùng Khách hàng:
+  // - Với Lead đã đóng (won/lost): chỉ xét các Lead tạo trước nó (other.id < lead.id) để không báo trùng ngược khi khách quay lại ở tương lai.
+  // - Với Lead đang mở: xét các Lead trước nó hoặc các Lead đang mở cùng lúc.
   const sameCustomerLeads = allLeads.filter((other) => {
     if (other.id === lead.id || isInvalidClosedLead(other)) return false;
+    if (isCurrentLeadClosed && other.id > lead.id) return false;
     const otherClean = other.phone.replace(/\D/g, '');
     const phoneMatch = cleanPhone && !cleanPhone.includes('*') && otherClean === cleanPhone;
     const emailMatch =
@@ -341,11 +346,17 @@ function evaluateLeadFraudCriteria(
     return Boolean(phoneMatch || emailMatch || companyMatch);
   });
 
+  const phoneSubmitCount30d = isCurrentLeadClosed
+    ? 1
+    : Math.max(samePhoneWithin30d.length, lead.duplicateType !== 'NONE' ? 2 : 1);
+  const hasDuplicatePhone = !isCurrentLeadClosed && (phoneSubmitCount30d >= 2 || lead.duplicateType !== 'NONE');
+
   // Tìm các nhà thầu khác nhau cùng hỏi 1 Dự án / Địa chỉ lắp đặt (Kịch bản 3: [DỰ ÁN NHIỀU BÊN HỎI GIÁ])
   const normalizedProj = (lead.projectName || '').trim().toLowerCase();
   const normalizedAddr = (lead.installationAddress || '').trim().toLowerCase();
   const multiContractorLeads = allLeads.filter((other) => {
     if (other.id === lead.id || isInvalidClosedLead(other)) return false;
+    if (isCurrentLeadClosed) return false;
     const otherClean = other.phone.replace(/\D/g, '');
     const otherComp = (other.companyName || '').trim().toLowerCase();
     // Phải khác SĐT và khác Công ty (khác nhà thầu)
@@ -375,28 +386,40 @@ function evaluateLeadFraudCriteria(
     ? lead.projectName || lead.installationAddress || null
     : null;
 
-  // Phân loại 3 Kịch bản Trùng Lead theo Module 1.5:
+  // Phân loại 3 Kịch bản Trùng Lead:
+  // Nếu bản thân Lead đã đóng (Chốt thành công / Thất bại) thì không hiện cờ cảnh báo trùng nữa.
   let duplicateScenario: FraudEvaluationResult['duplicateScenario'] = 'NONE';
   let matchedCustomerLead: LeadItemDto | null = null;
 
-  const openSameCustomerLead = sameCustomerLeads.find(
-    (other) =>
-      other.pipelineStatus === 'new_lead' ||
-      other.pipelineStatus === 'quoting' ||
-      other.pipelineStatus === 'quote_sent',
-  );
-  const closedSameCustomerLead = sameCustomerLeads.find(
-    (other) => other.pipelineStatus === 'won' || other.pipelineStatus === 'lost',
-  );
+  if (!isCurrentLeadClosed) {
+    const openSameCustomerLead = sameCustomerLeads.find(
+      (other) =>
+        other.pipelineStatus === 'new_lead' ||
+        other.pipelineStatus === 'quoting' ||
+        other.pipelineStatus === 'quote_sent',
+    );
+    const wonSameCustomerLead = sameCustomerLeads.find(
+      (other) => other.pipelineStatus === 'won',
+    );
+    const lostSameCustomerLead = sameCustomerLeads.find(
+      (other) => other.pipelineStatus === 'lost',
+    );
 
-  if (openSameCustomerLead || lead.duplicateType === 'ACTIVE_RED') {
-    duplicateScenario = 'SCENARIO_1_ACTIVE_DUP';
-    matchedCustomerLead = openSameCustomerLead || sameCustomerLeads[0] || null;
-  } else if (closedSameCustomerLead || lead.duplicateType === 'PRIOR_LEAD' || lead.isRepeatLead) {
-    duplicateScenario = 'SCENARIO_2_RETURNING_CUSTOMER';
-    matchedCustomerLead = closedSameCustomerLead || sameCustomerLeads[0] || null;
-  } else if (projectContractors.length > 0) {
-    duplicateScenario = 'SCENARIO_3_MULTI_CONTRACTOR';
+    if (openSameCustomerLead) {
+      duplicateScenario = 'SCENARIO_1_ACTIVE_DUP';
+      matchedCustomerLead = openSameCustomerLead;
+    } else if (wonSameCustomerLead) {
+      duplicateScenario = 'SCENARIO_2_WON_RETURNING';
+      matchedCustomerLead = wonSameCustomerLead;
+    } else if (lostSameCustomerLead || lead.duplicateType === 'PRIOR_LEAD' || lead.isRepeatLead) {
+      duplicateScenario = 'SCENARIO_2_LOST_RETURNING';
+      matchedCustomerLead = lostSameCustomerLead || sameCustomerLeads[0] || null;
+    } else if (lead.duplicateType === 'ACTIVE_RED') {
+      duplicateScenario = 'SCENARIO_1_ACTIVE_DUP';
+      matchedCustomerLead = sameCustomerLeads[0] || null;
+    } else if (projectContractors.length > 0) {
+      duplicateScenario = 'SCENARIO_3_MULTI_CONTRACTOR';
+    }
   }
 
   // Criteria 3: Price Probe Behavior (raw module unit pricing without installation address, or matched ACTIVE E5 alert)
@@ -503,6 +526,28 @@ export function LeadsWorkspace() {
     'info' | 'pipeline' | 'attachments' | 'activity'
   >('info');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importPreviewRows, setImportPreviewRows] = useState<
+    Array<{
+      rowNumber: number;
+      phone: string;
+      contactName: string;
+      companyName: string;
+      projectName: string;
+      email: string;
+      source: string;
+      region: string;
+      address: string;
+      productsText: string;
+      note: string;
+    }>
+  >([]);
+  const [importParsing, setImportParsing] = useState(false);
+  const [importCommitting, setImportCommitting] = useState(false);
+  const [importSkipOpenDup, setImportSkipOpenDup] = useState(true);
+  const [importPastedText, setImportPastedText] = useState('');
+  const [importFileName, setImportFileName] = useState<string | null>(null);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Sync initial filters from URL query params (?status=..., ?overdueOnly=true, ?unreceived=1, ?search=...)
   useEffect(() => {
@@ -602,6 +647,10 @@ export function LeadsWorkspace() {
   const [editProvince, setEditProvince] = useState<string>(VIETNAM_PROVINCES[0]);
   const [editAddress, setEditAddress] = useState('');
   const [editProductIds, setEditProductIds] = useState<number[]>([]);
+  const [editCustomServiceItems, setEditCustomServiceItems] = useState<string[]>([]);
+  const [editCustomServiceDraft, setEditCustomServiceDraft] = useState('');
+  const [editTickReassign, setEditTickReassign] = useState(false);
+  const [editTickSuspect, setEditTickSuspect] = useState(false);
   const [editCustomProductNote, setEditCustomProductNote] = useState('');
   const [editB2bHorizon, setEditB2bHorizon] = useState<B2bFollowUpHorizonKey>('none');
   const [editFollowUpDate, setEditFollowUpDate] = useState('');
@@ -632,11 +681,8 @@ export function LeadsWorkspace() {
     abortControllerRef.current = controller;
 
     const qs = new URLSearchParams();
-    if (statusFilter !== 'all') qs.set('status', statusFilter);
     if (debouncedSearchQuery.trim()) qs.set('search', debouncedSearchQuery.trim());
     if (includeSpam) qs.set('includeSpam', 'true');
-    if (overdueOnly) qs.set('overdueOnly', 'true');
-    if (unreceivedOnly) qs.set('unreceived', '1');
     const url = `/api/v1/leads?${qs.toString()}`;
 
     const cached = peekApiCache<{
@@ -688,7 +734,7 @@ export function LeadsWorkspace() {
         setLoading(false);
       }
     }
-  }, [statusFilter, debouncedSearchQuery, includeSpam, overdueOnly, unreceivedOnly]);
+  }, [debouncedSearchQuery, includeSpam]);
 
   useEffect(() => {
     void fetchLeads();
@@ -721,6 +767,9 @@ export function LeadsWorkspace() {
 
   const displayedLeads = useMemo(() => {
     let list = leads;
+    if (statusFilter !== 'all') {
+      list = list.filter((l) => l.pipelineStatus === statusFilter);
+    }
     if (overdueOnly) {
       list = list.filter((l) => l.isQuoteOverdue7Days && l.spamStatus === 'NONE');
     }
@@ -744,14 +793,9 @@ export function LeadsWorkspace() {
       });
     }
     return list;
-  }, [leads, overdueOnly, unreceivedOnly, b2bHorizonFilter]);
+  }, [leads, statusFilter, overdueOnly, unreceivedOnly, b2bHorizonFilter]);
 
-  const totalFilteredCount = Math.max(
-    displayedLeads.length,
-    overdueOnly || unreceivedOnly || b2bHorizonFilter !== 'all'
-      ? displayedLeads.length
-      : totalCount,
-  );
+  const totalFilteredCount = displayedLeads.length;
   const totalPages = Math.max(1, Math.ceil(displayedLeads.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
 
@@ -777,34 +821,25 @@ export function LeadsWorkspace() {
     const valid = leads.filter((l) => l.spamStatus === 'NONE');
     let newLeadCount = 0;
     let quotingCount = 0;
-    let hotQuoteCount = 0;
-    let longCycleCount = 0;
+    let quoteSentCount = 0;
     let wonCount = 0;
+    let lostCount = 0;
 
     for (const l of valid) {
       if (l.pipelineStatus === 'new_lead') newLeadCount += 1;
       if (l.pipelineStatus === 'quoting') quotingCount += 1;
+      if (l.pipelineStatus === 'quote_sent') quoteSentCount += 1;
       if (l.pipelineStatus === 'won') wonCount += 1;
-      const h = getB2bFollowUpHorizon(l);
-      if (l.pipelineStatus === 'quote_sent' && h.key === 'hot_under_7d') {
-        hotQuoteCount += 1;
-      }
-      if (
-        h.key === 'remind_7_14d' ||
-        h.key === 'monthly_15_45d' ||
-        h.key === 'longterm_next_year'
-      ) {
-        longCycleCount += 1;
-      }
+      if (l.pipelineStatus === 'lost') lostCount += 1;
     }
 
     return {
       validTotal: valid.length,
       newLeadCount,
       quotingCount,
-      hotQuoteCount,
-      longCycleCount,
+      quoteSentCount,
       wonCount,
+      lostCount,
     };
   }, [leads]);
 
@@ -863,11 +898,22 @@ export function LeadsWorkspace() {
       );
       setEditAddress(selectedLead.installationAddress || '');
       setEditProductIds(selectedLead.products.map((p) => p.id));
+      setEditTickReassign(false);
+      setEditTickSuspect(Boolean(selectedLead.isPriceCheckSuspect));
 
       const rawCustomNote = selectedLead.customProductNote || '';
       const existingScheduledDate = extractScheduledFollowUpDate(rawCustomNote);
       setEditFollowUpDate(existingScheduledDate);
-      let cleanCustomNote = rawCustomNote.replace(/\[HẸN LIÊN HỆ:\s*[^\]]+\]/g, '').trim();
+      const extractedCustomItems = Array.from(
+        rawCustomNote.matchAll(/\[Dịch vụ khác:\s*([^\]]+)\]/g),
+      ).map((m) => m[1].trim());
+      setEditCustomServiceItems(extractedCustomItems);
+      setEditCustomServiceDraft('');
+
+      let cleanCustomNote = rawCustomNote
+        .replace(/\[HẸN LIÊN HỆ:\s*[^\]]+\]/g, '')
+        .replace(/\[Dịch vụ khác:\s*[^\]]+\]\s*·?\s*/g, '')
+        .trim();
       for (const opt of B2B_HORIZON_OPTIONS) {
         cleanCustomNote = cleanCustomNote.replace(opt.tag, '').trim();
         for (const legacyTag of opt.legacyTags) {
@@ -976,11 +1022,18 @@ export function LeadsWorkspace() {
       const horizonOpt = B2B_HORIZON_OPTIONS.find((o) => o.key === editB2bHorizon);
       const composedCustomNote = [
         horizonOpt ? horizonOpt.tag : '',
+        ...editCustomServiceItems.map((i) => `[Dịch vụ khác: ${i}]`),
         editCustomProductNote.trim(),
       ]
         .filter(Boolean)
-        .join(' ')
+        .join(' · ')
         .trim();
+
+      const suspectTag = editTickSuspect
+        ? '[NGHI VẤN: Đánh dấu kiểm tra dò giá / trùng]'
+        : selectedLead.isPriceCheckSuspect
+          ? '[BỎ NGHI VẤN]'
+          : '';
 
       await apiRequest(`/api/v1/leads/${selectedLead.id}`, {
         method: 'PATCH',
@@ -1001,10 +1054,15 @@ export function LeadsWorkspace() {
           productIds: editProductIds.length > 0 ? editProductIds : selectedLead.products.map((p) => p.id),
           customProductNote: composedCustomNote || null,
           note:
-            editUpdateNote.trim() ||
-            (horizonOpt
-              ? `Cập nhật hồ sơ Lead · Tình trạng nhu cầu: ${horizonOpt.shortLabel}`
-              : 'Cập nhật trực tiếp thông tin hồ sơ Lead tại màn hình Chi tiết.'),
+            [
+              suspectTag,
+              editUpdateNote.trim() ||
+                (horizonOpt
+                  ? `Cập nhật hồ sơ Lead · Tình trạng nhu cầu: ${horizonOpt.shortLabel}`
+                  : 'Cập nhật thông tin hồ sơ Lead.'),
+            ]
+              .filter(Boolean)
+              .join(' '),
         },
       });
       setFeedbackMsg(
@@ -1252,19 +1310,31 @@ export function LeadsWorkspace() {
         <div className="space-y-0.5 min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="font-display text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
-              Quản lý Lead &amp; Pipeline Kinh doanh B2B
+              Leads
             </h1>
             <span className="px-2.5 py-0.5 rounded-full bg-blue-50 border border-blue-200/80 text-xs font-semibold text-[#1E3A8A]">
-              Theo dõi lộ trình dự án &amp; Lịch hẹn chăm sóc
+              Theo dõi lộ trình dự án &amp; Chăm sóc khách hàng
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-500">
-            Tiếp nhận, mở chi tiết để xem và chỉnh sửa trực tiếp theo phân quyền, đặt lịch hẹn theo dõi dự án 1–2 tháng hoặc dài hạn
+            Tiếp nhận, mở chi tiết để xem và chỉnh sửa trực tiếp theo phân quyền
           </p>
         </div>
 
-        {/* Action Controls */}
+        {/* Search + Create Lead Controls */}
         <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 sm:flex-initial">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Tìm khách hàng, dự án, SĐT, mã Lead..."
+              className="h-9 pl-9 pr-3.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-[#1E3A8A] w-full sm:w-72"
+            />
+          </div>
+
           {user?.roleCode === 'SALES' && (
             <button
               type="button"
@@ -1285,62 +1355,63 @@ export function LeadsWorkspace() {
             </button>
           )}
 
-          <button
-            type="button"
-            onClick={() => setShowPriceAlertDirectory(true)}
-            className="h-9 px-3 rounded-xl bg-orange-50 hover:bg-orange-100 border border-orange-200 text-xs sm:text-sm font-semibold text-orange-900 inline-flex items-center gap-1.5 transition-colors"
-            title="Xem danh sách Cảnh báo dò giá nội bộ (UC01 5.2 & 5.3)"
-          >
-            <ShieldAlert className="w-3.5 h-3.5 text-orange-600" />
-            <span>
-              Cảnh báo dò giá ({priceCheckAlerts.filter((a) => a.status === 'ACTIVE').length})
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void fetchLeads()}
-            className="h-9 px-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-xs sm:text-sm font-semibold text-slate-700 inline-flex items-center gap-1.5"
-          >
-            <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
-            <span>Làm mới</span>
-          </button>
-
-          <div className="inline-flex p-0.5 rounded-xl bg-slate-100 border border-slate-200/80">
+          {/* Chuyển đổi Bảng / Kanban */}
+          <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
             <button
               type="button"
               onClick={() => setViewMode('table')}
-              className={`px-2.5 py-1 rounded-lg text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition ${
+              className={`h-8 px-2.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
                 viewMode === 'table'
                   ? 'bg-white text-[#1E3A8A] shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Table2 className="w-3.5 h-3.5" />
-              <span>Bảng danh sách</span>
+              <span>Danh sách</span>
             </button>
             <button
               type="button"
               onClick={() => setViewMode('kanban')}
-              className={`px-2.5 py-1 rounded-lg text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition ${
+              className={`h-8 px-2.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
                 viewMode === 'kanban'
                   ? 'bg-white text-[#1E3A8A] shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Kanban className="w-3.5 h-3.5" />
-              <span>Bảng Kanban</span>
+              <span>Kanban</span>
             </button>
           </div>
 
-          <a
-            href={exportHref}
-            className="h-9 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition-colors"
-            title="Xuất toàn bộ hồ sơ Lead theo bộ lọc hiện tại ra file Excel (.xlsx)"
-          >
-            <Download className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Xuất Excel ({displayedLeads.length})</span>
-          </a>
+          {/* Xuất Excel */}
+          {user && hasBaPermission(user.roleCode, 'EXPORT_DATA') && (
+            <a
+              href={exportHref}
+              className="h-9 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 shadow-2xs transition-colors"
+              title="Xuất danh sách Lead hiện tại ra file Excel (.xlsx)"
+            >
+              <Download className="w-4 h-4 text-emerald-600" />
+              <span>Xuất Excel ({displayedLeads.length})</span>
+            </a>
+          )}
+
+          {/* Nhập Excel */}
+          {canCreate && (
+            <button
+              type="button"
+              onClick={() => {
+                setImportPreviewRows([]);
+                setImportFileName(null);
+                setImportPastedText('');
+                setShowImportModal(true);
+              }}
+              className="h-9 px-3 rounded-xl border border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100/80 text-emerald-800 text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 shadow-2xs transition-colors"
+              title="Nhập danh sách Lead từ file Excel (.xlsx, .csv) kèm kiểm tra trùng lặp tự động"
+            >
+              <FolderUp className="w-4 h-4 text-emerald-700" />
+              <span>Nhập Excel</span>
+            </button>
+          )}
 
           {canCreate && (
             <button
@@ -1355,7 +1426,7 @@ export function LeadsWorkspace() {
         </div>
       </div>
 
-      {/* 6-Card Clean White Pipeline & Project Follow-Up Strip */}
+      {/* Unified 6-Card Interactive Status Strip (Replaces duplicate filter bar & replaces 3B with Thất bại) */}
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2.5">
         <button
           type="button"
@@ -1380,7 +1451,7 @@ export function LeadsWorkspace() {
               {b2bSummaryCounts.validTotal}
             </span>
             <span className="text-[11px] font-medium text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
-              Toàn phễu
+              Tất cả
             </span>
           </div>
         </button>
@@ -1445,56 +1516,26 @@ export function LeadsWorkspace() {
           type="button"
           onClick={() => {
             setStatusFilter('quote_sent');
-            setB2bHorizonFilter('hot_under_7d');
+            setB2bHorizonFilter('all');
             setOverdueOnly(false);
             setUnreceivedOnly(false);
             setCurrentPage(1);
           }}
           className={`text-left rounded-xl p-3 border transition shadow-2xs ${
-            b2bHorizonFilter === 'hot_under_7d'
+            statusFilter === 'quote_sent'
               ? 'bg-amber-50/50 border-amber-300 ring-1 ring-amber-500/20'
               : 'bg-white border-slate-200/90 hover:border-slate-300'
           }`}
         >
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
-            3A. Báo Giá Mới (&lt;7 ngày)
+            3. Đã Gửi Báo Giá
           </span>
           <div className="flex items-baseline justify-between mt-1">
             <span className="font-display text-2xl font-bold text-slate-900">
-              {b2bSummaryCounts.hotQuoteCount}
+              {b2bSummaryCounts.quoteSentCount}
             </span>
             <span className="text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200/80 px-1.5 py-0.5 rounded">
               Đang tư vấn
-            </span>
-          </div>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setStatusFilter('all');
-            setB2bHorizonFilter(
-              b2bHorizonFilter === 'any_long_cycle' ? 'all' : 'any_long_cycle',
-            );
-            setOverdueOnly(false);
-            setUnreceivedOnly(false);
-            setCurrentPage(1);
-          }}
-          className={`text-left rounded-xl p-3 border transition shadow-2xs ${
-            b2bHorizonFilter === 'any_long_cycle'
-              ? 'bg-indigo-50/50 border-indigo-300 ring-1 ring-indigo-500/20'
-              : 'bg-white border-slate-200/90 hover:border-slate-300'
-          }`}
-        >
-          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
-            3B. Theo Dõi Dài Hạn
-          </span>
-          <div className="flex items-baseline justify-between mt-1">
-            <span className="font-display text-2xl font-bold text-slate-900">
-              {b2bSummaryCounts.longCycleCount}
-            </span>
-            <span className="text-[11px] font-medium text-indigo-700 bg-indigo-50 border border-indigo-200/70 px-1.5 py-0.5 rounded">
-              1–2 tháng+
             </span>
           </div>
         </button>
@@ -1523,6 +1564,34 @@ export function LeadsWorkspace() {
             </span>
             <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200/70 px-1.5 py-0.5 rounded">
               Hợp đồng LED
+            </span>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setStatusFilter('lost');
+            setB2bHorizonFilter('all');
+            setOverdueOnly(false);
+            setUnreceivedOnly(false);
+            setCurrentPage(1);
+          }}
+          className={`text-left rounded-xl p-3 border transition shadow-2xs ${
+            statusFilter === 'lost'
+              ? 'bg-rose-50/60 border-rose-300 ring-1 ring-rose-500/20'
+              : 'bg-white border-slate-200/90 hover:border-slate-300'
+          }`}
+        >
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
+            5. Thất Bại
+          </span>
+          <div className="flex items-baseline justify-between mt-1">
+            <span className="font-display text-2xl font-bold text-slate-900">
+              {b2bSummaryCounts.lostCount}
+            </span>
+            <span className="text-[11px] font-medium text-rose-700 bg-rose-50 border border-rose-200/70 px-1.5 py-0.5 rounded">
+              Đã đóng
             </span>
           </div>
         </button>
@@ -1567,122 +1636,6 @@ export function LeadsWorkspace() {
           </button>
         </div>
       )}
-
-      {/* Filter Bar & Project Follow-Up Plan Filter Pills */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-2xs space-y-2.5">
-        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-2.5">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Filter className="w-4 h-4 text-slate-400 shrink-0 mr-0.5" />
-            <button
-              type="button"
-              onClick={() => {
-                setOverdueOnly(false);
-                setUnreceivedOnly(false);
-                setB2bHorizonFilter('all');
-                setStatusFilter('all');
-                setCurrentPage(1);
-              }}
-              className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-colors ${
-                statusFilter === 'all' &&
-                b2bHorizonFilter === 'all' &&
-                !overdueOnly &&
-                !unreceivedOnly
-                  ? 'bg-[#1E3A8A] text-white shadow-2xs'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200/70'
-              }`}
-            >
-              Tất cả ({totalCount || leads.length})
-            </button>
-            {PIPELINE_STATUSES.map((st) => (
-              <button
-                key={st}
-                type="button"
-                onClick={() => {
-                  setOverdueOnly(false);
-                  setUnreceivedOnly(false);
-                  setB2bHorizonFilter('all');
-                  setStatusFilter(st);
-                  setCurrentPage(1);
-                }}
-                className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm border transition-colors ${
-                  statusFilter === st && !overdueOnly && !unreceivedOnly
-                    ? STATUS_BADGE_STYLES[st]
-                    : 'bg-slate-100 border-transparent text-slate-700 font-medium hover:bg-slate-200/70'
-                }`}
-              >
-                {PIPELINE_STATUS_LABELS[st]}
-              </button>
-            ))}
-            {unreceivedCount > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  setOverdueOnly(false);
-                  setB2bHorizonFilter('all');
-                  setUnreceivedOnly((v) => !v);
-                  setCurrentPage(1);
-                }}
-                className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-colors ${
-                  unreceivedOnly
-                    ? 'bg-blue-700 text-white shadow-2xs'
-                    : 'bg-blue-50 border border-blue-200 text-blue-900 hover:bg-blue-100'
-                }`}
-              >
-                Chờ tiếp nhận ({unreceivedCount})
-              </button>
-            )}
-            {overdueCount > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  setUnreceivedOnly(false);
-                  setB2bHorizonFilter('all');
-                  setOverdueOnly((v) => !v);
-                  setCurrentPage(1);
-                }}
-                className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-colors ${
-                  overdueOnly
-                    ? 'bg-amber-600 text-white shadow-2xs'
-                    : 'bg-amber-50 border border-amber-200 text-amber-900 hover:bg-amber-100'
-                }`}
-              >
-                Cần nhắc &gt;7 ngày ({overdueCount})
-              </button>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {viewMode === 'table' && (
-              <button
-                type="button"
-                onClick={() => setShowOptionalColumns((prev) => !prev)}
-                aria-pressed={showOptionalColumns}
-                className={`h-9 px-3 rounded-xl border text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 transition ${
-                  showOptionalColumns
-                    ? 'bg-blue-50 border-blue-300 text-[#1E3A8A]'
-                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                }`}
-                title="Đang thu gọn 3 cột: Khu vực / Địa chỉ, Chi tiết UTM, Ghi chú. Bấm để xem."
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span>{showOptionalColumns ? 'Ẩn 3 cột phụ' : 'Xem thêm 3 cột'}</span>
-              </button>
-            )}
-
-            <div className="relative flex-1 sm:flex-initial">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Tìm khách hàng, dự án, SĐT, mã Lead... (Phím /)"
-                className="h-9 pl-9 pr-3.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-[#1E3A8A] w-full sm:w-72"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
 
       {/* Main Content: Table View vs Kanban View */}
       {loading ? (
@@ -1970,10 +1923,25 @@ export function LeadsWorkspace() {
                             </div>
                             <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                               <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-900 border border-indigo-200/70 text-xs font-semibold truncate max-w-[155px]">
-                                {lead.tracking?.marketingSource ||
-                                  lead.selfReportedSource ||
-                                  CONTACT_CHANNEL_LABELS[lead.contactChannel] ||
-                                  lead.contactChannel}
+                                {(() => {
+                                  const rawSrc =
+                                    lead.selfReportedSource ||
+                                    lead.tracking?.marketingSource ||
+                                    '';
+                                  if (
+                                    rawSrc &&
+                                    rawSrc !== 'Nhập tay' &&
+                                    rawSrc !== 'Chưa xác định'
+                                  ) {
+                                    return rawSrc;
+                                  }
+                                  if (lead.contactChannel === 'zalo') return 'Zalo';
+                                  if (lead.contactChannel === 'form_web') return 'Website Toàn Trung';
+                                  if (lead.contactChannel === 'google_lead_form') return 'Google Ads';
+                                  if (lead.contactChannel === 'fanpage') return 'Fanpage Facebook';
+                                  if (lead.contactChannel === 'email') return 'Email Dự án';
+                                  return 'SĐT / Hotline';
+                                })()}
                               </span>
                               {!lead.isPhoneNormalized && (
                                 <span className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium">
@@ -2072,14 +2040,25 @@ export function LeadsWorkspace() {
                                     </button>
                                   )}
 
-                                  {fraud.duplicateScenario === 'SCENARIO_2_RETURNING_CUSTOMER' && (
+                                  {fraud.duplicateScenario === 'SCENARIO_2_WON_RETURNING' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setInvestigativeLead(lead)}
+                                      className="px-2 py-0.5 rounded-md bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 text-emerald-900 text-[11px] font-bold transition"
+                                      title="Khách hàng từng chốt thành công hợp đồng trước đây nay quay lại mua dự án mới"
+                                    >
+                                      KHÁCH CŨ QUAY LẠI
+                                    </button>
+                                  )}
+
+                                  {fraud.duplicateScenario === 'SCENARIO_2_LOST_RETURNING' && (
                                     <button
                                       type="button"
                                       onClick={() => setInvestigativeLead(lead)}
                                       className="px-2 py-0.5 rounded-md bg-blue-100 hover:bg-blue-200 border border-blue-300 text-[#1E3A8A] text-[11px] font-bold transition"
-                                      title="Kịch bản 2 (UC01 1.5): Khách hàng cũ quay lại hỏi dự án mới"
+                                      title="Khách từng hỏi báo giá nhưng chưa chốt (Thất bại) trước đây nay quay lại"
                                     >
-                                      KHÁCH CŨ QUAY LẠI
+                                      KHÁCH QUAY LẠI
                                     </button>
                                   )}
 
@@ -2438,11 +2417,537 @@ export function LeadsWorkspace() {
         salesOptions={salesOptions}
         currentUserId={user?.id}
         csrfToken={user?.csrfToken}
+        existingLeads={leads}
+        onOpenExistingLead={(leadId) => {
+          setShowCreateModal(false);
+          setSelectedLeadId(leadId);
+          setLeadDetailTab('info');
+        }}
         onCreatedSuccess={async (leadCode, assignedMsg) => {
           setFeedbackMsg(`Đã tạo thành công hồ sơ ${leadCode}. ${assignedMsg}`);
           await fetchLeads();
         }}
       />
+
+      {/* Modal Nhập Danh Sách Lead Từ Excel (.xlsx / .csv) kèm Kiểm Tra Trùng Lặp Tức Thì */}
+      {showImportModal && (() => {
+        const seenPhonesInBatch = new Set<string>();
+        const evaluatedRows = importPreviewRows.map((row) => {
+          const rawDigits = (row.phone || '').replace(/\D/g, '');
+          const normPhone =
+            rawDigits.startsWith('84') && rawDigits.length >= 10
+              ? `0${rawDigits.slice(2)}`
+              : rawDigits.length === 9 && !rawDigits.startsWith('0')
+                ? `0${rawDigits}`
+                : rawDigits;
+          const normComp = (row.companyName || '').trim().toLowerCase();
+
+          const isDupInBatch = normPhone.length >= 8 && seenPhonesInBatch.has(normPhone);
+          if (normPhone.length >= 8) {
+            seenPhonesInBatch.add(normPhone);
+          }
+
+          const matchedLeads = leads.filter((l) => {
+            if (l.spamStatus !== 'NONE') return false;
+            const lPhone = (l.phone || '').replace(/\D/g, '');
+            const phoneHit = normPhone.length >= 8 && !lPhone.includes('*') && lPhone === normPhone;
+            const compHit =
+              normComp.length >= 5 && (l.companyName || '').trim().toLowerCase() === normComp;
+            return phoneHit || compHit;
+          });
+
+          const openMatch = matchedLeads.find(
+            (l) =>
+              l.pipelineStatus === 'new_lead' ||
+              l.pipelineStatus === 'quoting' ||
+              l.pipelineStatus === 'quote_sent',
+          );
+          const wonMatch = matchedLeads.find((l) => l.pipelineStatus === 'won');
+          const lostMatch = matchedLeads.find((l) => l.pipelineStatus === 'lost');
+
+          let rowStatus: 'OPEN_DUP' | 'IN_FILE_DUP' | 'WON_RETURNING' | 'LOST_RETURNING' | 'NEW_VALID' =
+            'NEW_VALID';
+          let matchedLead: LeadItemDto | null = null;
+
+          if (openMatch) {
+            rowStatus = 'OPEN_DUP';
+            matchedLead = openMatch;
+          } else if (isDupInBatch) {
+            rowStatus = 'IN_FILE_DUP';
+          } else if (wonMatch) {
+            rowStatus = 'WON_RETURNING';
+            matchedLead = wonMatch;
+          } else if (lostMatch) {
+            rowStatus = 'LOST_RETURNING';
+            matchedLead = lostMatch;
+          }
+
+          return {
+            ...row,
+            rowStatus,
+            matchedLead,
+          };
+        });
+
+        const openDupCount = evaluatedRows.filter(
+          (r) => r.rowStatus === 'OPEN_DUP' || r.rowStatus === 'IN_FILE_DUP',
+        ).length;
+        const wonReturningCount = evaluatedRows.filter((r) => r.rowStatus === 'WON_RETURNING').length;
+        const lostReturningCount = evaluatedRows.filter((r) => r.rowStatus === 'LOST_RETURNING').length;
+        const newValidCount = evaluatedRows.filter((r) => r.rowStatus === 'NEW_VALID').length;
+
+        const rowsToCommit = importSkipOpenDup
+          ? evaluatedRows.filter(
+              (r) => r.rowStatus !== 'OPEN_DUP' && r.rowStatus !== 'IN_FILE_DUP',
+            )
+          : evaluatedRows;
+
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-auto flex flex-col max-h-[90vh]">
+              {/* Header */}
+              <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-700 text-white flex items-center justify-center shadow-xs">
+                    <FolderUp className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="font-display font-bold text-slate-900 text-lg">
+                      Nhập danh sách Lead từ Excel (.xlsx / .csv)
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      Tự động chuẩn hóa SĐT và phát cảnh báo trùng lặp / khách cũ quay lại trên từng dòng trước khi lưu
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImportFileName('5_Truong_Hop_Test_Mau.xlsx');
+                      setImportPreviewRows([
+                        {
+                          rowNumber: 6,
+                          phone: '0908100201',
+                          contactName: 'Anh Minh Hoàng (TH1: Khách cũ đã mua)',
+                          companyName: 'Công ty CP Trung tâm Hội nghị Ánh Dương',
+                          projectName: 'Màn hình LED Hội trường Tầng 6',
+                          email: 'minh.hoang@anhduong.vn',
+                          source: 'Website Toàn Trung',
+                          region: 'TP.HCM - TP. Thủ Đức',
+                          address: 'Khu Công Nghệ Cao, TP. Thủ Đức',
+                          productsText: 'Màn hình LED Indoor',
+                          note: 'Trùng với TT-20261101-0001 đã Chốt thành công',
+                        },
+                        {
+                          rowNumber: 7,
+                          phone: '0364759204',
+                          contactName: 'Anh Long (TH2: Khách thất bại quay lại)',
+                          companyName: 'Công ty TNHH Xây dựng Long Phát',
+                          projectName: 'Màn hình LED Phòng họp Tầng 2',
+                          email: 'long@longphat.vn',
+                          source: 'Zalo',
+                          region: 'TP.HCM - TP. Thủ Đức',
+                          address: 'Đường Võ Văn Ngân, TP. Thủ Đức',
+                          productsText: 'Màn hình LED Indoor',
+                          note: 'Trùng với TT-20261106-000720 từng Thất bại',
+                        },
+                        {
+                          rowNumber: 8,
+                          phone: '0908100204',
+                          contactName: 'Bác sĩ Khanh (TH3: Trùng Lead đang mở)',
+                          companyName: 'Bệnh viện Đa khoa Quốc tế Minh Tâm',
+                          projectName: 'Màn hình LED Sảnh khám & Đồng hồ LED',
+                          email: 'khanh@minhtamhospital.vn',
+                          source: 'Google Ads',
+                          region: 'TP.HCM - Quận 7',
+                          address: 'Nguyễn Lương Bằng, Quận 7',
+                          productsText: 'Màn hình LED Indoor',
+                          note: 'Trùng với TT-20261105-0004 đang mở',
+                        },
+                        {
+                          rowNumber: 9,
+                          phone: '0918888999',
+                          contactName: 'Chị Lan (TH4: Khách mới hợp lệ)',
+                          companyName: 'Nhà máy Sản xuất Hòa Bình',
+                          projectName: 'Bảng điện tử Năng suất & An toàn',
+                          email: 'lan.bql@hoabinhfactory.vn',
+                          source: 'Zalo',
+                          region: 'Bình Dương',
+                          address: 'KCN VSIP 1, Thuận An, Bình Dương',
+                          productsText: 'Bảng Năng suất',
+                          note: 'Khách hàng mới hoàn toàn',
+                        },
+                        {
+                          rowNumber: 10,
+                          phone: '0918888999',
+                          contactName: 'Chị Lan (TH5: Lặp SĐT trong cùng file Excel)',
+                          companyName: 'Nhà máy Sản xuất Hòa Bình',
+                          projectName: 'Bảng điện tử Năng suất (Dòng lặp)',
+                          email: 'lan.bql@hoabinhfactory.vn',
+                          source: 'Website Toàn Trung',
+                          region: 'Bình Dương',
+                          address: 'KCN VSIP 1, Thuận An, Bình Dương',
+                          productsText: 'Bảng Năng suất',
+                          note: 'Trùng SĐT với dòng #9 ngay trong file Excel',
+                        },
+                      ]);
+                    }}
+                    className="h-9 px-3 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold inline-flex items-center gap-1.5 transition"
+                  >
+                    <span>⚡ Nạp 5 trường hợp mẫu để test ngay</span>
+                  </button>
+                  <a
+                    href="/api/v1/leads/export?template=1"
+                    className="h-9 px-3 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[#1E3A8A] text-xs font-bold inline-flex items-center gap-1.5 transition"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Tải file Excel mẫu (.xlsx)</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setShowImportModal(false)}
+                    className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200/60"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 overflow-y-auto space-y-4 flex-1">
+                {/* Upload File or Paste */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div
+                    onClick={() => importFileInputRef.current?.click()}
+                    className="cursor-pointer rounded-xl border-2 border-dashed border-emerald-300 bg-emerald-50/40 hover:bg-emerald-50/80 p-4 flex flex-col items-center justify-center text-center transition"
+                  >
+                    <input
+                      ref={importFileInputRef}
+                      type="file"
+                      accept=".xlsx,.csv,.tsv"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file || !user) return;
+                        setImportFileName(file.name);
+                        setImportParsing(true);
+                        setErrorMsg(null);
+                        void (async () => {
+                          try {
+                            const fd = new FormData();
+                            fd.append('file', file);
+                            const res = await apiRequest<{
+                              rows: typeof importPreviewRows;
+                            }>('/api/v1/leads/export', {
+                              method: 'POST',
+                              csrfToken: user.csrfToken,
+                              isFormData: true,
+                              body: fd,
+                            });
+                            setImportPreviewRows(res.rows || []);
+                          } catch (err) {
+                            setErrorMsg(
+                              err instanceof Error ? err.message : 'Không thể đọc file Excel.',
+                            );
+                          } finally {
+                            setImportParsing(false);
+                            if (importFileInputRef.current) {
+                              importFileInputRef.current.value = '';
+                            }
+                          }
+                        })();
+                      }}
+                    />
+                    <FolderUp className="w-7 h-7 text-emerald-700 mb-1.5" />
+                    <p className="text-sm font-bold text-slate-800">
+                      {importFileName
+                        ? `Đã chọn: ${importFileName}`
+                        : 'Bấm để chọn file Excel (.xlsx, .csv)'}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Hỗ trợ cả file Mẫu Nhập Lead và file Xuất Excel từ hệ thống Toàn Trung
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700">
+                        Hoặc dán trực tiếp các dòng copy từ bảng Excel:
+                      </span>
+                      <button
+                        type="button"
+                        disabled={!importPastedText.trim() || importParsing}
+                        onClick={() => {
+                          if (!user || !importPastedText.trim()) return;
+                          setImportParsing(true);
+                          setErrorMsg(null);
+                          void (async () => {
+                            try {
+                              const fd = new FormData();
+                              fd.append('pastedText', importPastedText);
+                              const res = await apiRequest<{
+                                rows: typeof importPreviewRows;
+                              }>('/api/v1/leads/export', {
+                                method: 'POST',
+                                csrfToken: user.csrfToken,
+                                isFormData: true,
+                                body: fd,
+                              });
+                              setImportPreviewRows(res.rows || []);
+                            } catch (err) {
+                              setErrorMsg(
+                                err instanceof Error ? err.message : 'Không thể phân tích dữ liệu dán.',
+                              );
+                            } finally {
+                              setImportParsing(false);
+                            }
+                          })();
+                        }}
+                        className="h-7 px-2.5 rounded-lg bg-[#1E3A8A] hover:bg-blue-900 text-white text-xs font-bold disabled:opacity-40 transition"
+                      >
+                        Kiểm tra dữ liệu dán
+                      </button>
+                    </div>
+                    <textarea
+                      rows={2}
+                      value={importPastedText}
+                      onChange={(e) => setImportPastedText(e.target.value)}
+                      placeholder="Copy các dòng từ Excel (Số điện thoại | Người liên hệ | Công ty | Dự án...) và dán vào đây..."
+                      className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs focus:outline-none focus:border-[#1E3A8A]"
+                    />
+                  </div>
+                </div>
+
+                {/* Summary & Instant Duplicate Detection Table */}
+                {importParsing ? (
+                  <div className="p-8 text-center text-sm font-semibold text-slate-600 bg-slate-50 rounded-xl border border-slate-200">
+                    Đang đọc file Excel và đối chiếu trùng lặp với cơ sở dữ liệu...
+                  </div>
+                ) : evaluatedRows.length > 0 ? (
+                  <div className="space-y-3">
+                    {/* KPI Strip for Import Preview */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                      <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
+                        <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-800">
+                          Tổng cộng: {evaluatedRows.length} dòng
+                        </span>
+                        <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700">
+                          Mới hợp lệ: {newValidCount}
+                        </span>
+                        <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900 border border-emerald-300">
+                          Khách cũ quay lại (Đã mua): {wonReturningCount}
+                        </span>
+                        <span className="px-2.5 py-1 rounded-lg bg-blue-100 text-[#1E3A8A] border border-blue-300">
+                          Khách quay lại (Thất bại): {lostReturningCount}
+                        </span>
+                        <span className="px-2.5 py-1 rounded-lg bg-rose-100 text-rose-900 border border-rose-300">
+                          Cảnh báo trùng Lead đang mở: {openDupCount}
+                        </span>
+                      </div>
+
+                      <label className="inline-flex items-center gap-2 text-xs font-bold text-slate-800 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={importSkipOpenDup}
+                          onChange={(e) => setImportSkipOpenDup(e.target.checked)}
+                          className="rounded border-slate-300 text-[#1E3A8A]"
+                        />
+                        <span>Tự động bỏ qua dòng đang Trùng Lead đang mở ({openDupCount})</span>
+                      </label>
+                    </div>
+
+                    {/* Preview Table */}
+                    <div className="border border-slate-200 rounded-xl overflow-hidden max-h-[340px] overflow-y-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead className="bg-slate-100 text-slate-700 sticky top-0 z-10 border-b border-slate-200">
+                          <tr>
+                            <th className="py-2.5 px-3 font-bold">Dòng</th>
+                            <th className="py-2.5 px-3 font-bold">Số điện thoại</th>
+                            <th className="py-2.5 px-3 font-bold">Khách hàng / Công ty</th>
+                            <th className="py-2.5 px-3 font-bold">Dự án &amp; Nguồn</th>
+                            <th className="py-2.5 px-3 font-bold">Sản phẩm</th>
+                            <th className="py-2.5 px-3 font-bold">Trạng thái Kiểm tra Trùng</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200">
+                          {evaluatedRows.map((r, idx) => (
+                            <tr
+                              key={`${r.rowNumber}-${idx}`}
+                              className={
+                                r.rowStatus === 'OPEN_DUP' || r.rowStatus === 'IN_FILE_DUP'
+                                  ? 'bg-rose-50/70'
+                                  : r.rowStatus === 'WON_RETURNING'
+                                    ? 'bg-emerald-50/50'
+                                    : r.rowStatus === 'LOST_RETURNING'
+                                      ? 'bg-blue-50/40'
+                                      : 'bg-white'
+                              }
+                            >
+                              <td className="py-2 px-3 font-mono text-slate-500">#{r.rowNumber}</td>
+                              <td className="py-2 px-3 font-mono font-bold text-slate-900">
+                                {r.phone}
+                              </td>
+                              <td className="py-2 px-3">
+                                <div className="font-semibold text-slate-900">
+                                  {r.companyName || r.contactName || 'Khách liên hệ'}
+                                </div>
+                                {r.contactName && r.companyName && (
+                                  <div className="text-[11px] text-slate-500">{r.contactName}</div>
+                                )}
+                              </td>
+                              <td className="py-2 px-3">
+                                <div className="text-slate-800 truncate max-w-[180px]">
+                                  {r.projectName || r.region}
+                                </div>
+                                <span className="text-[11px] text-slate-500">{r.source}</span>
+                              </td>
+                              <td className="py-2 px-3 text-slate-700 max-w-[160px] truncate">
+                                {r.productsText}
+                              </td>
+                              <td className="py-2 px-3">
+                                {r.rowStatus === 'OPEN_DUP' && r.matchedLead && (
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="px-2 py-0.5 rounded bg-rose-600 text-white font-bold text-[11px]">
+                                      CẢNH BÁO TRÙNG LEAD ({r.matchedLead.leadCode})
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setShowImportModal(false);
+                                        setSelectedLeadId(r.matchedLead!.id);
+                                        setLeadDetailTab('info');
+                                      }}
+                                      className="text-[11px] font-bold text-[#1E3A8A] underline"
+                                    >
+                                      Xem hồ sơ →
+                                    </button>
+                                  </div>
+                                )}
+                                {r.rowStatus === 'IN_FILE_DUP' && (
+                                  <span className="px-2 py-0.5 rounded bg-amber-600 text-white font-bold text-[11px]">
+                                    TRÙNG SĐT TRONG FILE EXCEL
+                                  </span>
+                                )}
+                                {r.rowStatus === 'WON_RETURNING' && r.matchedLead && (
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="px-2 py-0.5 rounded bg-emerald-100 border border-emerald-300 text-emerald-900 font-bold text-[11px]">
+                                      KHÁCH CŨ QUAY LẠI ({r.matchedLead.leadCode})
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setShowImportModal(false);
+                                        setSelectedLeadId(r.matchedLead!.id);
+                                        setLeadDetailTab('info');
+                                      }}
+                                      className="text-[11px] font-bold text-emerald-800 underline"
+                                    >
+                                      Xem hồ sơ đã mua →
+                                    </button>
+                                  </div>
+                                )}
+                                {r.rowStatus === 'LOST_RETURNING' && r.matchedLead && (
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="px-2 py-0.5 rounded bg-blue-100 border border-blue-300 text-[#1E3A8A] font-bold text-[11px]">
+                                      KHÁCH QUAY LẠI ({r.matchedLead.leadCode})
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setShowImportModal(false);
+                                        setSelectedLeadId(r.matchedLead!.id);
+                                        setLeadDetailTab('info');
+                                      }}
+                                      className="text-[11px] font-bold text-[#1E3A8A] underline"
+                                    >
+                                      Xem hồ sơ cũ →
+                                    </button>
+                                  </div>
+                                )}
+                                {r.rowStatus === 'NEW_VALID' && (
+                                  <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold text-[11px]">
+                                    Mới hợp lệ
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 rounded-xl border border-slate-200">
+                    Chọn file Excel (`.xlsx`, `.csv`) hoặc dán danh sách từ Excel để xem trước kết quả kiểm tra trùng lặp.
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3">
+                <span className="text-xs text-slate-500">
+                  {evaluatedRows.length > 0
+                    ? `Sẵn sàng nhập ${rowsToCommit.length} / ${evaluatedRows.length} dòng vào hệ thống`
+                    : 'Chưa có dữ liệu xem trước'}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowImportModal(false)}
+                    className="h-9 px-4 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold"
+                  >
+                    Đóng
+                  </button>
+                  <button
+                    type="button"
+                    disabled={rowsToCommit.length === 0 || importCommitting}
+                    onClick={() => {
+                      if (!user || rowsToCommit.length === 0) return;
+                      setImportCommitting(true);
+                      setErrorMsg(null);
+                      void (async () => {
+                        try {
+                          const res = await apiRequest<{
+                            createdCount: number;
+                            failedCount: number;
+                          }>('/api/v1/leads/export', {
+                            method: 'POST',
+                            csrfToken: user.csrfToken,
+                            body: { rows: rowsToCommit },
+                          });
+                          setShowImportModal(false);
+                          setFeedbackMsg(
+                            `Đã nhập thành công ${res.createdCount} hồ sơ Lead từ Excel${
+                              res.failedCount > 0 ? ` (${res.failedCount} dòng lỗi bị bỏ qua)` : ''
+                            }.`,
+                          );
+                          await fetchLeads();
+                        } catch (err) {
+                          setErrorMsg(
+                            err instanceof Error ? err.message : 'Lỗi khi nhập danh sách Excel.',
+                          );
+                        } finally {
+                          setImportCommitting(false);
+                        }
+                      })();
+                    }}
+                    className="h-9 px-5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-sm disabled:opacity-40 transition"
+                  >
+                    <FolderUp className="w-4 h-4" />
+                    <span>
+                      {importCommitting
+                        ? 'Đang nhập dữ liệu...'
+                        : `Nhập ${rowsToCommit.length} hồ sơ vào hệ thống`}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Investigative Popover for Separate Warnings (UI-03) */}
       {investigativeLead && (() => {
@@ -2489,67 +2994,128 @@ export function LeadsWorkspace() {
                       </strong>
                       ).
                     </p>
-                    {canEditLead(investigativeLead) && investigativeLead.pipelineStatus !== 'lost' && (
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      {evalResult.matchedCustomerLead && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const targetId = evalResult.matchedCustomerLead!.id;
+                            setInvestigativeLead(null);
+                            setSelectedLeadId(targetId);
+                            setLeadDetailTab('info');
+                          }}
+                          className="h-8 px-3 rounded-lg bg-[#1E3A8A] hover:bg-blue-900 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs transition"
+                        >
+                          <span>Mở xem hồ sơ đang mở ({evalResult.matchedCustomerLead.leadCode}) →</span>
+                        </button>
+                      )}
+                      {canEditLead(investigativeLead) && investigativeLead.pipelineStatus !== 'lost' && (
+                        <button
+                          type="button"
+                          disabled={submitting}
+                          onClick={() => {
+                            void (async () => {
+                              if (!user) return;
+                              setSubmitting(true);
+                              try {
+                                await apiRequest(`/api/v1/leads/${investigativeLead.id}`, {
+                                  method: 'PATCH',
+                                  csrfToken: user.csrfToken,
+                                  body: {
+                                    action: 'transition_pipeline',
+                                    expectedVersion: investigativeLead.version,
+                                    toStatus: 'lost',
+                                    reason: 'Trùng Lead',
+                                    noteContent: `Đóng nhanh theo Kịch bản 1 (UC01 1.5) do trùng với ${evalResult.matchedCustomerLead?.leadCode || investigativeLead.duplicateOfLeadCode || 'Lead đang mở'}`,
+                                    markQuoteResponded: false,
+                                    bypassPriceCheckConfirmed: true,
+                                  },
+                                });
+                                setFeedbackMsg(
+                                  `Đã đóng hồ sơ ${investigativeLead.leadCode} với lý do "Trùng Lead" (Kịch bản 1 UC01 1.5).`,
+                                );
+                                setInvestigativeLead(null);
+                                await fetchLeads();
+                              } catch (err) {
+                                setErrorMsg(err instanceof Error ? err.message : 'Lỗi đóng Lead trùng.');
+                              } finally {
+                                setSubmitting(false);
+                              }
+                            })();
+                          }}
+                          className="h-8 px-3 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs transition"
+                        >
+                          <span>Đóng nhanh Lead này (Thất bại · Lý do: Trùng Lead)</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {evalResult.duplicateScenario === 'SCENARIO_2_WON_RETURNING' && (
+                  <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-slate-900 space-y-2">
+                    <strong className="font-bold block text-sm text-emerald-900">
+                      [KHÁCH CŨ QUAY LẠI] — Khách đã mua hàng thành công trước đây
+                    </strong>
+                    <p className="text-xs leading-relaxed text-slate-700">
+                      Khách hàng đã từng chốt hợp đồng thành công và nay quay lại mua dự án mới. Hồ sơ đã mua trước đây:{' '}
+                      <strong className="font-mono text-emerald-900">
+                        {evalResult.matchedCustomerLead?.leadCode || investigativeLead.duplicateOfLeadCode || 'Hồ sơ cũ'}
+                      </strong>{' '}
+                      · NVKD từng phụ trách:{' '}
+                      <strong>{evalResult.matchedCustomerLead?.assignedSalesName || 'NVKD cũ'}</strong> · Trạng thái cũ:{' '}
+                      <strong className="text-emerald-700">Chốt thành công</strong>.
+                    </p>
+                    {evalResult.matchedCustomerLead && (
                       <button
                         type="button"
-                        disabled={submitting}
                         onClick={() => {
-                          void (async () => {
-                            if (!user) return;
-                            setSubmitting(true);
-                            try {
-                              await apiRequest(`/api/v1/leads/${investigativeLead.id}`, {
-                                method: 'PATCH',
-                                csrfToken: user.csrfToken,
-                                body: {
-                                  action: 'transition_pipeline',
-                                  expectedVersion: investigativeLead.version,
-                                  toStatus: 'lost',
-                                  reason: 'Trùng Lead',
-                                  noteContent: `Đóng nhanh theo Kịch bản 1 (UC01 1.5) do trùng với ${evalResult.matchedCustomerLead?.leadCode || investigativeLead.duplicateOfLeadCode || 'Lead đang mở'}`,
-                                  markQuoteResponded: false,
-                                  bypassPriceCheckConfirmed: true,
-                                },
-                              });
-                              setFeedbackMsg(
-                                `Đã đóng hồ sơ ${investigativeLead.leadCode} với lý do "Trùng Lead" (Kịch bản 1 UC01 1.5).`,
-                              );
-                              setInvestigativeLead(null);
-                              await fetchLeads();
-                            } catch (err) {
-                              setErrorMsg(err instanceof Error ? err.message : 'Lỗi đóng Lead trùng.');
-                            } finally {
-                              setSubmitting(false);
-                            }
-                          })();
+                          const targetId = evalResult.matchedCustomerLead!.id;
+                          setInvestigativeLead(null);
+                          setSelectedLeadId(targetId);
+                          setLeadDetailTab('info');
                         }}
-                        className="h-8 px-3 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs transition"
+                        className="h-8 px-3 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs transition"
                       >
-                        <span>Đóng nhanh Lead này (Thất bại · Lý do: Trùng Lead)</span>
+                        <span>Mở xem hồ sơ đã mua ({evalResult.matchedCustomerLead.leadCode}) →</span>
                       </button>
                     )}
                   </div>
                 )}
 
-                {evalResult.duplicateScenario === 'SCENARIO_2_RETURNING_CUSTOMER' && (
-                  <div className="p-4 rounded-xl bg-blue-50 border border-blue-200 text-slate-900 space-y-1.5">
+                {evalResult.duplicateScenario === 'SCENARIO_2_LOST_RETURNING' && (
+                  <div className="p-4 rounded-xl bg-blue-50 border border-blue-200 text-slate-900 space-y-2">
                     <strong className="font-bold block text-sm text-[#1E3A8A]">
-                      Kịch bản 2 (UC01 1.5): [KHÁCH CŨ QUAY LẠI] — Đã có Lead cũ trước đây
+                      [KHÁCH QUAY LẠI] — Khách từng hỏi trước đây nhưng chưa chốt (Thất bại)
                     </strong>
                     <p className="text-xs leading-relaxed text-slate-700">
-                      Khách hàng cũ quay lại hỏi dự án mới. Hồ sơ trước đây:{' '}
+                      Khách hàng từng liên hệ trước đây nhưng chưa chốt được hợp đồng, nay quay lại hỏi lại. Hồ sơ cũ:{' '}
                       <strong className="font-mono text-[#1E3A8A]">
                         {evalResult.matchedCustomerLead?.leadCode || investigativeLead.duplicateOfLeadCode || 'Hồ sơ cũ'}
                       </strong>{' '}
                       · NVKD từng phụ trách:{' '}
-                      <strong>{evalResult.matchedCustomerLead?.assignedSalesName || 'NVKD cũ'}</strong> · Kết quả cũ:{' '}
-                      <strong>
+                      <strong>{evalResult.matchedCustomerLead?.assignedSalesName || 'NVKD cũ'}</strong> · Kết quả lần trước:{' '}
+                      <strong className="text-rose-700">
                         {evalResult.matchedCustomerLead
-                          ? `${PIPELINE_STATUS_LABELS[evalResult.matchedCustomerLead.pipelineStatus]}${evalResult.matchedCustomerLead.lostReason ? ` (${evalResult.matchedCustomerLead.lostReason})` : ''}`
-                          : 'Đã đóng'}
+                          ? `Thất bại${evalResult.matchedCustomerLead.lostReason ? ` (${evalResult.matchedCustomerLead.lostReason})` : ''}`
+                          : 'Thất bại'}
                       </strong>
                       .
                     </p>
+                    {evalResult.matchedCustomerLead && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetId = evalResult.matchedCustomerLead!.id;
+                          setInvestigativeLead(null);
+                          setSelectedLeadId(targetId);
+                          setLeadDetailTab('info');
+                        }}
+                        className="h-8 px-3 rounded-lg bg-[#1E3A8A] hover:bg-blue-900 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs transition"
+                      >
+                        <span>Mở xem hồ sơ cũ ({evalResult.matchedCustomerLead.leadCode}) →</span>
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -2922,7 +3488,99 @@ export function LeadsWorkspace() {
 
                     {canEditSelectedLead ? (
                       <form onSubmit={(e) => void handleUpdateLeadInfo(e)} className="space-y-3.5">
-                        {/* 2. Khối Thông tin Khách hàng & Công trình (Lưới 3 cột gọn gàng) */}
+                        {/* Thanh thao tác nhanh đồng bộ với Tạo Lead: Chuyển Lead & Tích nghi vấn */}
+                        <div className="p-3.5 rounded-xl bg-white border border-slate-200/90 space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex flex-wrap items-center gap-2.5">
+                              {canReassign && (
+                                <label
+                                  className={`h-9 px-3.5 rounded-lg border inline-flex items-center gap-2 cursor-pointer select-none text-xs font-bold transition ${
+                                    editTickReassign
+                                      ? 'bg-[#1E3A8A] text-white border-[#1E3A8A] shadow-2xs'
+                                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-blue-300'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={editTickReassign}
+                                    onChange={(e) => setEditTickReassign(e.target.checked)}
+                                    className="w-3.5 h-3.5 accent-white rounded"
+                                  />
+                                  <UserCheck className="w-3.5 h-3.5 shrink-0" />
+                                  <span>Chuyển Lead cho NVKD khác</span>
+                                </label>
+                              )}
+
+                              <label
+                                className={`h-9 px-3.5 rounded-lg border inline-flex items-center gap-2 cursor-pointer select-none text-xs font-bold transition ${
+                                  editTickSuspect
+                                    ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
+                                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-amber-300'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={editTickSuspect}
+                                  onChange={(e) => setEditTickSuspect(e.target.checked)}
+                                  className="w-3.5 h-3.5 accent-white rounded"
+                                />
+                                <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                                <span>Tích nghi vấn</span>
+                              </label>
+                            </div>
+
+                            <span className="text-xs text-slate-500">
+                              Ngày liên hệ:{' '}
+                              <strong className="text-slate-700">
+                                {new Date(selectedLead.contactedAt).toLocaleString('vi-VN')}
+                              </strong>
+                            </span>
+                          </div>
+
+                          {editTickReassign && canReassign && (
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2.5 border-t border-slate-100 animate-in fade-in duration-150">
+                              <select
+                                value={reassignTargetId}
+                                onChange={(e) =>
+                                  setReassignTargetId(e.target.value ? Number(e.target.value) : '')
+                                }
+                                className="h-9 px-3 rounded-lg border border-blue-300 bg-white text-xs font-semibold text-slate-800"
+                              >
+                                <option value="">Chọn NVKD nhận bàn giao</option>
+                                {filteredSalesForReassign.map((s) => (
+                                  <option key={s.id} value={s.id}>
+                                    {s.fullName} — {s.activeLeadCount} Lead
+                                  </option>
+                                ))}
+                              </select>
+                              <select
+                                value={reassignCategory}
+                                onChange={(e) =>
+                                  setReassignCategory(
+                                    e.target.value as (typeof REASSIGN_REASONS)[number],
+                                  )
+                                }
+                                className="h-9 px-3 rounded-lg border border-blue-300 bg-white text-xs font-medium text-slate-800"
+                              >
+                                {REASSIGN_REASONS.map((r) => (
+                                  <option key={r} value={r}>
+                                    Lý do: {r}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                disabled={submitting || !reassignTargetId}
+                                onClick={(e) => void handleReassignSales(e)}
+                                className="h-9 px-4 rounded-lg bg-[#1E3A8A] hover:bg-blue-800 text-white text-xs font-bold disabled:opacity-50 transition"
+                              >
+                                Xác nhận chuyển Lead
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* 1. Khối Thông tin Khách hàng & Công trình (Lưới 3 cột gọn gàng) */}
                         <div className="p-4 rounded-xl border border-slate-200/90 bg-white space-y-3">
                           <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                             <span className="font-bold text-slate-900 text-sm">
@@ -2960,7 +3618,7 @@ export function LeadsWorkspace() {
                             </div>
                             <div>
                               <label className="block text-xs font-medium text-slate-600 mb-1">
-                                Email nhận báo giá
+                                Email
                               </label>
                               <input
                                 type="email"
@@ -2997,15 +3655,34 @@ export function LeadsWorkspace() {
                             </div>
                             <div>
                               <label className="block text-xs font-medium text-slate-600 mb-1">
-                                Nguồn khách tự khai
+                                Nguồn dự án *
                               </label>
-                              <input
-                                type="text"
-                                value={editSelfSource}
+                              <select
+                                value={
+                                  !editSelfSource ||
+                                  editSelfSource === 'Nhập tay' ||
+                                  editSelfSource === 'Chưa xác định'
+                                    ? selectedLead.contactChannel === 'zalo'
+                                      ? 'Zalo'
+                                      : selectedLead.contactChannel === 'form_web'
+                                        ? 'Website Toàn Trung'
+                                        : selectedLead.contactChannel === 'google_lead_form'
+                                          ? 'Google Ads'
+                                          : 'SĐT / Hotline'
+                                    : editSelfSource
+                                }
                                 onChange={(e) => setEditSelfSource(e.target.value)}
-                                placeholder="VD: Tìm Google, giới thiệu..."
-                                className="w-full h-9 px-3 rounded-lg border border-slate-200 text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
-                              />
+                                className="w-full h-9 px-2.5 rounded-lg border border-slate-200 bg-white font-semibold text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
+                              >
+                                <option value="SĐT / Hotline">SĐT / Hotline</option>
+                                <option value="Zalo">Zalo</option>
+                                <option value="Website Toàn Trung">Website Toàn Trung</option>
+                                <option value="Google Ads">Google Ads</option>
+                                <option value="Fanpage Facebook">Fanpage Facebook</option>
+                                <option value="Email Dự án">Email Dự án</option>
+                                <option value="Khách cũ / Giới thiệu">Khách cũ / Giới thiệu</option>
+                                <option value="Hồ sơ Đấu thầu">Hồ sơ Đấu thầu</option>
+                              </select>
                             </div>
 
                             <div>
@@ -3068,16 +3745,16 @@ export function LeadsWorkspace() {
                           </div>
                         </div>
 
-                        {/* 2. Khối Sản phẩm Màn hình LED / Bảng điện tử quan tâm (Chia nhóm rõ ràng, không cắt chữ) */}
+                        {/* 2. Khối Danh mục sản phẩm & dịch vụ (Đồng bộ 3 cột + Ô tự nhập Dịch vụ khác) */}
                         <div className="p-4 rounded-xl border border-slate-200/90 bg-white space-y-3.5">
                           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
                             <div className="flex items-center gap-2">
                               <Layers className="w-4 h-4 text-[#1E3A8A]" />
                               <span className="font-bold text-slate-900 text-sm">
-                                2. Sản phẩm Màn hình LED / Bảng điện tử quan tâm
+                                2. Danh mục sản phẩm &amp; dịch vụ *
                               </span>
                               <span className="px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-[#1E3A8A] text-xs font-bold">
-                                Đã chọn {editProductIds.length}
+                                Đã chọn {editProductIds.length + editCustomServiceItems.length}
                               </span>
                             </div>
 
@@ -3090,7 +3767,12 @@ export function LeadsWorkspace() {
                                     key={sel.id}
                                     className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-[#1E3A8A] text-white text-xs font-medium"
                                   >
-                                    <span>{sel.productName}</span>
+                                    <span>
+                                      {sel.productName
+                                        .replace(/^Khác\s*\(([^)]+)\)$/i, '$1 khác')
+                                        .replace(/\s*\([^)]*\)/g, '')
+                                        .trim()}
+                                    </span>
                                     {editProductIds.length > 1 && (
                                       <button
                                         type="button"
@@ -3107,16 +3789,36 @@ export function LeadsWorkspace() {
                                     )}
                                   </span>
                                 ))}
+                              {editCustomServiceItems.map((item) => (
+                                <span
+                                  key={item}
+                                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-amber-600 text-white text-xs font-medium"
+                                >
+                                  <span>{item}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setEditCustomServiceItems((prev) =>
+                                        prev.filter((x) => x !== item),
+                                      )
+                                    }
+                                    className="hover:text-rose-200 ml-0.5"
+                                    title="Xóa mục này"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
                             </div>
                           </div>
 
-                          {/* Chia 3 nhóm sản phẩm rõ ràng, không dùng thanh cuộn hẹp làm mất chữ */}
+                          {/* Chia 3 nhóm sản phẩm rõ ràng + Ô nhập trực tiếp trong Dịch vụ / Nhu cầu khác */}
                           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                             {(
                               [
                                 {
                                   category: 'MAN_HINH_LED' as const,
-                                  title: 'Màn hình LED (Indoor / Outdoor)',
+                                  title: 'Màn hình LED Indoor & Outdoor',
                                   dot: 'bg-blue-600',
                                   activeCls:
                                     'bg-blue-50 text-[#1E3A8A] border-blue-300 font-semibold shadow-2xs',
@@ -3143,46 +3845,137 @@ export function LeadsWorkspace() {
                               return (
                                 <div
                                   key={grp.category}
-                                  className="p-3 rounded-xl bg-slate-50/70 border border-slate-200/80 space-y-2"
+                                  className="p-3 rounded-xl bg-slate-50/70 border border-slate-200/80 flex flex-col justify-between space-y-2.5"
                                 >
-                                  <div className="flex items-center justify-between">
-                                    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                                      <span className={`w-2 h-2 rounded-full ${grp.dot}`} />
-                                      <span>{grp.title}</span>
-                                    </span>
-                                    <span className="text-[11px] text-slate-400">
-                                      {grpProducts.length} mục
-                                    </span>
+                                  <div className="space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                                        <span className={`w-2 h-2 rounded-full ${grp.dot}`} />
+                                        <span>{grp.title}</span>
+                                      </span>
+                                      <span className="text-[11px] text-slate-400">
+                                        {grpProducts.length} mục
+                                      </span>
+                                    </div>
+
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {grpProducts.map((p) => {
+                                        const checked = editProductIds.includes(p.id);
+                                        const cleanName = p.productName
+                                          .replace(/^Khác\s*\(([^)]+)\)$/i, '$1 khác')
+                                          .replace(/\s*\([^)]*\)/g, '')
+                                          .trim();
+                                        return (
+                                          <button
+                                            key={p.id}
+                                            type="button"
+                                            onClick={() => {
+                                              setEditProductIds((prev) =>
+                                                prev.includes(p.id)
+                                                  ? prev.length > 1
+                                                    ? prev.filter((id) => id !== p.id)
+                                                    : prev
+                                                  : [...prev, p.id],
+                                              );
+                                            }}
+                                            className={`px-2.5 py-1 rounded-lg border text-xs transition text-left ${
+                                              checked
+                                                ? grp.activeCls
+                                                : 'bg-white text-slate-600 border-slate-200/90 hover:border-slate-300 hover:text-slate-900'
+                                            }`}
+                                          >
+                                            {checked ? '✓ ' : '+ '}
+                                            {cleanName}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
                                   </div>
 
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {grpProducts.map((p) => {
-                                      const checked = editProductIds.includes(p.id);
-                                      return (
+                                  {grp.category === 'KHAC' && (
+                                    <div className="pt-2 border-t border-slate-200/80 space-y-2">
+                                      <div className="flex gap-1.5">
+                                        <input
+                                          type="text"
+                                          value={editCustomServiceDraft}
+                                          onChange={(e) =>
+                                            setEditCustomServiceDraft(e.target.value)
+                                          }
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              e.preventDefault();
+                                              const trimmed = editCustomServiceDraft.trim();
+                                              if (!trimmed) return;
+                                              setEditCustomServiceItems((prev) =>
+                                                prev.includes(trimmed) ? prev : [...prev, trimmed],
+                                              );
+                                              const khacProd = products.find(
+                                                (p) => p.category === 'KHAC',
+                                              );
+                                              if (khacProd) {
+                                                setEditProductIds((prev) =>
+                                                  prev.includes(khacProd.id)
+                                                    ? prev
+                                                    : [...prev, khacProd.id],
+                                                );
+                                              }
+                                              setEditCustomServiceDraft('');
+                                            }
+                                          }}
+                                          placeholder="Nhập dịch vụ / nhu cầu khác..."
+                                          className="flex-1 min-w-0 h-8 px-2.5 rounded-lg border border-amber-300 bg-white text-xs text-slate-800 focus:border-[#1E3A8A] outline-none"
+                                        />
                                         <button
-                                          key={p.id}
                                           type="button"
                                           onClick={() => {
-                                            setEditProductIds((prev) =>
-                                              prev.includes(p.id)
-                                                ? prev.length > 1
-                                                  ? prev.filter((id) => id !== p.id)
-                                                  : prev
-                                                : [...prev, p.id],
+                                            const trimmed = editCustomServiceDraft.trim();
+                                            if (!trimmed) return;
+                                            setEditCustomServiceItems((prev) =>
+                                              prev.includes(trimmed) ? prev : [...prev, trimmed],
                                             );
+                                            const khacProd = products.find(
+                                              (p) => p.category === 'KHAC',
+                                            );
+                                            if (khacProd) {
+                                              setEditProductIds((prev) =>
+                                                prev.includes(khacProd.id)
+                                                  ? prev
+                                                  : [...prev, khacProd.id],
+                                              );
+                                            }
+                                            setEditCustomServiceDraft('');
                                           }}
-                                          className={`px-2.5 py-1 rounded-lg border text-xs transition ${
-                                            checked
-                                              ? grp.activeCls
-                                              : 'bg-white text-slate-600 border-slate-200/90 hover:border-slate-300 hover:text-slate-900'
-                                          }`}
+                                          className="h-8 px-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold inline-flex items-center gap-1 shrink-0 transition"
                                         >
-                                          {checked ? '✓ ' : '+ '}
-                                          {p.productName}
+                                          <span>+ Thêm</span>
                                         </button>
-                                      );
-                                    })}
-                                  </div>
+                                      </div>
+
+                                      {editCustomServiceItems.length > 0 && (
+                                        <div className="flex flex-wrap gap-1">
+                                          {editCustomServiceItems.map((item) => (
+                                            <span
+                                              key={item}
+                                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-xs font-semibold"
+                                            >
+                                              <span>✓ {item}</span>
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setEditCustomServiceItems((prev) =>
+                                                    prev.filter((x) => x !== item),
+                                                  )
+                                                }
+                                                className="text-amber-700 hover:text-red-600 ml-0.5"
+                                              >
+                                                ×
+                                              </button>
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}
@@ -3203,7 +3996,7 @@ export function LeadsWorkspace() {
                             </div>
                             <div>
                               <label className="block text-xs font-medium text-slate-600 mb-1">
-                                Ghi chú cập nhật lần này
+                                Ghi chú tư vấn
                               </label>
                               <input
                                 type="text"
@@ -3566,66 +4359,66 @@ export function LeadsWorkspace() {
                     </form>
                   )}
 
-                  {/* 3. Cảnh báo Dò giá & Đánh dấu Spam */}
+                  {/* 3. Nút Tích nghi vấn 1 chạm (Hệ thống tự phát hiện trùng / dò giá) */}
                   {canEditSelectedLead && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <form
-                        onSubmit={(e) => void handleCreatePriceAlert(e)}
-                        className="p-4 rounded-xl bg-orange-50/70 border border-orange-200 space-y-2.5"
-                      >
-                        <p className="font-bold text-orange-900 text-sm">Đăng cảnh báo Nghi dò giá</p>
-                        <input
-                          type="text"
-                          required
-                          value={priceCheckReason}
-                          onChange={(e) => setPriceCheckReason(e.target.value)}
-                          placeholder="Căn cứ xác định đối thủ khảo giá..."
-                          className="w-full h-10 px-3 rounded-lg border border-orange-200 bg-white text-sm"
-                        />
-                        <input
-                          type="file"
-                          accept="image/png,image/jpeg,image/webp"
-                          onChange={(e) => setPriceCheckFile(e.target.files?.[0] || null)}
-                          className="text-xs w-full"
-                        />
-                        <button
-                          type="submit"
-                          disabled={submitting}
-                          className="w-full h-10 rounded-lg bg-orange-600 hover:bg-orange-700 text-white font-semibold text-sm"
-                        >
-                          Phát cảnh báo dò giá
-                        </button>
-                      </form>
-
-                      <form
-                        onSubmit={(e) => void handleMarkSpam(e)}
-                        className="p-4 rounded-xl bg-slate-100 border border-slate-200 space-y-2.5"
-                      >
-                        <p className="font-bold text-slate-800 text-sm">Đánh dấu Spam</p>
-                        <select
-                          value={spamReason}
-                          onChange={(e) =>
-                            setSpamReason(e.target.value as (typeof SPAM_REASONS)[number])
-                          }
-                          className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-white text-sm"
-                        >
-                          {SPAM_REASONS.map((r) => (
-                            <option key={r} value={r}>
-                              {r}
-                            </option>
-                          ))}
-                        </select>
-                        <p className="text-xs text-slate-500">
-                          SĐT sai/Nhầm máy tự loại khỏi báo cáo Ads; Đối thủ khảo giá vào diện chờ xác nhận.
+                    <div className="p-4 rounded-xl bg-amber-50/70 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-amber-950 text-sm flex items-center gap-1.5">
+                          <ShieldAlert className="w-4 h-4 text-amber-600" />
+                          <span>Đánh dấu nghi vấn</span>
                         </p>
-                        <button
-                          type="submit"
-                          disabled={submitting}
-                          className="w-full h-10 rounded-lg bg-slate-800 hover:bg-slate-900 text-white font-semibold text-sm"
-                        >
-                          Gắn cờ Spam
-                        </button>
-                      </form>
+                        <p className="text-xs text-amber-800">
+                          Hệ thống tự động phát hiện trùng SĐT, dò giá, Spam. Bấm nút bên cạnh nếu muốn chủ động gắn hoặc gỡ cờ nghi vấn.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={() => {
+                          void (async () => {
+                            if (!user) return;
+                            const nextSuspect = !selectedLead.isPriceCheckSuspect;
+                            setSubmitting(true);
+                            try {
+                              await apiRequest(`/api/v1/leads/${selectedLead.id}`, {
+                                method: 'PATCH',
+                                csrfToken: user.csrfToken,
+                                body: {
+                                  action: 'update_info',
+                                  expectedVersion: selectedLead.version,
+                                  phone: selectedLead.phone,
+                                  note: nextSuspect
+                                    ? '[NGHI VẤN: Đánh dấu nghi vấn kiểm tra]'
+                                    : '[BỎ NGHI VẤN]',
+                                },
+                              });
+                              setEditTickSuspect(nextSuspect);
+                              setFeedbackMsg(
+                                nextSuspect
+                                  ? `Đã tích nghi vấn cho hồ sơ ${selectedLead.leadCode}.`
+                                  : `Đã gỡ cờ nghi vấn cho hồ sơ ${selectedLead.leadCode}.`,
+                              );
+                              await fetchLeads();
+                            } catch (err) {
+                              setErrorMsg(
+                                err instanceof Error ? err.message : 'Lỗi cập nhật cờ nghi vấn.',
+                              );
+                            } finally {
+                              setSubmitting(false);
+                            }
+                          })();
+                        }}
+                        className={`h-9 px-4 rounded-lg text-xs font-bold shrink-0 inline-flex items-center gap-1.5 transition ${
+                          selectedLead.isPriceCheckSuspect
+                            ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-2xs'
+                            : 'bg-white hover:bg-amber-100 text-amber-900 border border-amber-300'
+                        }`}
+                      >
+                        <ShieldAlert className="w-3.5 h-3.5" />
+                        <span>
+                          {selectedLead.isPriceCheckSuspect ? 'Đã tích nghi vấn (Bấm để gỡ)' : 'Tích nghi vấn'}
+                        </span>
+                      </button>
                     </div>
                   )}
 

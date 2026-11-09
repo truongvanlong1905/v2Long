@@ -35,8 +35,8 @@ import {
   type ProviderStatusInfo,
 } from './providers';
 
-// Default showroom photo for demo & reference alignment
-const DEFAULT_SHOWROOM_PHOTO = '/brand/showroom-toan-trung.webp';
+// Default fallback image only when required by internal provider execution
+const DEFAULT_SHOWROOM_PHOTO = '/brand/toantrung-led-wall.png';
 
 // Default 4-corner placement quadrilateral matching reference screenshot (right wall of showroom)
 const DEFAULT_PLACEMENT_QUAD: QuadCoordinatesDto = {
@@ -304,45 +304,49 @@ export async function listDesignRequestsForUser(user: SessionUserDto): Promise<{
 
     const currency: 'VND' | 'USD' = r.costCurrency === 'VND' ? 'VND' : 'USD';
 
-    // Photos list: fallback to showroom default
-    const photos: ProjectPhotoItemDto[] = meta.photos && meta.photos.length > 0
+    // Photos list: respect meta.photos (including empty array [] when user deleted all photos or created a fresh project)
+    const photos: ProjectPhotoItemDto[] = Array.isArray(meta.photos)
       ? meta.photos
-      : [
-          {
-            id: 'photo-default-1',
-            name: 'Ảnh chính diện showroom',
-            url: DEFAULT_SHOWROOM_PHOTO,
-            selected: true,
-            uploadedAt: r.createdAt.toISOString(),
-          },
-          {
-            id: 'photo-default-2',
-            name: 'Vách tủ module LED',
-            url: DEFAULT_SHOWROOM_PHOTO,
-            selected: false,
-            uploadedAt: r.createdAt.toISOString(),
-          },
-        ];
+      : r.sitePhotoUrl
+        ? [
+            {
+              id: `photo-site-${r.id}`,
+              name: 'Ảnh hiện trạng công trình',
+              url:
+                r.sitePhotoUrl.startsWith('/') || r.sitePhotoUrl.startsWith('http')
+                  ? r.sitePhotoUrl
+                  : `/api/v1/design/asset-file?key=${encodeURIComponent(r.sitePhotoUrl)}`,
+              storageObjectKey: r.sitePhotoUrl,
+              selected: true,
+              uploadedAt: r.createdAt.toISOString(),
+            },
+          ]
+        : [];
 
-    // Initial chat messages: align with reference UI
-    const chatMessages: DesignChatMessageDto[] = meta.chatMessages && meta.chatMessages.length > 0
-      ? meta.chatMessages
-      : [
-          {
-            id: `msg-user-init-${r.id}`,
-            role: 'user',
-            text: r.prompt || 'Đặt màn hình ở tường bên phải, hiển thị sóng biển xanh và giữ nguyên nội thất.',
-            timestamp: r.createdAt.toISOString(),
-          },
-          {
-            id: `msg-ai-init-${r.id}`,
-            role: 'assistant',
-            text: 'Bản nháp mới đã được thêm vào thư viện.',
-            timestamp: r.createdAt.toISOString(),
-            versionNumber: 1,
-            status: 'success',
-          },
-        ];
+    // Initial chat messages: use stored messages or a clean project-specific greeting
+    const chatMessages: DesignChatMessageDto[] =
+      meta.chatMessages && meta.chatMessages.length > 0
+        ? meta.chatMessages
+        : [
+            {
+              id: `msg-ai-welcome-${r.id}`,
+              role: 'assistant',
+              text: [
+                `👋 **AI Tư vấn Kỹ thuật LED Toàn Trung (Miễn phí $0):**`,
+                `• Dự án đang chọn: **${meta.projectName || r.ledCategory || 'Dự án thiết kế LED'}**`,
+                `• Bạn có thể bấm **+ Thêm ảnh** ở cột trái để tải ảnh công trình lên, bấm **🎯 Chấm điểm trên ảnh** để đánh dấu vị trí lắp đặt, sau đó bấm **🔍 Phân tích ($0)** hoặc gọi **@TaoAnh** (ghép phối cảnh 3D LED) / **@TaoAnhPoster** (thiết kế Poster quảng cáo).`,
+              ].join('\n'),
+              timestamp: r.createdAt.toISOString(),
+              chatMode: 'consultant_free',
+              suggestedTaoAnhPrompt:
+                r.requestType === 'banner'
+                  ? `@TaoAnhPoster: Thiết kế Poster quảng cáo màn hình LED cho dự án ${meta.projectName || 'Toàn Trung'} độ phân giải Full HD sắc nét`
+                  : `@TaoAnh: Ghép màn hình LED vào đúng các điểm chạm đã chấm trên ảnh hiện trạng công trình, kèm đường gióng kích thước kỹ thuật (mm)`,
+              modelUsed: 'AI Tư vấn Toàn Trung (Gemini Flash Free)',
+              cost: '$0.00',
+              status: 'success',
+            },
+          ];
 
     const effectiveWidthM = meta.screenWidthM ?? dims.screenWidthM ?? 4.8;
     const effectiveHeightM = meta.screenHeightM ?? dims.screenHeightM ?? 2.7;
@@ -402,7 +406,7 @@ export async function listDesignRequestsForUser(user: SessionUserDto): Promise<{
       aspectRatio: r.aspectRatio || '16:9',
       aspectLocked: meta.aspectLocked ?? true,
       isArchived: meta.isArchived ?? false,
-      sitePhotoDownloadUrl: selectedPhoto?.url || r.sitePhotoUrl || DEFAULT_SHOWROOM_PHOTO,
+      sitePhotoDownloadUrl: selectedPhoto?.url || null,
       photos,
       chatMessages,
       productSpec,
@@ -488,6 +492,121 @@ export async function createDesignRequestWithAiDraft(
 
   const dbRequestType: 'banner' | '3d_perspective' =
     input.designType === 'banner' ? 'banner' : '3d_perspective';
+
+  // Clean project initialization (when user clicks "+ Tạo dự án" in Studio without calling @TaoAnh yet)
+  if (input.aiPrompt.startsWith('[INIT_PROJECT]')) {
+    const cleanNote = input.aiPrompt.replace(/^\[INIT_PROJECT\]\s*/i, '').trim();
+    const productSpec = computeLedProductSpec({
+      productName: ledCategory,
+      widthM: dimensionsData.widthM,
+      heightM: dimensionsData.heightM,
+      pitch: 'P2.5',
+    });
+
+    const leadPhotos: ProjectPhotoItemDto[] = [];
+    let leadContactFallback: string | null = null;
+    if (input.leadId) {
+      const linkedLead = await prisma.lead.findUnique({
+        where: { id: input.leadId },
+        include: {
+          attachments: {
+            where: { attachmentType: { not: 'quote_doc' } },
+            orderBy: { uploadedAt: 'desc' },
+            take: 10,
+          },
+        },
+      });
+      if (linkedLead) {
+        leadContactFallback = linkedLead.contactName || linkedLead.companyName || null;
+        for (const att of linkedLead.attachments) {
+          const isImg =
+            att.attachmentType === 'site_photo' ||
+            /\.(png|jpe?g|webp)$/i.test(att.fileName || '') ||
+            /\.(png|jpe?g|webp)$/i.test(att.fileUrl || '');
+          if (isImg) {
+            leadPhotos.push({
+              id: `lead-att-${att.id}`,
+              name: att.fileName || `Ảnh khảo sát Lead #${att.id}`,
+              url: `/api/v1/leads/attachments/${att.id}`,
+              storageObjectKey: att.fileUrl,
+              selected: leadPhotos.length === 0,
+              uploadedAt: att.uploadedAt.toISOString(),
+              sourceLeadAttachmentId: att.id,
+            });
+          }
+        }
+      }
+    }
+
+    const initialMetadata: StoredMetadata = {
+      projectName:
+        input.projectName ||
+        (input.designType === 'banner' ? 'Banner Quảng cáo LED' : 'Dự án Phối cảnh LED'),
+      contactName: input.contactName || leadContactFallback,
+      installationInfo: input.installationInfo || 'Vị trí lắp đặt thực tế tại công trình',
+      productId: input.productId ?? 1,
+      pixelPitch: 'P2.5',
+      screenStyle: 'flat',
+      screenWidthM: dimensionsData.widthM,
+      screenHeightM: dimensionsData.heightM,
+      bannerWidthPx:
+        input.designType === 'banner' ? input.bannerWidthPx : productSpec.resolutionWidthPx,
+      bannerHeightPx:
+        input.designType === 'banner' ? input.bannerHeightPx : productSpec.resolutionHeightPx,
+      aspectLocked: true,
+      isArchived: false,
+      photos: leadPhotos,
+      placementQuad: input.placementQuad || DEFAULT_PLACEMENT_QUAD,
+      chatMessages: [
+        {
+          id: `msg-ai-welcome-${Date.now()}`,
+          role: 'assistant',
+          text: [
+            `👋 **AI Tư vấn Kỹ thuật LED Toàn Trung (Miễn phí $0):**`,
+            `• Đã khởi tạo dự án **${input.projectName || 'Dự án mới'}** (${Math.round(dimensionsData.widthM * 1000)}×${Math.round(dimensionsData.heightM * 1000)}mm).`,
+            leadPhotos.length > 0
+              ? `• Đã tự động đồng bộ **${leadPhotos.length} ảnh khảo sát** từ hồ sơ Lead liên kết.`
+              : `• Bước 1: Hãy bấm **+ Thêm ảnh** ở cột trái để tải ảnh công trình của dự án này lên.`,
+            `• Bước 2: Bấm **🎯 Chấm điểm trên ảnh** để chọn vị trí lắp đặt, sau đó bấm **🔍 Phân tích ($0)** hoặc gọi **@TaoAnh** / **@TaoAnhPoster** để AI kết xuất ảnh.`,
+          ].join('\n'),
+          timestamp: new Date().toISOString(),
+          chatMode: 'consultant_free',
+          suggestedTaoAnhPrompt:
+            input.designType === 'banner'
+              ? `@TaoAnhPoster: Thiết kế Poster quảng cáo LED cho dự án ${input.projectName || 'Toàn Trung'} (${input.bannerWidthPx || 1920}×${input.bannerHeightPx || 1080}px)`
+              : `@TaoAnh: Ghép màn hình LED P2.5 kích thước ${Math.round(dimensionsData.widthM * 1000)}×${Math.round(dimensionsData.heightM * 1000)}mm vào các điểm chạm đã chấm trên ảnh hiện trạng, kèm đường gióng kích thước kỹ thuật (mm)`,
+          modelUsed: 'AI Tư vấn Toàn Trung (Gemini Flash Free)',
+          cost: '$0.00',
+          status: 'success',
+        },
+      ],
+      productSpec,
+    };
+
+    const createdRequest = await prisma.designRequest.create({
+      data: {
+        leadId: input.leadId ?? null,
+        requestedBySalesId:
+          actor.roleCode === 'SALES' || actor.roleCode === 'SALES_LEAD' ? actor.id : null,
+        assignedDesignerId,
+        requestType: dbRequestType,
+        ledCategory,
+        screenDimensions,
+        aspectRatio,
+        installPositionJson: JSON.stringify(initialMetadata),
+        sitePhotoUrl: leadPhotos[0]?.storageObjectKey || null,
+        prompt: cleanNote || 'Khởi tạo dự án thiết kế mới',
+        designStatus: 'pending',
+        notes: input.notes || cleanNote || 'Dự án mới khởi tạo — sẵn sàng tải ảnh khảo sát & chạy AI.',
+      },
+    });
+
+    return {
+      id: createdRequest.id,
+      status: 'pending',
+      versionId: null,
+    };
+  }
 
   // Call provider adapter with Multi-AI selection & auto-fallback
   const providerResult =
@@ -660,20 +779,6 @@ export async function createDesignRequestWithAiDraft(
         ]
       : []),
     ...leadPhotos,
-    {
-      id: `photo-1-${Date.now()}`,
-      name: 'Ảnh chính diện showroom',
-      url: DEFAULT_SHOWROOM_PHOTO,
-      selected: !rawPhotoKey && leadPhotos.length === 0,
-      uploadedAt: new Date().toISOString(),
-    },
-    {
-      id: `photo-2-${Date.now()}`,
-      name: 'Vách tủ module LED',
-      url: DEFAULT_SHOWROOM_PHOTO,
-      selected: false,
-      uploadedAt: new Date().toISOString(),
-    },
   ];
 
   const initialMetadata: StoredMetadata = {
@@ -804,6 +909,102 @@ export async function createDesignRequestWithAiDraft(
   };
 }
 
+const DAO_TAO_ANH_POSTER_REGEX =
+  /^\s*@(?:taoanhposter|taoposter|tao_anh_poster|taobanner|taoanhbanner)\s*:?\s*/i;
+const DAO_TAO_ANH_REGEX =
+  /^\s*@(?:taoanhposter|taoposter|tao_anh_poster|taobanner|taoanhbanner|taoanh|tạoảnh|tao_anh|tao-anh|taojanh|draw|render)\s*:?\s*/i;
+
+function buildConsultantReplyAndSuggestedPrompt(params: {
+  userText: string;
+  designType: 'banner' | '3d_perspective';
+  widthM: number;
+  heightM: number;
+  bannerWidthPx: number;
+  bannerHeightPx: number;
+  aspectRatio: string;
+  pitch: string;
+  screenStyle: 'flat' | 'curved' | 'corner_90';
+  placementQuad?: QuadCoordinatesDto;
+}): { replyText: string; suggestedTaoAnhPrompt: string } {
+  const {
+    userText,
+    designType,
+    widthM,
+    heightM,
+    bannerWidthPx,
+    bannerHeightPx,
+    aspectRatio,
+    pitch,
+    screenStyle,
+    placementQuad,
+  } = params;
+  const cleanUser = userText.trim();
+  const rawWmm = Math.round(widthM * 1000);
+  const rawHmm = Math.round(heightM * 1000);
+  // Snap to standard 320x160mm LED Module multiples (veteran engineering rule)
+  const modCols = Math.max(2, Math.round(rawWmm / 320));
+  const modRows = Math.max(2, Math.round(rawHmm / 160));
+  const snappedWmm = modCols * 320;
+  const snappedHmm = modRows * 160;
+
+  const areaM2 = Number(((snappedWmm / 1000) * (snappedHmm / 1000)).toFixed(2));
+  const cabCols = Math.max(1, Math.round(snappedWmm / 640));
+  const cabRows = Math.max(1, Math.round(snappedHmm / 480));
+  const totalCabinets = cabCols * cabRows;
+  const totalModules = modCols * modRows;
+
+  const pitchNum = Number(pitch.replace(/[^0-9.]/g, '')) || 2.5;
+  const isOutdoor = pitchNum >= 3.0 || /outdoor|ngoài trời|mặt dựng|sảnh/i.test(cleanUser);
+  const minViewM = Number((pitchNum * 1.1).toFixed(1));
+  const maxViewM = Math.round(pitchNum * 12);
+  const avgKw = Number((areaM2 * (isOutdoor ? 0.32 : 0.22)).toFixed(1));
+  const maxKw = Number((areaM2 * (isOutdoor ? 0.85 : 0.58)).toFixed(1));
+  const novastarModel =
+    (snappedWmm / pitchNum) * (snappedHmm / pitchNum) > 2_300_000
+      ? 'Novastar VX1000 / H2 (4K)'
+      : 'Novastar VX600 / TB60';
+
+  const styleLabel =
+    screenStyle === 'curved'
+      ? 'màn hình LED bo cong (vách đa diện)'
+      : screenStyle === 'corner_90'
+      ? 'màn hình LED vuông góc 90°'
+      : 'màn hình LED phẳng viền mỏng';
+
+  const quadSummary = placementQuad
+    ? `tọa độ điểm chạm A(${Math.round(placementQuad.topLeft.x)}%, ${Math.round(placementQuad.topLeft.y)}%) → B(${Math.round(placementQuad.topRight.x)}%, ${Math.round(placementQuad.topRight.y)}%) → C(${Math.round(placementQuad.bottomRight.x)}%, ${Math.round(placementQuad.bottomRight.y)}%) → D(${Math.round(placementQuad.bottomLeft.x)}%, ${Math.round(placementQuad.bottomLeft.y)}%)`
+    : 'vùng trung tâm mặt dựng ảnh công trình';
+
+  const isPosterIntent =
+    designType === 'banner' ||
+    /\b(poster|banner|ấn phẩm|quảng cáo|khai trương|sự kiện|backdrop|standee|nutifood)\b/i.test(
+      cleanUser
+    );
+
+  if (isPosterIntent) {
+    const suggestedTaoAnhPrompt = `@TaoAnhPoster: Thiết kế Poster quảng cáo LED tỷ lệ ${aspectRatio} (${bannerWidthPx}×${bannerHeightPx}px) theo nội dung: "${cleanUser}", nổi bật sản phẩm & thông điệp chính, gắn nhận diện Toàn Trung (${pitch} ${isOutdoor ? 'OUTDOOR' : 'INDOOR'})`;
+    const replyText = [
+      `📸 **Phân tích Chuyên gia Thiết kế Ấn phẩm / Banner LED ($0):**`,
+      `• **Chuẩn Pixel & Độ tương phản:** Thiết kế độ phân giải thực ${bannerWidthPx}×${bannerHeightPx}px (tỷ lệ ${aspectRatio}), tối ưu độ tương phản cao trên điểm ảnh ${pitch} để không bị bệt màu khi phát sáng.`,
+      `• **Bố cục Key Visual:** Chừa lề an toàn 5% quanh viền khung nhôm, đặt thông điệp chính ở tâm nhìn (${minViewM}m – ${maxViewM}m), đính kèm badge **${pitch} ${isOutdoor ? 'OUTDOOR' : 'INDOOR'}** & nhận diện **TOÀN TRUNG**.`,
+      `👉 Em đã soạn sẵn câu lệnh **@TaoAnhPoster** bên dưới — anh/chị bấm nút để xuất mẫu Banner ngay hoặc áp mẫu Banner này lên mặt dựng 3D nhé!`,
+    ].join('\n');
+    return { replyText, suggestedTaoAnhPrompt };
+  }
+
+  const widthDisplayFormula =
+    snappedWmm >= 15000 ? '(4800 + 720 + 8000 + 720 + 4800)' : `${snappedWmm}`;
+  const suggestedTaoAnhPrompt = `@TaoAnh: Ghép phối cảnh ${styleLabel} ${pitch} kích thước ${widthDisplayFormula} × ${snappedHmm}mm vào đúng các điểm chạm đã chấm trên ảnh khảo sát, kèm đường gióng kích thước kỹ thuật (mm) và bảng thông số góc trái dưới theo yêu cầu: "${cleanUser}"`;
+  const replyText = [
+    `📸 **Phân tích Kỹ thuật Chuyên sâu (Chuẩn thi công LED Toàn Trung · $0):**`,
+    `• **1. Khảo sát vị trí & Tầm nhìn:** Nhận diện vùng lắp đặt tại ${quadSummary}. Khoảng cách nhìn đẹp nhất cho dòng **${pitch} ${isOutdoor ? 'Outdoor (IP65 · 5500 nits)' : 'Indoor (800 nits)'}** là từ **${minViewM}m – ${maxViewM}m**.`,
+    `• **2. Quy chuẩn Bội số Module (320×160mm):** Kích thước chuẩn hóa theo tấm Module là **${widthDisplayFormula} × ${snappedHmm} mm** (${areaM2} m² · ghép **${modCols}×${modRows} = ${totalModules} tấm Module** / **${totalCabinets} Cabinet**).`,
+    `• **3. Cấu hình Nguồn & Xử lý tín hiệu:** Công suất tiêu thụ TB **${avgKw} kW** (Đỉnh **${maxKw} kW** · điện 3 pha 380V), khuyến nghị bộ xử lý **${novastarModel}**.`,
+    `👉 Em đã tạo sẵn câu lệnh **@TaoAnh** bên dưới để xuất ảnh phối cảnh kèm đường gióng kích thước (mm) và bảng thông số kỹ thuật chuẩn hồ sơ thầu!`,
+  ].join('\n');
+  return { replyText, suggestedTaoAnhPrompt };
+}
+
 export async function processChatDesignRequest(
   actor: SessionUserDto,
   requestId: number,
@@ -835,15 +1036,149 @@ export async function processChatDesignRequest(
   const nextVersionNumber = (existing.assetVersions[0]?.versionNumber ?? 0) + 1;
   const currentMeta = parseProjectMetadata(existing.installPositionJson);
 
+  const isPosterCommand = DAO_TAO_ANH_POSTER_REGEX.test(input.prompt);
   const dbType: 'banner' | '3d_perspective' =
-    existing.requestType === 'banner' ? 'banner' : '3d_perspective';
+    isPosterCommand || existing.requestType === 'banner' ? 'banner' : '3d_perspective';
+
+  const hasTaoAnhPrefix = DAO_TAO_ANH_REGEX.test(input.prompt);
+  const isImageGenerationMode =
+    input.chatMode === 'image_generator' || (input.chatMode !== 'consultant_free' && hasTaoAnhPrefix);
+
+  // MODE 1: FREE AI CONSULTANT CHAT ($0.00 - No paid image generation until @TaoAnh is called)
+  if (!isImageGenerationMode) {
+    const wM = input.screenWidthM || currentMeta.screenWidthM || 4.8;
+    const hM = input.screenHeightM || currentMeta.screenHeightM || 2.7;
+    const bW = input.bannerWidthPx || currentMeta.bannerWidthPx || 1920;
+    const bH = input.bannerHeightPx || currentMeta.bannerHeightPx || 1080;
+    const ratio = input.aspectRatio || existing.aspectRatio || '16:9';
+    const pitch = currentMeta.pixelPitch || currentMeta.productSpec?.pixelPitch || 'P2.5';
+    const style = currentMeta.screenStyle || currentMeta.productSpec?.screenStyle || 'flat';
+
+    const fallbackConsult = buildConsultantReplyAndSuggestedPrompt({
+      userText: input.prompt,
+      designType: dbType,
+      widthM: wM,
+      heightM: hM,
+      bannerWidthPx: bW,
+      bannerHeightPx: bH,
+      aspectRatio: ratio,
+      pitch,
+      screenStyle: style,
+      placementQuad: input.placementQuad || currentMeta.placementQuad,
+    });
+
+    let replyText = fallbackConsult.replyText;
+    let suggestedTaoAnhPrompt = fallbackConsult.suggestedTaoAnhPrompt;
+    let consultModelUsed = 'AI Tư vấn Toàn Trung (Gemini Flash Free)';
+
+    // If Admin configured a real Google Gemini API Key, call Gemini 2.0 Flash live!
+    const { config: aiCfg } = AiDesignProviderFactory.getCatalog();
+    const geminiApiKey =
+      aiCfg.providers.google_imagen?.apiKey ||
+      process.env.GEMINI_API_KEY ||
+      process.env.IMAGEN_API_KEY;
+    if (geminiApiKey && !input.simulateAiTimeout) {
+      try {
+        const sysInstruction = [
+          'Bạn là Chuyên gia Tư vấn & Phân tích Thiết kế Màn hình LED của Công ty Cổ phần Điện tử Viễn thông Toàn Trung.',
+          `Thông số dự án hiện tại: Dòng LED ${pitch}, kích thước ${Math.round(wM * 1000)}x${Math.round(hM * 1000)}mm (${wM}m x ${hM}m), tỷ lệ ${ratio}.`,
+          'Hãy phân tích ngắn gọn, súc tích (tối đa 4 dòng gạch đầu dòng) về vị trí lắp đặt, thông số kỹ thuật đề xuất (mm, số Cabinet 640x480mm), và ở dòng cuối cùng viết câu lệnh bắt đầu bằng @TaoAnh: (nếu là phối cảnh 3D LED) hoặc @TaoAnhPoster: (nếu là thiết kế Banner/Poster).',
+        ].join(' ');
+
+        const gemRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [
+                {
+                  role: 'user',
+                  parts: [{ text: `${sysInstruction}\n\nYêu cầu của người dùng: ${input.prompt}` }],
+                },
+              ],
+            }),
+            signal: AbortSignal.timeout(12000),
+          }
+        );
+        if (gemRes.ok) {
+          const gemJson = (await gemRes.json()) as {
+            candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+          };
+          const rawAiText = gemJson.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (rawAiText) {
+            const cmdMatch = rawAiText.match(/(@(?:TaoAnhPoster|TaoAnh)\s*:[^\n]+)/i);
+            if (cmdMatch) {
+              suggestedTaoAnhPrompt = cmdMatch[1].trim();
+              replyText = rawAiText.replace(cmdMatch[0], '').trim() || rawAiText;
+            } else {
+              replyText = rawAiText;
+            }
+            consultModelUsed = 'Google Gemini 2.0 Flash (Live API)';
+          }
+        }
+      } catch {
+        // Fallback to built-in Toàn Trung Consultant reply if network/key fails
+      }
+    }
+
+    const existingChat = currentMeta.chatMessages || [];
+    const updatedChat: DesignChatMessageDto[] = [
+      ...existingChat,
+      {
+        id: `msg-user-${Date.now()}`,
+        role: 'user',
+        text: input.prompt,
+        timestamp: new Date().toISOString(),
+        chatMode: 'consultant_free',
+      },
+      {
+        id: `msg-ai-consult-${Date.now() + 1}`,
+        role: 'assistant',
+        text: replyText,
+        timestamp: new Date().toISOString(),
+        chatMode: 'consultant_free',
+        suggestedTaoAnhPrompt,
+        modelUsed: consultModelUsed,
+        durationSec: 0.3,
+        cost: '$0.00',
+        status: 'success',
+      },
+    ];
+
+    const updatedMetadata: StoredMetadata = {
+      ...currentMeta,
+      placementQuad: input.placementQuad || currentMeta.placementQuad,
+      chatMessages: updatedChat,
+    };
+
+    await prisma.designRequest.update({
+      where: { id: requestId },
+      data: {
+        installPositionJson: JSON.stringify(updatedMetadata),
+        version: { increment: 1 },
+      },
+    });
+
+    return {
+      requestId,
+      mode: 'consultant_free' as const,
+      versionNumber: existing.assetVersions[0]?.versionNumber ?? 1,
+      versionId: existing.assetVersions[0]?.id,
+      suggestedTaoAnhPrompt,
+      chatMessages: updatedChat,
+    };
+  }
+
+  // MODE 2: @TaoAnh IMAGE GENERATION -> Strip @TaoAnh prefix for clean image generation prompt
+  const cleanImagePrompt = input.prompt.replace(DAO_TAO_ANH_REGEX, '').trim() || input.prompt;
 
   const providerResult =
     dbType === '3d_perspective'
       ? await AiDesignProviderFactory.executePerspectiveWithFallback(
           {
             workflow: 'perspective_3d',
-            prompt: input.prompt,
+            prompt: cleanImagePrompt,
             referenceImageUrl: input.selectedPhotoUrl || existing.sitePhotoUrl || DEFAULT_SHOWROOM_PHOTO,
             placementQuad: input.placementQuad || currentMeta.placementQuad || DEFAULT_PLACEMENT_QUAD,
             dimensions: {
@@ -861,7 +1196,7 @@ export async function processChatDesignRequest(
       : await AiDesignProviderFactory.executeBannerWithFallback(
           {
             workflow: 'banner',
-            prompt: input.prompt,
+            prompt: cleanImagePrompt,
             dimensions: {
               widthPx: input.bannerWidthPx || 1920,
               heightPx: input.bannerHeightPx || 1080,
@@ -951,12 +1286,14 @@ export async function processChatDesignRequest(
       role: 'user',
       text: input.prompt,
       timestamp: new Date().toISOString(),
+      chatMode: 'image_generator',
     },
     {
-      id: `msg-ai-${Date.now()}`,
+      id: `msg-ai-${Date.now() + 1}`,
       role: 'assistant',
-      text: `Bản nháp mới (v${nextVersionNumber} · ${providerResult.modelUsed}) đã được thêm vào thư viện.`,
+      text: `Đã kết xuất phiên bản thiết kế mới (v${nextVersionNumber} · ${providerResult.modelUsed}) và cập nhật lên màn hình chính.`,
       timestamp: new Date().toISOString(),
+      chatMode: 'image_generator',
       versionNumber: nextVersionNumber,
       versionId: createdVersion.id,
       providerId: providerResult.provider,
@@ -1224,15 +1561,14 @@ export async function deleteProjectPhoto(
   const photos = meta.photos || [];
 
   const target = photos.find((p) => p.id === photoId);
-  if (!target) throw new Error('Không tìm thấy ảnh cần xóa.');
 
   // Check if this photo's storage key is referenced by an approved final version
-  if (target.storageObjectKey && existing.finalRenderUrl === target.storageObjectKey) {
+  if (target?.storageObjectKey && existing.finalRenderUrl === target.storageObjectKey) {
     throw new Error('Không thể xóa ảnh đang được phiên bản hoàn thiện chính thức tham chiếu.');
   }
 
-  const updatedPhotos = photos.filter((p) => p.id !== photoId);
-  if (updatedPhotos.length > 0 && target.selected) {
+  const updatedPhotos = target ? photos.filter((p) => p.id !== photoId) : [];
+  if (updatedPhotos.length > 0 && (!target || target.selected)) {
     updatedPhotos[0].selected = true;
   }
   meta.photos = updatedPhotos;
@@ -1240,6 +1576,7 @@ export async function deleteProjectPhoto(
   await prisma.designRequest.update({
     where: { id: requestId },
     data: {
+      sitePhotoUrl: updatedPhotos[0]?.storageObjectKey || updatedPhotos[0]?.url || null,
       installPositionJson: JSON.stringify(meta),
       version: { increment: 1 },
     },
@@ -1423,19 +1760,36 @@ export async function saveCompositedDraftVersion(
   });
 
   const existingChat = currentMeta.chatMessages || [];
+  const isTaoAnhCommand = params.note ? /^@/i.test(params.note.trim()) : false;
   const updatedChat: DesignChatMessageDto[] = [
     ...existingChat,
+    ...(isTaoAnhCommand && params.note
+      ? [
+          {
+            id: `msg-user-${Date.now()}`,
+            role: 'user' as const,
+            text: params.note,
+            timestamp: new Date().toISOString(),
+            chatMode: 'image_generator' as const,
+          },
+        ]
+      : []),
     {
-      id: `msg-composite-${Date.now()}`,
+      id: `msg-composite-${Date.now() + 1}`,
       role: 'assistant',
-      text: `Đã kết xuất & lưu bản ghép phối cảnh 3D thực tế (v${nextVersionNumber} · Toàn Trung Live 3D Compositor) vào thư viện Bản thiết kế.`,
+      text: isTaoAnhCommand
+        ? `Đã thực thi lệnh **${DAO_TAO_ANH_POSTER_REGEX.test(params.note || '') ? '@TaoAnhPoster' : '@TaoAnh'}** và xuất bản thiết kế mới **v${nextVersionNumber}** trực tiếp trên ảnh công trình.`
+        : `Đã kết xuất & lưu bản ghép phối cảnh 3D thực tế (v${nextVersionNumber}) vào thư viện Phiên bản AI.`,
       timestamp: new Date().toISOString(),
+      chatMode: 'image_generator',
       versionNumber: nextVersionNumber,
       versionId: createdVersion.id,
       providerId: 'local_sandbox',
-      modelUsed: 'Toàn Trung Live 3D Compositor',
-      durationSec: 0.4,
-      cost: '$0.000',
+      modelUsed: DAO_TAO_ANH_POSTER_REGEX.test(params.note || '')
+        ? 'AI Tạo Poster LED (@TaoAnhPoster)'
+        : 'AI Phối Cảnh 3D LED (@TaoAnh)',
+      durationSec: 0.8,
+      cost: isTaoAnhCommand ? '$0.020' : '$0.000',
       status: 'success',
     },
   ];

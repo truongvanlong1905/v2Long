@@ -57,16 +57,16 @@ const ROUTE_REQUIRED_PERMISSION: Record<string, BaPermissionKey> = {
 };
 
 const BREADCRUMB_LABELS: Record<string, string> = {
-  '/dashboard': 'Tổng quan điều hành',
-  '/leads': 'Quản lý Lead & Khách hàng',
-  '/tracking': 'Chiến dịch & Đồng bộ nguồn',
-  '/ads': 'Quảng cáo, Từ khóa & SEO',
-  '/reports': 'Báo cáo & Phân tích',
-  '/design': 'AI Mockup & Phối cảnh 3D Studio',
-  '/notifications': 'Trung tâm Thông báo',
-  '/profile': 'Hồ sơ tài khoản',
-  '/admin/users': 'Quản lý Phòng ban & Tài khoản',
-  '/settings': 'Cài đặt hệ thống & Thương hiệu',
+  '/dashboard': 'Tổng quan',
+  '/leads': 'Leads',
+  '/tracking': 'Chiến dịch',
+  '/ads': 'Từ khóa SEO',
+  '/reports': 'Báo cáo',
+  '/design': 'Thiết kế 3D',
+  '/notifications': 'Thông báo',
+  '/profile': 'Tài khoản',
+  '/admin/users': 'Nhân sự',
+  '/settings': 'Cài đặt',
 };
 
 export function getInitials(name: string): string {
@@ -166,57 +166,45 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const workNav: NavItem[] = [
     {
       href: '/dashboard',
-      label: 'Tổng quan điều hành',
+      label: 'Tổng quan',
       shortLabel: 'Tổng quan',
       icon: LayoutGrid,
       requiredPermission: 'DASHBOARD_VIEW',
-      accentColor: 'text-blue-600',
-      activeBg: 'bg-blue-50 text-blue-900 border border-blue-200/80',
     },
     {
       href: '/leads',
-      label: 'Leads & Giao dịch',
+      label: 'Leads',
       shortLabel: 'Leads',
       icon: FileSpreadsheet,
       requiredPermission: 'LEAD_VIEW_OWN',
-      accentColor: 'text-indigo-600',
-      activeBg: 'bg-indigo-50 text-indigo-900 border border-indigo-200/80',
     },
     {
       href: '/tracking',
-      label: 'Chiến dịch Marketing',
+      label: 'Chiến dịch',
       shortLabel: 'Chiến dịch',
       icon: Crosshair,
       requiredPermission: 'TRACKING_ADS_OPTIMIZE',
-      accentColor: 'text-sky-600',
-      activeBg: 'bg-sky-50 text-sky-900 border border-sky-200/80',
     },
     {
       href: '/ads',
-      label: 'Từ khóa & SEO',
-      shortLabel: 'SEO/Ads',
+      label: 'Từ khóa SEO',
+      shortLabel: 'Từ khóa SEO',
       icon: Megaphone,
       requiredPermission: 'AI_MARKETING_SEO',
-      accentColor: 'text-violet-600',
-      activeBg: 'bg-violet-50 text-violet-900 border border-violet-200/80',
     },
     {
       href: '/reports',
-      label: 'Phân tích & Báo cáo',
+      label: 'Báo cáo',
       shortLabel: 'Báo cáo',
       icon: BarChart3,
       requiredPermission: 'DASHBOARD_VIEW',
-      accentColor: 'text-emerald-600',
-      activeBg: 'bg-emerald-50 text-emerald-900 border border-emerald-200/80',
     },
     {
       href: '/design',
-      label: 'AI Mockup Studio',
-      shortLabel: 'AI Studio',
+      label: 'Thiết kế 3D',
+      shortLabel: 'Thiết kế 3D',
       icon: Sparkles,
       requiredPermission: 'AI_DESIGN',
-      accentColor: 'text-amber-600',
-      activeBg: 'bg-amber-50 text-amber-900 border border-amber-200/80',
     },
   ];
 
@@ -228,13 +216,13 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       icon: Bell,
       badge: unreadCount,
     },
-    { href: '/profile', label: 'Hồ sơ cá nhân', shortLabel: 'Hồ sơ', icon: UserCircle2 },
+    { href: '/profile', label: 'Tài khoản', shortLabel: 'Tài khoản', icon: UserCircle2 },
   ];
 
   const systemNav: NavItem[] = [
     {
       href: '/admin/users',
-      label: 'Quản lý Phòng ban & Nhân sự',
+      label: 'Nhân sự',
       shortLabel: 'Nhân sự',
       icon: Users,
       adminOnly: true,
@@ -242,7 +230,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     },
     {
       href: '/settings',
-      label: 'Cài đặt hệ thống',
+      label: 'Cài đặt',
       shortLabel: 'Cài đặt',
       icon: Settings,
       adminOnly: true,
@@ -282,15 +270,10 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       (!item.requiredPermission || hasBaPermission(user.roleCode, item.requiredPermission)),
   );
 
-  const renderNavGroup = (title: string, items: NavItem[]) => {
+  const renderNavGroup = (items: NavItem[], withTopBorder = false) => {
     if (items.length === 0) return null;
     return (
-      <div className="mb-5">
-        {!sidebarCollapsed && (
-          <p className="px-3 mb-2 text-[11px] font-bold tracking-wider uppercase text-slate-400 hidden xl:block">
-            {title}
-          </p>
-        )}
+      <div className={withTopBorder ? 'mt-3 pt-3 border-t border-white/[0.08]' : ''}>
         <div className="space-y-1">
           {items.map((item) => {
             const Icon = item.icon;
@@ -300,58 +283,54 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                 key={item.href}
                 href={item.href}
                 prefetch={true}
-              onClick={() => setMobileOpen(false)}
-              title={item.label}
-              className={`group relative flex items-center gap-3 h-10 rounded-xl px-3 text-sm transition-all ${
-                sidebarCollapsed ? 'lg:justify-center lg:px-0' : 'lg:justify-center xl:justify-start lg:px-0 xl:px-3'
-              } ${
-                active
-                  ? `${item.activeBg || 'bg-[#1E3A8A]/10 text-[#1E3A8A]'} font-bold shadow-2xs`
-                  : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900'
-              }`}
-            >
-              <Icon
-                className={`w-5 h-5 shrink-0 transition-colors ${
-                  active ? item.accentColor || 'text-[#2563EB]' : `${item.accentColor || 'text-slate-400'} opacity-80 group-hover:opacity-100`
-                }`}
-              />
-              <span
-                className={`truncate flex-1 text-[13.5px] ${
-                  sidebarCollapsed ? 'lg:hidden' : 'lg:hidden xl:inline'
+                onClick={() => setMobileOpen(false)}
+                title={item.label}
+                className={`group relative flex items-center gap-3.5 h-11 rounded-xl px-3.5 text-sm transition-all ${
+                  sidebarCollapsed
+                    ? 'lg:justify-center lg:px-0'
+                    : 'lg:justify-start lg:px-3.5'
+                } ${
+                  active
+                    ? 'bg-[#1B2B48] text-white font-bold shadow-xs'
+                    : 'text-[#94A3B8] font-medium hover:bg-white/[0.05] hover:text-white'
                 }`}
               >
-                {item.label}
-              </span>
-              {item.badge !== undefined && item.badge > 0 && (
+                <Icon
+                  className={`w-5 h-5 shrink-0 transition-colors ${
+                    active ? 'text-white' : 'text-[#64748B] group-hover:text-slate-200'
+                  }`}
+                />
                 <span
-                  className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-bold ${
-                    sidebarCollapsed
-                      ? 'lg:absolute lg:top-1 lg:right-1 lg:min-w-[16px] lg:h-4 lg:text-[9px] lg:px-1'
-                      : 'lg:absolute lg:top-1 lg:right-1 xl:static'
+                  className={`truncate flex-1 text-[14px] ${
+                    sidebarCollapsed ? 'lg:hidden' : 'lg:inline'
                   }`}
                 >
-                  {item.badge}
+                  {item.label}
                 </span>
-              )}
-              {/* Hover Tooltip when Sidebar is compact on Laptop/Collapsed */}
-              <span
-                className={`pointer-events-none fixed left-16 z-50 ml-2 hidden rounded-lg bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white shadow-lg opacity-0 transition-opacity group-hover:opacity-100 ${
-                  sidebarCollapsed ? 'lg:block' : 'lg:block xl:hidden'
-                }`}
-              >
-                {item.label}
-              </span>
-              {active && (
+                {item.badge !== undefined && item.badge > 0 && (
+                  <span
+                    className={`inline-flex items-center justify-center min-w-[22px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-bold ${
+                      sidebarCollapsed
+                        ? 'lg:absolute lg:top-1 lg:right-1 lg:min-w-[16px] lg:h-4 lg:text-[9px] lg:px-1'
+                        : 'lg:static'
+                    }`}
+                  >
+                    {item.badge}
+                  </span>
+                )}
+                {/* Hover Tooltip when Sidebar is Collapsed */}
                 <span
-                  aria-hidden="true"
-                  className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-5 rounded-l bg-[#2563EB]"
-                />
-              )}
-            </Link>
-          );
-        })}
+                  className={`pointer-events-none fixed left-16 z-50 ml-2 hidden rounded-lg bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white shadow-lg opacity-0 transition-opacity group-hover:opacity-100 ${
+                    sidebarCollapsed ? 'lg:block' : 'lg:hidden'
+                  }`}
+                >
+                  {item.label}
+                </span>
+              </Link>
+            );
+          })}
+        </div>
       </div>
-    </div>
     );
   };
 
@@ -367,57 +346,72 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
         />
       )}
 
-      {/* Main Left Sidebar (Smart Auto-Collapse to w-16 on /design, Expanded w-[256px] on standard pages) */}
+      {/* Main Left Sidebar — Dark Navy Theme matching reference screenshot */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 lg:sticky lg:top-0 lg:h-screen bg-white border-r border-slate-200/90 flex flex-col transition-all duration-200 shadow-xs ${
-          sidebarCollapsed ? 'lg:w-16' : 'lg:w-16 xl:w-[256px]'
-        } w-[272px] ${
+        className={`group/sidebar fixed inset-y-0 left-0 z-50 lg:sticky lg:top-0 lg:h-screen bg-[#0B1426] text-white border-r border-slate-800/80 flex flex-col transition-all duration-200 shadow-xl ${
+          sidebarCollapsed ? 'lg:w-16' : 'lg:w-[248px]'
+        } w-[264px] ${
           mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full lg:translate-x-0'
         }`}
       >
-        {/* Brand Header with "TT" Badge, Logo & Subtle Top Expand/Collapse Override Button */}
+        {/* Brand Header with TOÀN TRUNG Logo & Top Collapse/Expand Button */}
         <div
-          className={`h-16 flex items-center justify-between border-b border-slate-100 ${
-            sidebarCollapsed ? 'px-2 lg:justify-center' : 'px-4'
+          className={`relative h-16 flex items-center justify-between border-b border-white/[0.08] ${
+            sidebarCollapsed ? 'px-2 lg:justify-center' : 'px-5'
           }`}
         >
-          <Link href="/dashboard" className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#1E3A8A] to-[#2563EB] flex items-center justify-center text-white font-black text-sm shadow-sm shrink-0">
-              TT
+          {sidebarCollapsed ? (
+            <div className="relative w-9 h-9 flex items-center justify-center">
+              {/* Default TT Logo when not hovered */}
+              <Link
+                href="/dashboard"
+                className="w-9 h-9 rounded-xl bg-[#1E3A8A] flex items-center justify-center text-white font-black text-sm shadow-sm transition-opacity duration-150 group-hover/sidebar:opacity-0 group-hover/sidebar:pointer-events-none"
+              >
+                TT
+              </Link>
+              {/* Expand Button ONLY appears on hover when collapsed */}
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(false)}
+                title="Mở rộng menu"
+                className="hidden lg:flex absolute inset-0 w-9 h-9 rounded-xl bg-[#2563EB] hover:bg-blue-500 text-white items-center justify-center shadow-md opacity-0 pointer-events-none group-hover/sidebar:opacity-100 group-hover/sidebar:pointer-events-auto transition-all duration-150"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
             </div>
-            <div
-              className={`min-w-0 ${
-                sidebarCollapsed ? 'lg:hidden' : 'lg:hidden xl:block'
-              }`}
-            >
-              <span className="font-display font-extrabold text-sm text-slate-900 block truncate">
-                Toàn Trung CRM
-              </span>
-              <span className="text-[10px] font-semibold text-slate-400 block truncate">
-                Enterprise LED & Marketing
-              </span>
-            </div>
-          </Link>
+          ) : (
+            <>
+              <Link href="/dashboard" className="flex items-center gap-2.5 min-w-0">
+                <div className="min-w-0 flex flex-col">
+                  <span className="font-display font-black italic tracking-wider text-lg text-white leading-none block truncate">
+                    TOÀN TRUNG
+                  </span>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <span className="h-[1.5px] flex-1 bg-amber-500/80 rounded-full" />
+                    <span className="text-[9px] font-extrabold tracking-widest text-[#38BDF8] uppercase">
+                      SINCE 2006
+                    </span>
+                  </div>
+                </div>
+              </Link>
 
-          {/* Subtle Top Expand/Collapse Toggle Button (Desktop Manual Override) */}
-          <button
-            type="button"
-            onClick={() => setSidebarCollapsed((prev) => !prev)}
-            title={sidebarCollapsed ? 'Mở rộng thanh điều hướng' : 'Thu gọn thanh điều hướng'}
-            className="hidden xl:grid w-7 h-7 rounded-lg text-slate-400 hover:text-[#1E3A8A] hover:bg-slate-100 place-items-center shrink-0 transition"
-          >
-            {sidebarCollapsed ? (
-              <ChevronRight className="w-4 h-4" />
-            ) : (
-              <ChevronLeft className="w-4 h-4" />
-            )}
-          </button>
+              {/* Collapse Button when expanded */}
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(true)}
+                title="Thu gọn menu"
+                className="hidden lg:grid w-7 h-7 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 place-items-center shrink-0 transition"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+            </>
+          )}
 
           <button
             type="button"
             onClick={() => setMobileOpen(false)}
             aria-label="Đóng menu"
-            className="lg:hidden p-2 rounded-lg text-slate-400 hover:text-slate-800 hover:bg-slate-100"
+            className="lg:hidden p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/10"
           >
             <X className="w-5 h-5" />
           </button>
@@ -425,55 +419,38 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
 
         {/* Navigation Links */}
         <nav className="flex-1 overflow-y-auto px-3 py-4">
-          {renderNavGroup('ĐIỀU HÀNH & KINH DOANH', visibleWorkNav)}
-          {renderNavGroup('CÁ NHÂN', personalNav)}
-          {renderNavGroup('QUẢN TRỊ HỆ THỐNG', visibleSystemNav)}
+          {renderNavGroup(visibleWorkNav, false)}
+          {renderNavGroup(personalNav, true)}
+          {renderNavGroup(visibleSystemNav, true)}
         </nav>
 
-        {/* Sidebar Collapse Toggle (Desktop >= 1280px) */}
-        <div className="hidden xl:flex items-center justify-end px-3 py-2 border-t border-slate-100">
-          <button
-            type="button"
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            className="flex items-center gap-2 p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 text-xs w-full justify-center transition"
-            title={sidebarCollapsed ? 'Mở rộng thanh điều hướng' : 'Thu gọn thanh điều hướng'}
-          >
-            {sidebarCollapsed ? (
-              <ChevronRight className="w-4 h-4" />
-            ) : (
-              <ChevronLeft className="w-4 h-4" />
-            )}
-            {!sidebarCollapsed && <span className="text-[11px] font-medium">Thu gọn menu</span>}
-          </button>
-        </div>
-
         {/* Bottom User Account Summary */}
-        <div className="p-3 border-t border-slate-100">
+        <div className="p-3.5 border-t border-white/[0.08]">
           <Link
             href="/profile"
             title={`${user.fullName} (${user.email})`}
-            className={`flex items-center gap-2.5 rounded-xl p-1.5 hover:bg-slate-50 transition-colors ${
-              sidebarCollapsed ? 'lg:justify-center' : 'lg:justify-center xl:justify-start'
+            className={`flex items-center gap-3 rounded-xl p-1.5 hover:bg-white/[0.05] transition-colors ${
+              sidebarCollapsed ? 'lg:justify-center' : 'lg:justify-start'
             }`}
           >
             {user.avatarUrl ? (
               <img
                 src={user.avatarUrl}
                 alt={user.fullName}
-                className="w-8 h-8 rounded-full object-cover border border-slate-200 shrink-0"
+                className="w-9 h-9 rounded-full object-cover border border-white/20 shrink-0"
               />
             ) : (
-              <div className="w-8 h-8 rounded-full bg-blue-100 text-[#1E3A8A] font-extrabold text-xs grid place-items-center shrink-0">
+              <div className="w-9 h-9 rounded-full bg-[#3B66F5] text-white font-extrabold text-xs grid place-items-center shrink-0 shadow-sm">
                 {getInitials(user.fullName)}
               </div>
             )}
             <div
               className={`min-w-0 flex-1 ${
-                sidebarCollapsed ? 'lg:hidden' : 'lg:hidden xl:block'
+                sidebarCollapsed ? 'lg:hidden' : 'lg:block'
               }`}
             >
-              <p className="text-xs font-bold text-slate-800 truncate">{user.fullName}</p>
-              <p className="text-[11px] text-slate-400 truncate">{user.roleName}</p>
+              <p className="text-[13px] font-bold text-white truncate">{user.fullName}</p>
+              <p className="text-[11px] text-[#94A3B8] truncate">{user.roleName}</p>
             </div>
           </Link>
         </div>

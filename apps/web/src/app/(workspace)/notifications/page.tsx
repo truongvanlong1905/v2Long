@@ -368,7 +368,7 @@ export default function NotificationsPage() {
             </span>
           </div>
           <h1 className="font-display text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
-            Thông báo Phòng ban &amp; Điều hành Báo cáo
+            Thông báo
           </h1>
           <p className="text-xs sm:text-sm text-slate-500">
             {canSendFullReport

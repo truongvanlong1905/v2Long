@@ -4,6 +4,8 @@
  * CI/CD verification, and sandbox evaluation without billable external API calls.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import zlib from 'node:zlib';
 import {
   type AiDesignProvider,

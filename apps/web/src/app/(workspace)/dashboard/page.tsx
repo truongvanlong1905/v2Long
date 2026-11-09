@@ -190,7 +190,7 @@ export default function DashboardPage() {
             )}
           </div>
           <h1 className="font-display text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
-            Tổng quan Kinh doanh, Tiếp thị &amp; Dự án Màn hình LED
+            Tổng quan
           </h1>
           <p className="text-xs text-slate-500 truncate">
             {cleanScopeDescription ||

@@ -86,6 +86,8 @@ export interface DesignChatMessageDto {
   role: 'user' | 'assistant';
   text: string;
   timestamp: string;
+  chatMode?: 'consultant_free' | 'image_generator';
+  suggestedTaoAnhPrompt?: string;
   versionId?: number;
   versionNumber?: number;
   providerId?: string;
@@ -305,7 +307,8 @@ export type UpdateDesignProjectDto = z.infer<typeof UpdateDesignProjectSchema>;
 
 export const ChatDesignRequestSchema = z.object({
   expectedVersion: z.number().int().positive(),
-  prompt: z.string().trim().min(5, 'Yêu cầu chỉnh sửa cần tối thiểu 5 ký tự.').max(1500),
+  prompt: z.string().trim().min(2, 'Yêu cầu cần tối thiểu 2 ký tự.').max(1500),
+  chatMode: z.enum(['auto', 'consultant_free', 'image_generator']).optional(),
   quality: z.enum(['draft', 'high_quality']).default('draft'),
   providerId: z.enum(AI_PROVIDER_IDS).optional(),
   modelId: z.string().trim().max(120).optional(),

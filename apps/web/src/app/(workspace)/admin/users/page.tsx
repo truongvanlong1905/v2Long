@@ -352,7 +352,7 @@ export default function AdminUsersPage() {
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="font-display text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
-                Quản lý Phòng ban &amp; Tài khoản
+                Nhân sự
               </h1>
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-50 border border-blue-200/80 text-[#1E3A8A] text-xs font-bold">
                 <Users className="w-3.5 h-3.5" />

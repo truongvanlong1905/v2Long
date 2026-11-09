@@ -598,7 +598,26 @@ export async function listLeadsForUser(
       })),
       tracking: r.tracking
         ? {
-          marketingSource: r.tracking.marketingSource,
+          marketingSource:
+            r.selfReportedSource &&
+            r.selfReportedSource !== 'Nhập tay' &&
+            r.selfReportedSource !== 'Chưa xác định'
+              ? r.selfReportedSource
+              : !r.tracking.marketingSource ||
+                  r.tracking.marketingSource === 'Nhập tay' ||
+                  r.tracking.marketingSource === 'Chưa xác định'
+                ? r.contactChannel === 'zalo'
+                  ? 'Zalo'
+                  : r.contactChannel === 'form_web'
+                    ? 'Website Toàn Trung'
+                    : r.contactChannel === 'google_lead_form'
+                      ? 'Google Ads'
+                      : r.contactChannel === 'fanpage'
+                        ? 'Fanpage Facebook'
+                        : r.contactChannel === 'email'
+                          ? 'Email Dự án'
+                          : 'SĐT / Hotline'
+                : r.tracking.marketingSource,
           attributionMethod: r.tracking.sourceResolutionMethod,
           utmSource: r.tracking.utmSource,
           utmMedium: r.tracking.utmMedium,
@@ -707,6 +726,16 @@ export async function createManualLead(actor: SessionUserDto, input: CreateManua
     throw new Error('Khi tick chọn "Chuyển kinh doanh khác", bắt buộc chọn Lý do chuyển (UC02 5.2).');
   }
 
+  const resolvedSourceLabel =
+    input.selfReportedSource?.trim() ||
+    (input.contactChannel === 'zalo'
+      ? 'Zalo'
+      : input.contactChannel === 'form_web'
+        ? 'Website Toàn Trung'
+        : input.contactChannel === 'email'
+          ? 'Email Dự án'
+          : 'SĐT / Hotline');
+
   const ingested = await ingestLeadWithTrackingIdempotent(prisma, {
     intakeSourceProvider: 'manual',
     intakeSourceAccountKey: 'internal',
@@ -722,10 +751,10 @@ export async function createManualLead(actor: SessionUserDto, input: CreateManua
     province: input.areaType === 'hcm' ? 'TP. Hồ Chí Minh' : input.province || null,
     district: input.hcmDistrict || null,
     installationAddress: input.installationAddress || null,
-    selfReportedSource: input.selfReportedSource || null,
+    selfReportedSource: resolvedSourceLabel,
     createdByUserId: actor.id,
     assignedSalesId: targetSalesId,
-    marketingSource: 'Nhập tay',
+    marketingSource: resolvedSourceLabel,
     sourceResolutionMethod: 'manual',
   });
 
@@ -741,7 +770,9 @@ export async function createManualLead(actor: SessionUserDto, input: CreateManua
         isDuplicateAlert: dupCheck.isDuplicateAlert,
         duplicateStatus: dupCheck.duplicateStatus,
         matchedOldLeadId: dupCheck.matchedOldLead?.id ?? null,
-        isSuspectedPriceCheck: dupCheck.isSuspectedPriceCheck,
+        isSuspectedPriceCheck:
+          dupCheck.isSuspectedPriceCheck ||
+          Boolean(input.initialNote && input.initialNote.includes('[NGHI VẤN')),
         contactedAt: manualContactTime,
         // UC01 2.3 & Module 1.2 Bước 5: Lead thủ công (Hotline/Zalo) có Mốc tiếp nhận = Thời điểm khách liên hệ và được coi là đã tiếp nhận ngay
         ...(isManualAutoReceived
@@ -900,7 +931,11 @@ export async function updateLeadInformation(
         isDuplicateAlert: dupCheck.isDuplicateAlert,
         duplicateStatus: dupCheck.duplicateStatus,
         matchedOldLeadId: dupCheck.matchedOldLead?.id ?? null,
-        isSuspectedPriceCheck: dupCheck.isSuspectedPriceCheck,
+        isSuspectedPriceCheck: input.note?.includes('[BỎ NGHI VẤN]')
+          ? false
+          : input.note?.includes('[NGHI VẤN') ||
+            existing.isSuspectedPriceCheck ||
+            dupCheck.isSuspectedPriceCheck,
         version: { increment: 1 },
       },
     });
