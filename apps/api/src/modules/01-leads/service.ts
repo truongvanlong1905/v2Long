@@ -26,7 +26,10 @@ import {
   type TransitionPipelineDto,
   type UpdateLeadDetailsDto,
 } from '@toantrung/contracts';
-import { savePrivateBusinessFile } from '../../core/storage/private-files.service';
+import {
+  deletePrivateBusinessFile,
+  savePrivateBusinessFile,
+} from '../../core/storage/private-files.service';
 
 export function normalizeVietnamPhone(raw: string): {
   normalizedPhone: string;
@@ -458,7 +461,12 @@ export async function listLeadsForUser(
           id: att.id,
           leadId: att.leadId,
           fileName: att.fileName,
-          fileType: att.attachmentType === 'site_photo' ? 'site_photo' : 'cad_drawing',
+          fileType:
+            att.attachmentType === 'site_photo'
+              ? 'site_photo'
+              : att.attachmentType === 'customer_drawing_doc'
+                ? 'cad_drawing'
+                : 'other',
           downloadUrl: `/api/v1/leads/attachments/${att.id}`,
           uploadedById: att.uploadedById,
           uploadedByName: att.uploadedBy.fullName,
@@ -567,7 +575,12 @@ export async function listLeadsForUser(
       receivedConfirmedByName: r.receivedBy?.fullName || null,
       pipelineStatus: (r.pipelineStatus as PipelineStatus) || 'new_lead',
       lostReason: r.lostReason,
-      reopenReason: null,
+      reopenReason:
+        r.duplicateStatus === 'won_returning'
+          ? 'Khách cũ đã từng chốt hợp đồng trước đây quay lại'
+          : r.duplicateStatus === 'lost_returning'
+            ? r.lostReason || 'Khách từng hỏi trước đây nhưng chưa chốt nay quay lại hỏi mua'
+            : null,
       quoteSentAt: r.firstQuoteSentAt ? r.firstQuoteSentAt.toISOString() : null,
       quoteRespondedAt: r.quoteRespondedAt ? r.quoteRespondedAt.toISOString() : null,
       isQuoteOverdue7Days: isOverdue7Days,
@@ -575,7 +588,12 @@ export async function listLeadsForUser(
       duplicateType,
       duplicateOfLeadId: r.matchedOldLeadId,
       duplicateOfLeadCode: r.matchedOldLead?.leadCode || null,
-      duplicateOfLeadStatus: r.matchedOldLead?.pipelineStatus || null,
+      duplicateOfLeadStatus:
+        r.duplicateStatus === 'won_returning'
+          ? 'won'
+          : r.duplicateStatus === 'lost_returning'
+            ? 'lost'
+            : r.matchedOldLead?.pipelineStatus || null,
       isRepeatLead: r.tracking?.isRepeatLead ?? false,
       isPriceCheckSuspect: r.isSuspectedPriceCheck,
       spamStatus,
@@ -766,10 +784,17 @@ export async function createManualLead(actor: SessionUserDto, input: CreateManua
       where: { id: ingested.lead.id },
       data: {
         isPhoneUnstandardized: isUnstandardized,
-        normalizedLookupKey: dupCheck.lookupKey,
-        isDuplicateAlert: dupCheck.isDuplicateAlert,
-        duplicateStatus: dupCheck.duplicateStatus,
-        matchedOldLeadId: dupCheck.matchedOldLead?.id ?? null,
+        normalizedLookupKey: dupCheck.lookupKey || ingested.lead.normalizedLookupKey,
+        ...(ingested.deduplicated
+          ? {}
+          : {
+              isDuplicateAlert: dupCheck.isDuplicateAlert,
+              duplicateStatus: dupCheck.duplicateStatus,
+              matchedOldLeadId:
+                dupCheck.matchedOldLead && dupCheck.matchedOldLead.id !== ingested.lead.id
+                  ? dupCheck.matchedOldLead.id
+                  : null,
+            }),
         isSuspectedPriceCheck:
           dupCheck.isSuspectedPriceCheck ||
           Boolean(input.initialNote && input.initialNote.includes('[NGHI VẤN')),
@@ -784,7 +809,7 @@ export async function createManualLead(actor: SessionUserDto, input: CreateManua
       },
     });
 
-    if (dupCheck.matchedOldLead) {
+    if (dupCheck.matchedOldLead && !ingested.deduplicated) {
       await tx.marketingTracking.update({
         where: { leadId: ingested.lead.id },
         data: { isRepeatLead: true },
@@ -792,7 +817,13 @@ export async function createManualLead(actor: SessionUserDto, input: CreateManua
     }
 
     if (input.productIds && input.productIds.length > 0) {
+      const existingProducts = await tx.leadProduct.findMany({
+        where: { leadId: ingested.lead.id },
+        select: { productId: true },
+      });
+      const existingSet = new Set(existingProducts.map((p) => p.productId));
       for (const productId of input.productIds) {
+        if (existingSet.has(productId)) continue;
         await tx.leadProduct.create({
           data: {
             leadId: ingested.lead.id,
@@ -1266,7 +1297,7 @@ export async function createPrivateQuoteVersion(
 export async function uploadLeadAttachment(params: {
   actor: SessionUserDto;
   leadId: number;
-  attachmentType: 'site_photo' | 'customer_drawing_doc' | 'quote_doc';
+  attachmentType: 'site_photo' | 'customer_drawing_doc' | 'other' | 'quote_doc';
   folderPath?: string | null;
   fileName: string;
   fileBuffer: Buffer;
@@ -1282,8 +1313,7 @@ export async function uploadLeadAttachment(params: {
     fileBuffer: params.fileBuffer,
     declaredMimeType: params.declaredMimeType,
     originalFileName: params.fileName,
-    allowPdfOrDoc:
-      params.attachmentType === 'customer_drawing_doc' || params.attachmentType === 'quote_doc',
+    allowPdfOrDoc: true,
   });
 
   const attachment = await prisma.leadAttachment.create({
@@ -1300,17 +1330,115 @@ export async function uploadLeadAttachment(params: {
     },
   });
 
+  const typeLabel =
+    params.attachmentType === 'site_photo'
+      ? 'Ảnh/Video hiện trạng'
+      : params.attachmentType === 'customer_drawing_doc'
+        ? 'Bản vẽ kỹ thuật'
+        : 'Tài liệu dự án';
+
   await prisma.leadActivity.create({
     data: {
       leadId: params.leadId,
       actionType: 'upload_attachment',
       actionById: params.actor.id,
       actorType: 'user',
-      note: `Tải lên tệp đính kèm "${params.fileName}" (${params.attachmentType})`,
+      note: `Tải lên tệp đính kèm "${params.fileName}" (${typeLabel})`,
     },
   });
 
   return attachment;
+}
+
+export async function updateLeadAttachment(params: {
+  actor: SessionUserDto;
+  attachmentId: number;
+  fileName?: string;
+  attachmentType?: 'site_photo' | 'customer_drawing_doc' | 'other';
+  fileBuffer?: Buffer | null;
+  declaredMimeType?: string | null;
+}) {
+  const existing = await prisma.leadAttachment.findUnique({
+    where: { id: params.attachmentId },
+    include: { lead: true },
+  });
+  if (!existing) throw new Error('Không tìm thấy tệp đính kèm.');
+  assertLeadMutationScope(params.actor, existing.lead);
+
+  const nextFileName = (params.fileName || existing.fileName).trim() || existing.fileName;
+  const nextType = params.attachmentType || (existing.attachmentType as 'site_photo' | 'customer_drawing_doc' | 'other');
+
+  let nextFileUrl = existing.fileUrl;
+  let nextFileSizeKb = existing.fileSizeKb;
+
+  if (params.fileBuffer && params.fileBuffer.length > 0) {
+    const saved = savePrivateBusinessFile({
+      bucket: 'leads',
+      prefix: `lead-${existing.leadId}-${nextType}`,
+      fileBuffer: params.fileBuffer,
+      declaredMimeType: params.declaredMimeType || 'application/octet-stream',
+      originalFileName: nextFileName,
+      allowPdfOrDoc: true,
+    });
+    deletePrivateBusinessFile(existing.fileUrl);
+    nextFileUrl = saved.storageObjectKey;
+    nextFileSizeKb = Math.max(1, Math.round(saved.fileSizeBytes / 1024));
+  }
+
+  const updated = await prisma.leadAttachment.update({
+    where: { id: existing.id },
+    data: {
+      fileName: nextFileName,
+      attachmentType: nextType,
+      fileUrl: nextFileUrl,
+      fileSizeKb: nextFileSizeKb,
+    },
+  });
+
+  await prisma.leadActivity.create({
+    data: {
+      leadId: existing.leadId,
+      actionType: 'upload_attachment',
+      actionById: params.actor.id,
+      actorType: 'user',
+      note:
+        params.fileBuffer && params.fileBuffer.length > 0
+          ? `Cập nhật & thay thế tệp đính kèm "${nextFileName}"`
+          : `Cập nhật thông tin tệp đính kèm: "${existing.fileName}" → "${nextFileName}"`,
+    },
+  });
+
+  return updated;
+}
+
+export async function deleteLeadAttachment(params: {
+  actor: SessionUserDto;
+  attachmentId: number;
+}) {
+  const existing = await prisma.leadAttachment.findUnique({
+    where: { id: params.attachmentId },
+    include: { lead: true },
+  });
+  if (!existing) throw new Error('Không tìm thấy tệp đính kèm.');
+  assertLeadMutationScope(params.actor, existing.lead);
+
+  await prisma.leadAttachment.delete({
+    where: { id: existing.id },
+  });
+
+  deletePrivateBusinessFile(existing.fileUrl);
+
+  await prisma.leadActivity.create({
+    data: {
+      leadId: existing.leadId,
+      actionType: 'upload_attachment',
+      actionById: params.actor.id,
+      actorType: 'user',
+      note: `Đã xóa tệp đính kèm "${existing.fileName}"`,
+    },
+  });
+
+  return { id: existing.id, fileName: existing.fileName };
 }
 
 export async function createCompetitorPriceCheckAlert(params: {

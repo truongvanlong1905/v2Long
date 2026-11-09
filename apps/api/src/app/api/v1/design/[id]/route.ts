@@ -11,6 +11,7 @@ import { requirePermissionSession } from '../../../../../core/permissions';
 import {
   addProjectPhoto,
   approveDesignAssetVersion,
+  deleteDesignAssetVersion,
   deleteDesignProject,
   deleteProjectPhoto,
   processChatDesignRequest,
@@ -216,8 +217,17 @@ export async function DELETE(
 
   const { searchParams } = new URL(req.url);
   const photoId = searchParams.get('photoId');
+  const versionIdParam = searchParams.get('versionId');
 
   try {
+    if (versionIdParam) {
+      const versionId = Number(versionIdParam);
+      if (!Number.isInteger(versionId) || versionId <= 0) {
+        return jsonError('INVALID_VERSION_ID', 'Mã phiên bản cần xóa không hợp lệ.', 400);
+      }
+      const res = await deleteDesignAssetVersion(auth.user, requestId, versionId);
+      return jsonSuccess(res);
+    }
     if (!photoId) {
       const res = await deleteDesignProject(auth.user, requestId);
       return jsonSuccess(res);

@@ -6,7 +6,10 @@ import {
   AlertTriangle,
   ArrowRightLeft,
   Ban,
+  Bell,
+  Calendar,
   CheckCircle2,
+  ChevronDown,
   Clock,
   Download,
   FileText,
@@ -18,6 +21,7 @@ import {
   Kanban,
   Layers,
   MapPin,
+  MessageSquarePlus,
   MoreHorizontal,
   Paperclip,
   Pencil,
@@ -25,7 +29,9 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Send,
   ShieldAlert,
+  Star,
   Table2,
   Trash2,
   UserCheck,
@@ -166,7 +172,7 @@ export const B2B_HORIZON_OPTIONS: {
 ];
 
 function extractScheduledFollowUpDate(noteText: string): string {
-  const match = noteText.match(/\[HẸN LIÊN HỆ:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\]/);
+  const match = noteText.match(/\[HẸN (?:LIÊN HỆ|GỌI LẠI):\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\]/);
   return match ? match[1] : '';
 }
 
@@ -321,8 +327,10 @@ function evaluateLeadFraudCriteria(
   const transferCount = transferActivities.length;
 
   // Criteria 1: Duplicate Phone (>= 2 submissions within 30 days or backend duplicateType)
+  // Chỉ đếm các hồ sơ tạo trước hoặc tại thời điểm hồ sơ hiện tại (other.id <= lead.id) để Hồ sơ gốc ban đầu không bị báo trùng ngược
   const samePhoneWithin30d = allLeads.filter((other) => {
     if (isInvalidClosedLead(other)) return false;
+    if (other.id > lead.id) return false;
     const otherClean = other.phone.replace(/\D/g, '');
     if (!cleanPhone || cleanPhone.includes('*') || otherClean !== cleanPhone) return false;
     const diff = Math.abs(nowMs - new Date(other.contactedAt).getTime());
@@ -331,12 +339,11 @@ function evaluateLeadFraudCriteria(
   const isCurrentLeadClosed =
     lead.pipelineStatus === 'won' || lead.pipelineStatus === 'lost';
 
-  // Tìm các Lead trùng Khách hàng:
-  // - Với Lead đã đóng (won/lost): chỉ xét các Lead tạo trước nó (other.id < lead.id) để không báo trùng ngược khi khách quay lại ở tương lai.
-  // - Với Lead đang mở: xét các Lead trước nó hoặc các Lead đang mở cùng lúc.
+  // Tìm các Lead trùng Khách hàng tạo TRƯỚC hồ sơ này (other.id < lead.id):
+  // Hồ sơ đầu tiên (gốc) sẽ không bị gắn nhãn trùng ngược khi có Lead mới tạo sau nó.
   const sameCustomerLeads = allLeads.filter((other) => {
     if (other.id === lead.id || isInvalidClosedLead(other)) return false;
-    if (isCurrentLeadClosed && other.id > lead.id) return false;
+    if (other.id > lead.id) return false;
     const otherClean = other.phone.replace(/\D/g, '');
     const phoneMatch = cleanPhone && !cleanPhone.includes('*') && otherClean === cleanPhone;
     const emailMatch =
@@ -392,28 +399,51 @@ function evaluateLeadFraudCriteria(
   let matchedCustomerLead: LeadItemDto | null = null;
 
   if (!isCurrentLeadClosed) {
-    const openSameCustomerLead = sameCustomerLeads.find(
-      (other) =>
+    const fourteenDaysMs = 14 * 24 * 60 * 60 * 1000;
+    const currentCreatedMs = new Date(lead.contactedAt).getTime();
+
+    // 1. Trùng với Lead đang mở gần đây (<= 14 ngày): Khách gửi nhiều kênh cùng lúc
+    const openSameCustomerLead = sameCustomerLeads.find((other) => {
+      const isOpen =
         other.pipelineStatus === 'new_lead' ||
         other.pipelineStatus === 'quoting' ||
-        other.pipelineStatus === 'quote_sent',
-    );
+        other.pipelineStatus === 'quote_sent';
+      if (!isOpen) return false;
+      const diffMs = Math.abs(currentCreatedMs - new Date(other.contactedAt).getTime());
+      return diffMs <= fourteenDaysMs;
+    });
+
+    // 2. Khách đã từng Chốt thành công (won) trước đây -> Chỉ trường hợp này mới hiện "KHÁCH CŨ QUAY LẠI"
     const wonSameCustomerLead = sameCustomerLeads.find(
       (other) => other.pipelineStatus === 'won',
     );
-    const lostSameCustomerLead = sameCustomerLeads.find(
-      (other) => other.pipelineStatus === 'lost',
-    );
+
+    // 3. Khách từng hỏi trước đây nhưng chưa chốt (đã đóng Thất bại HOẶC hồ sơ cũ > 14 ngày / vài tháng / năm trước chưa chốt) nay hỏi lại
+    const lostOrPriorUnclosedLead = sameCustomerLeads.find((other) => {
+      if (other.pipelineStatus === 'lost') return true;
+      const isOpen =
+        other.pipelineStatus === 'new_lead' ||
+        other.pipelineStatus === 'quoting' ||
+        other.pipelineStatus === 'quote_sent';
+      if (!isOpen) return false;
+      const diffMs = Math.abs(currentCreatedMs - new Date(other.contactedAt).getTime());
+      return diffMs > fourteenDaysMs;
+    });
 
     if (openSameCustomerLead) {
       duplicateScenario = 'SCENARIO_1_ACTIVE_DUP';
       matchedCustomerLead = openSameCustomerLead;
-    } else if (wonSameCustomerLead) {
+    } else if (wonSameCustomerLead || lead.duplicateOfLeadStatus === 'won') {
       duplicateScenario = 'SCENARIO_2_WON_RETURNING';
-      matchedCustomerLead = wonSameCustomerLead;
-    } else if (lostSameCustomerLead || lead.duplicateType === 'PRIOR_LEAD' || lead.isRepeatLead) {
+      matchedCustomerLead = wonSameCustomerLead || null;
+    } else if (
+      lostOrPriorUnclosedLead ||
+      lead.duplicateOfLeadStatus === 'lost' ||
+      lead.duplicateType === 'PRIOR_LEAD' ||
+      lead.isRepeatLead
+    ) {
       duplicateScenario = 'SCENARIO_2_LOST_RETURNING';
-      matchedCustomerLead = lostSameCustomerLead || sameCustomerLeads[0] || null;
+      matchedCustomerLead = lostOrPriorUnclosedLead || sameCustomerLeads[0] || null;
     } else if (lead.duplicateType === 'ACTIVE_RED') {
       duplicateScenario = 'SCENARIO_1_ACTIVE_DUP';
       matchedCustomerLead = sameCustomerLeads[0] || null;
@@ -508,8 +538,32 @@ export function LeadsWorkspace() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
-  const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
+  const [viewMode, setViewMode] = useState<'table' | 'kanban' | 'reminders'>('table');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [specialAlertFilter, setSpecialAlertFilter] = useState<
+    'none' | 'all_alerts' | 'active_dup' | 'won_returning' | 'lost_returning' | 'spam_probe'
+  >('none');
+  const [reminderFilter, setReminderFilter] = useState<
+    'none' | 'all_reminders' | 'unreceived' | 'stagnant_3d' | 'quote_unresponded' | 'scheduled_due'
+  >('none');
+  const [highlightTableReminders, setHighlightTableReminders] = useState<boolean>(true);
+  const [slaUnreceivedHours, setSlaUnreceivedHours] = useState<number>(2);
+  const [slaStagnantDays, setSlaStagnantDays] = useState<number>(3);
+  const [showSlaRuleSettings, setShowSlaRuleSettings] = useState<boolean>(false);
+  const [reminderSalesFilterId, setReminderSalesFilterId] = useState<number | 'all'>('all');
+  const [reminderQuoteCycleFilter, setReminderQuoteCycleFilter] = useState<
+    'all' | '1d' | '7d' | '30d'
+  >('all');
+  const [quickReminderNotes, setQuickReminderNotes] = useState<Record<number, string>>({});
+  const [collabNoteDraft, setCollabNoteDraft] = useState('');
+  const [dateRangePreset, setDateRangePreset] = useState<'ALL' | 'TODAY' | '7D' | '30D' | 'THIS_MONTH' | 'CUSTOM'>('ALL');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+  const [showDateDropdown, setShowDateDropdown] = useState(false);
+  const [editActiveProductCategory, setEditActiveProductCategory] = useState<
+    'MAN_HINH_LED' | 'BANG_DIEN_TU' | 'KHAC'
+  >('MAN_HINH_LED');
+  const [editProductSearch, setEditProductSearch] = useState('');
   const [b2bHorizonFilter, setB2bHorizonFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
@@ -571,6 +625,17 @@ export function LeadsWorkspace() {
       setStatusFilter('new_lead');
       setIncludeSpam(false);
     }
+  }, []);
+
+  // Listen to global search bar from WorkspaceShell topbar
+  useEffect(() => {
+    const handleGlobalSearch = (e: Event) => {
+      const custom = e as CustomEvent<string>;
+      const val = typeof custom.detail === 'string' ? custom.detail : '';
+      setSearchQuery(val);
+    };
+    window.addEventListener('tt-lead-search', handleGlobalSearch as EventListener);
+    return () => window.removeEventListener('tt-lead-search', handleGlobalSearch as EventListener);
   }, []);
 
   // Debounce search query by 300ms
@@ -670,9 +735,17 @@ export function LeadsWorkspace() {
   const [priceCheckReason, setPriceCheckReason] = useState('');
   const [priceCheckFile, setPriceCheckFile] = useState<File | null>(null);
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
-  const [attachmentType, setAttachmentType] = useState<'site_photo' | 'customer_drawing_doc'>(
+  const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
+  const [attachmentType, setAttachmentType] = useState<'site_photo' | 'customer_drawing_doc' | 'other'>(
     'site_photo',
   );
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const [editingAttachmentId, setEditingAttachmentId] = useState<number | null>(null);
+  const [editingAttachmentName, setEditingAttachmentName] = useState<string>('');
+  const [editingAttachmentType, setEditingAttachmentType] = useState<
+    'site_photo' | 'customer_drawing_doc' | 'other'
+  >('site_photo');
+  const [editingAttachmentReplaceFile, setEditingAttachmentReplaceFile] = useState<File | null>(null);
   const [bypassPriceCheckConfirmed, setBypassPriceCheckConfirmed] = useState<boolean>(false);
 
   const fetchLeads = useCallback(async () => {
@@ -765,10 +838,322 @@ export function LeadsWorkspace() {
     }
   }, [leads, selectedLeadId]);
 
+  const fraudByLeadId = useMemo(() => {
+    const map = new Map<number, FraudEvaluationResult>();
+    for (const l of leads) {
+      map.set(l.id, evaluateLeadFraudCriteria(l, leads, priceCheckAlerts));
+    }
+    return map;
+  }, [leads, priceCheckAlerts]);
+
+  const classifyLeadAlertBucket = useCallback(
+    (
+      l: LeadItemDto,
+    ): 'none' | 'active_dup' | 'won_returning' | 'lost_returning' | 'spam_probe' => {
+      const fraud = fraudByLeadId.get(l.id);
+      if (!fraud) return 'none';
+      if (l.spamStatus !== 'NONE' || fraud.hasBlacklistedOrSpam || fraud.hasPriceProbeBehavior) {
+        return 'spam_probe';
+      }
+      if (
+        fraud.duplicateScenario === 'SCENARIO_1_ACTIVE_DUP' ||
+        fraud.duplicateScenario === 'SCENARIO_3_MULTI_CONTRACTOR'
+      ) {
+        return 'active_dup';
+      }
+      if (fraud.duplicateScenario === 'SCENARIO_2_WON_RETURNING') {
+        return 'won_returning';
+      }
+      if (fraud.duplicateScenario === 'SCENARIO_2_LOST_RETURNING') {
+        return 'lost_returning';
+      }
+      return 'none';
+    },
+    [fraudByLeadId],
+  );
+
+  const classifyReminderCategories = useCallback(
+    (l: LeadItemDto) => {
+      if (l.spamStatus !== 'NONE' || l.pipelineStatus === 'won' || l.pipelineStatus === 'lost') {
+        return {
+          isUnreceived: false,
+          unreceivedHours: 0,
+          isStagnant3d: false,
+          daysSinceLastActivity: 0,
+          isQuoteUnresponded: false,
+          quoteDays: 0,
+          quoteAgeBucket: 'none' as 'none' | '1d' | '7d' | '30d',
+          isScheduledDue: false,
+          hasAnyReminder: false,
+          urgencyLevel: 'none' as 'critical' | 'high' | 'medium' | 'none',
+          primaryBadgeText: '',
+          primaryActionHint: '',
+          suggestedZaloScript: '',
+        };
+      }
+
+      const now = Date.now();
+      const contactedMs = new Date(l.contactedAt).getTime();
+      const unreceivedHours = Math.max(0, (now - contactedMs) / (1000 * 60 * 60));
+
+      // 1. Chưa tiếp nhận: Lead mới quá hạn / chưa xác nhận tiếp nhận
+      const isUnreceived =
+        l.pipelineStatus === 'new_lead' &&
+        !l.receivedConfirmedAt &&
+        unreceivedHours >= Math.max(0, slaUnreceivedHours - 1.9);
+
+      // 2. Lead đứng yên: Đang mở (new_lead / quoting) và > slaStagnantDays ngày không có hoạt động mới
+      const latestActivityMs =
+        l.activities && l.activities.length > 0
+          ? Math.max(...l.activities.map((a) => new Date(a.createdAt).getTime()))
+          : contactedMs;
+      const daysSinceLastActivity = Math.max(0, (now - latestActivityMs) / (1000 * 60 * 60 * 24));
+      const isStagnant3d =
+        (l.pipelineStatus === 'new_lead' || l.pipelineStatus === 'quoting') &&
+        daysSinceLastActivity >= slaStagnantDays;
+
+      // 3. Báo giá chưa phản hồi: Đã gửi báo giá nhưng chưa phản hồi (1 ngày, 1 tuần, > 1 tháng)
+      const isQuoteUnresponded = l.pipelineStatus === 'quote_sent' && !l.quoteRespondedAt;
+      let quoteAgeBucket: 'none' | '1d' | '7d' | '30d' = 'none';
+      let quoteDays = 0;
+      if (isQuoteUnresponded) {
+        const sentMs = l.quoteSentAt ? new Date(l.quoteSentAt).getTime() : contactedMs;
+        quoteDays = Math.max(1, (now - sentMs) / (1000 * 60 * 60 * 24));
+        if (quoteDays >= 30) quoteAgeBucket = '30d';
+        else if (quoteDays >= 7 || l.isQuoteOverdue7Days) quoteAgeBucket = '7d';
+        else quoteAgeBucket = '1d';
+      }
+
+      // 4. Đến lịch hẹn: Có lịch chăm sóc B2B / ngày hẹn nhắc lại
+      const schedDate = extractScheduledFollowUpDate(l.customProductNote || '');
+      const horizon = getB2bFollowUpHorizon(l);
+      const isScheduledDue = Boolean(schedDate) || horizon.key !== 'none';
+
+      const hasAnyReminder = isUnreceived || isStagnant3d || isQuoteUnresponded || isScheduledDue;
+
+      let urgencyLevel: 'critical' | 'high' | 'medium' | 'none' = 'none';
+      if (isUnreceived || quoteAgeBucket === '30d' || daysSinceLastActivity >= 7) {
+        urgencyLevel = 'critical';
+      } else if (quoteAgeBucket === '7d' || isStagnant3d) {
+        urgencyLevel = 'high';
+      } else if (quoteAgeBucket === '1d' || isScheduledDue) {
+        urgencyLevel = 'medium';
+      }
+
+      const custName = l.contactName || l.companyName || 'Anh/Chị';
+      const prodName = l.products[0]?.productName || 'hệ thống màn hình LED';
+      const projName = l.projectName ? `dự án "${l.projectName}"` : `hạng mục ${prodName}`;
+
+      let primaryBadgeText = '';
+      let primaryActionHint = '';
+      let suggestedZaloScript = '';
+
+      if (isUnreceived) {
+        const hrsText =
+          unreceivedHours >= 24
+            ? `${Math.floor(unreceivedHours / 24)} ngày`
+            : `${Math.max(1, Math.round(unreceivedHours))} giờ`;
+        primaryBadgeText = `🔔 Chưa tiếp nhận (${hrsText})`;
+        primaryActionHint = 'Xác nhận tiếp nhận & gọi tư vấn khách ngay';
+        suggestedZaloScript = `Dạ chào ${custName}, em bên Toàn Trung LED đã nhận được thông tin cần tư vấn ${projName}. Em xin phép kết nối hỗ trợ báo giá & phương án kỹ thuật cho mình ngay ạ!`;
+      } else if (isQuoteUnresponded) {
+        const dInt = Math.max(1, Math.floor(quoteDays));
+        if (quoteAgeBucket === '30d') {
+          primaryBadgeText = `📨 Báo giá > 30 ngày (${dInt} ngày)`;
+          primaryActionHint = 'Đánh thức dự án dài hạn · Hỏi lịch triển khai mới';
+          suggestedZaloScript = `Chào ${custName}, bên Toàn Trung LED xin phép hỏi thăm tiến độ ${projName} bên mình đã có kế hoạch khởi công trong giai đoạn tới chưa ạ? Nếu cần cập nhật lại cấu hình hoặc ưu đãi giá mới nhất em gửi lại mình nhé!`;
+        } else if (quoteAgeBucket === '7d') {
+          primaryBadgeText = `📨 Báo giá 7 ngày chưa PH (${dInt} ngày)`;
+          primaryActionHint = 'Hỏi kết quả duyệt ngân sách & phương án kỹ thuật';
+          suggestedZaloScript = `Dạ chào ${custName}, tuần trước em có gửi bảng báo giá ${projName}. Không biết bên mình đã xem qua phương án kỹ thuật và trình duyệt ngân sách thuận lợi chưa, có cần em điều chỉnh cấu hình nào không ạ?`;
+        } else {
+          primaryBadgeText = `📨 Báo giá 24h chưa PH`;
+          primaryActionHint = 'Xác nhận khách đã mở được file báo giá & CAD';
+          suggestedZaloScript = `Dạ chào ${custName}, em đã gửi bảng báo giá chi tiết cho ${projName}. Anh/Chị kiểm tra giúp em xem đã mở được file chưa và có điểm nào cần em giải thích thêm về thông số kỹ thuật không ạ?`;
+        }
+      } else if (isStagnant3d) {
+        const dInt = Math.max(slaStagnantDays, Math.floor(daysSinceLastActivity));
+        primaryBadgeText = `⏳ Đứng yên ${dInt} ngày`;
+        primaryActionHint =
+          l.pipelineStatus === 'quoting'
+            ? 'Hoàn tất khảo sát / gửi báo giá ngay'
+            : 'Cập nhật kết quả liên hệ & đẩy sang soạn báo giá';
+        suggestedZaloScript = `Dạ chào ${custName}, em bên Toàn Trung LED xin phép cập nhật thêm thông tin kích thước mặt bằng cho ${projName} để bộ phận kỹ thuật lên phương án và báo giá chuẩn nhất gửi mình hôm nay ạ!`;
+      } else if (isScheduledDue) {
+        primaryBadgeText = `📅 Hẹn chăm sóc: ${horizon.shortLabel}`;
+        primaryActionHint = 'Theo dõi đúng lịch hẹn dự án B2B';
+        suggestedZaloScript = `Dạ chào ${custName}, theo lịch hẹn trao đổi về ${projName}, em xin phép nhắn hỏi thăm tiến độ hiện tại của bên mình để Toàn Trung chuẩn bị phương án hỗ trợ kịp thời ạ!`;
+      }
+
+      return {
+        isUnreceived,
+        unreceivedHours,
+        isStagnant3d,
+        daysSinceLastActivity,
+        isQuoteUnresponded,
+        quoteDays,
+        quoteAgeBucket,
+        isScheduledDue,
+        hasAnyReminder,
+        urgencyLevel,
+        primaryBadgeText,
+        primaryActionHint,
+        suggestedZaloScript,
+      };
+    },
+    [slaUnreceivedHours, slaStagnantDays],
+  );
+
+  const timeFilteredLeads = useMemo(() => {
+    if (dateRangePreset === 'ALL' && !customStartDate && !customEndDate) {
+      return leads;
+    }
+    const now = Date.now();
+    return leads.filter((l) => {
+      const t = new Date(l.contactedAt).getTime();
+      if (dateRangePreset === 'TODAY') {
+        const d1 = new Date(l.contactedAt);
+        const d2 = new Date();
+        return (
+          d1.getFullYear() === d2.getFullYear() &&
+          d1.getMonth() === d2.getMonth() &&
+          d1.getDate() === d2.getDate()
+        );
+      }
+      if (dateRangePreset === '7D') {
+        return now - t <= 7 * 24 * 60 * 60 * 1000;
+      }
+      if (dateRangePreset === '30D') {
+        return now - t <= 30 * 24 * 60 * 60 * 1000;
+      }
+      if (dateRangePreset === 'THIS_MONTH') {
+        const d1 = new Date(l.contactedAt);
+        const d2 = new Date();
+        return d1.getFullYear() === d2.getFullYear() && d1.getMonth() === d2.getMonth();
+      }
+      if (customStartDate) {
+        const startMs = new Date(`${customStartDate}T00:00:00`).getTime();
+        if (t < startMs) return false;
+      }
+      if (customEndDate) {
+        const endMs = new Date(`${customEndDate}T23:59:59`).getTime();
+        if (t > endMs) return false;
+      }
+      return true;
+    });
+  }, [leads, dateRangePreset, customStartDate, customEndDate]);
+
+  const reminderStats = useMemo(() => {
+    let unreceived = 0;
+    let stagnant3d = 0;
+    let quoteUnresponded = 0;
+    let quote1d = 0;
+    let quote7d = 0;
+    let quote30d = 0;
+    let scheduledDue = 0;
+    let totalLeadsWithReminder = 0;
+
+    for (const l of timeFilteredLeads) {
+      const r = classifyReminderCategories(l);
+      if (r.isUnreceived) unreceived += 1;
+      if (r.isStagnant3d) stagnant3d += 1;
+      if (r.isQuoteUnresponded) {
+        quoteUnresponded += 1;
+        if (r.quoteAgeBucket === '1d') quote1d += 1;
+        else if (r.quoteAgeBucket === '7d') quote7d += 1;
+        else if (r.quoteAgeBucket === '30d') quote30d += 1;
+      }
+      if (r.isScheduledDue) scheduledDue += 1;
+      if (r.hasAnyReminder) totalLeadsWithReminder += 1;
+    }
+
+    return {
+      unreceived,
+      stagnant3d,
+      quoteUnresponded,
+      quote1d,
+      quote7d,
+      quote30d,
+      scheduledDue,
+      totalLeadsWithReminder,
+    };
+  }, [timeFilteredLeads, classifyReminderCategories]);
+
+  const salesSlaStats = useMemo(() => {
+    const map = new Map<
+      number,
+      {
+        salesId: number;
+        salesName: string;
+        totalActive: number;
+        unreceivedCount: number;
+        stagnantCount: number;
+        quotePendingCount: number;
+        reminderTotal: number;
+        slaCompliancePct: number;
+      }
+    >();
+
+    for (const l of timeFilteredLeads) {
+      if (l.spamStatus !== 'NONE' || l.pipelineStatus === 'won' || l.pipelineStatus === 'lost') {
+        continue;
+      }
+      const sid = l.assignedSalesId || 0;
+      const sname = l.assignedSalesName || 'Chưa giao Sales';
+      const entry = map.get(sid) || {
+        salesId: sid,
+        salesName: sname,
+        totalActive: 0,
+        unreceivedCount: 0,
+        stagnantCount: 0,
+        quotePendingCount: 0,
+        reminderTotal: 0,
+        slaCompliancePct: 100,
+      };
+      entry.totalActive += 1;
+      const r = classifyReminderCategories(l);
+      if (r.isUnreceived) entry.unreceivedCount += 1;
+      if (r.isStagnant3d) entry.stagnantCount += 1;
+      if (r.isQuoteUnresponded) entry.quotePendingCount += 1;
+      if (r.hasAnyReminder) entry.reminderTotal += 1;
+      entry.slaCompliancePct =
+        entry.totalActive > 0
+          ? Math.max(
+              0,
+              Math.round(((entry.totalActive - entry.reminderTotal) / entry.totalActive) * 100),
+            )
+          : 100;
+      map.set(sid, entry);
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.reminderTotal - a.reminderTotal);
+  }, [timeFilteredLeads, classifyReminderCategories]);
+
   const displayedLeads = useMemo(() => {
-    let list = leads;
-    if (statusFilter !== 'all') {
-      list = list.filter((l) => l.pipelineStatus === statusFilter);
+    let list = timeFilteredLeads;
+    if (reminderFilter !== 'none') {
+      list = list.filter((l) => {
+        const r = classifyReminderCategories(l);
+        if (reminderFilter === 'all_reminders') return r.hasAnyReminder;
+        if (reminderFilter === 'unreceived') return r.isUnreceived;
+        if (reminderFilter === 'stagnant_3d') return r.isStagnant3d;
+        if (reminderFilter === 'quote_unresponded') return r.isQuoteUnresponded;
+        if (reminderFilter === 'scheduled_due') return r.isScheduledDue;
+        return r.hasAnyReminder;
+      });
+    } else if (specialAlertFilter !== 'none') {
+      list = list.filter((l) => {
+        const bucket = classifyLeadAlertBucket(l);
+        if (bucket === 'none') return false;
+        if (specialAlertFilter === 'all_alerts') return true;
+        return bucket === specialAlertFilter;
+      });
+    } else {
+      // Ở chế độ Tổng Lead Hợp Lệ và các cột 1..5: Chỉ hiển thị Lead hợp lệ (loại trừ Spam để khớp 100% với số trên thẻ KPI)
+      list = list.filter((l) => l.spamStatus === 'NONE');
+      if (statusFilter !== 'all') {
+        list = list.filter((l) => l.pipelineStatus === statusFilter);
+      }
     }
     if (overdueOnly) {
       list = list.filter((l) => l.isQuoteOverdue7Days && l.spamStatus === 'NONE');
@@ -793,7 +1178,17 @@ export function LeadsWorkspace() {
       });
     }
     return list;
-  }, [leads, statusFilter, overdueOnly, unreceivedOnly, b2bHorizonFilter]);
+  }, [
+    timeFilteredLeads,
+    classifyReminderCategories,
+    reminderFilter,
+    classifyLeadAlertBucket,
+    specialAlertFilter,
+    statusFilter,
+    overdueOnly,
+    unreceivedOnly,
+    b2bHorizonFilter,
+  ]);
 
   const totalFilteredCount = displayedLeads.length;
   const totalPages = Math.max(1, Math.ceil(displayedLeads.length / pageSize));
@@ -805,25 +1200,31 @@ export function LeadsWorkspace() {
   }, [displayedLeads, safePage, pageSize]);
 
   const overdueCount = useMemo(
-    () => leads.filter((l) => l.isQuoteOverdue7Days && l.spamStatus === 'NONE').length,
-    [leads],
+    () => timeFilteredLeads.filter((l) => l.isQuoteOverdue7Days && l.spamStatus === 'NONE').length,
+    [timeFilteredLeads],
   );
 
   const unreceivedCount = useMemo(
     () =>
-      leads.filter(
+      timeFilteredLeads.filter(
         (l) => l.pipelineStatus === 'new_lead' && !l.receivedConfirmedAt && l.spamStatus === 'NONE',
       ).length,
-    [leads],
+    [timeFilteredLeads],
   );
 
   const b2bSummaryCounts = useMemo(() => {
-    const valid = leads.filter((l) => l.spamStatus === 'NONE');
+    const valid = timeFilteredLeads.filter((l) => l.spamStatus === 'NONE');
     let newLeadCount = 0;
     let quotingCount = 0;
     let quoteSentCount = 0;
     let wonCount = 0;
     let lostCount = 0;
+
+    let activeDupCount = 0;
+    let wonReturningCount = 0;
+    let lostReturningCount = 0;
+    let spamProbeCount = 0;
+    let alertAllCount = 0;
 
     for (const l of valid) {
       if (l.pipelineStatus === 'new_lead') newLeadCount += 1;
@@ -833,6 +1234,18 @@ export function LeadsWorkspace() {
       if (l.pipelineStatus === 'lost') lostCount += 1;
     }
 
+    for (const l of timeFilteredLeads) {
+      const bucket = classifyLeadAlertBucket(l);
+      if (bucket === 'active_dup') activeDupCount += 1;
+      else if (bucket === 'won_returning') wonReturningCount += 1;
+      else if (bucket === 'lost_returning') lostReturningCount += 1;
+      else if (bucket === 'spam_probe') spamProbeCount += 1;
+
+      if (bucket !== 'none') {
+        alertAllCount += 1;
+      }
+    }
+
     return {
       validTotal: valid.length,
       newLeadCount,
@@ -840,19 +1253,25 @@ export function LeadsWorkspace() {
       quoteSentCount,
       wonCount,
       lostCount,
+      activeDupCount,
+      wonReturningCount,
+      lostReturningCount,
+      returningTotalCount: wonReturningCount + lostReturningCount,
+      spamProbeCount,
+      alertAllCount,
     };
-  }, [leads]);
+  }, [timeFilteredLeads, classifyLeadAlertBucket]);
 
   const exportHref = useMemo(() => {
     const qs = new URLSearchParams();
     if (statusFilter !== 'all') qs.set('status', statusFilter);
     if (searchQuery.trim()) qs.set('search', searchQuery.trim());
-    if (includeSpam && !overdueOnly && !unreceivedOnly) qs.set('includeSpam', 'true');
+    if (specialAlertFilter !== 'none') qs.set('includeSpam', 'true');
     if (overdueOnly) qs.set('overdueOnly', 'true');
     if (unreceivedOnly) qs.set('unreceived', '1');
     const queryStr = qs.toString();
     return queryStr ? `/api/v1/leads/export?${queryStr}` : '/api/v1/leads/export';
-  }, [statusFilter, searchQuery, includeSpam, overdueOnly, unreceivedOnly]);
+  }, [statusFilter, searchQuery, specialAlertFilter, overdueOnly, unreceivedOnly]);
 
   const selectedLead = useMemo(
     () => leads.find((l) => l.id === selectedLeadId) || null,
@@ -1218,27 +1637,112 @@ export function LeadsWorkspace() {
     }
   };
 
+  const fileToBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const res = typeof reader.result === 'string' ? reader.result : '';
+        resolve(res);
+      };
+      reader.onerror = () => reject(new Error(`Không thể đọc tệp "${file.name}".`));
+      reader.readAsDataURL(file);
+    });
+
   const handleUploadAttachment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !selectedLead || !attachmentFile) return;
+    const filesToUpload =
+      attachmentFiles.length > 0 ? attachmentFiles : attachmentFile ? [attachmentFile] : [];
+    if (!user || !selectedLead || filesToUpload.length === 0) return;
     setSubmitting(true);
     setErrorMsg(null);
     try {
-      const formData = new FormData();
-      formData.append('file', attachmentFile);
-      formData.append('attachmentType', attachmentType);
-      formData.append('folderPath', '/ho-so-cong-trinh');
+      const encodedFiles = await Promise.all(
+        filesToUpload.map(async (f) => ({
+          fileName: f.name,
+          mimeType: f.type || 'application/octet-stream',
+          base64Data: await fileToBase64(f),
+        })),
+      );
+
       await apiRequest(`/api/v1/leads/${selectedLead.id}/attachments`, {
         method: 'POST',
         csrfToken: user.csrfToken,
-        isFormData: true,
-        body: formData,
+        body: {
+          attachmentType,
+          folderPath: '/ho-so-cong-trinh',
+          files: encodedFiles,
+        },
       });
       setAttachmentFile(null);
-      setFeedbackMsg(`Đã tải lên tệp "${attachmentFile.name}" vào kho lưu trữ riêng tư.`);
+      setAttachmentFiles([]);
+      if (attachmentInputRef.current) {
+        attachmentInputRef.current.value = '';
+      }
+      setFeedbackMsg(
+        filesToUpload.length === 1
+          ? `Đã tải lên tệp "${filesToUpload[0].name}" thành công.`
+          : `Đã tải lên ${filesToUpload.length} tệp đính kèm thành công.`,
+      );
       await fetchLeads();
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Lỗi tải tệp đính kèm.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleSaveEditAttachment = async (attId: number) => {
+    if (!user || !selectedLead) return;
+    setSubmitting(true);
+    setErrorMsg(null);
+    try {
+      let base64Data: string | undefined;
+      let mimeType: string | undefined;
+      let nextName = editingAttachmentName.trim();
+      if (editingAttachmentReplaceFile) {
+        base64Data = await fileToBase64(editingAttachmentReplaceFile);
+        mimeType = editingAttachmentReplaceFile.type || 'application/octet-stream';
+        if (!nextName) {
+          nextName = editingAttachmentReplaceFile.name;
+        }
+      }
+      await apiRequest(`/api/v1/leads/attachments/${attId}`, {
+        method: 'PATCH',
+        csrfToken: user.csrfToken,
+        body: {
+          fileName: nextName || undefined,
+          attachmentType: editingAttachmentType,
+          base64Data,
+          mimeType,
+        },
+      });
+      setEditingAttachmentId(null);
+      setEditingAttachmentReplaceFile(null);
+      setFeedbackMsg('Đã cập nhật tệp đính kèm thành công.');
+      await fetchLeads();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Lỗi cập nhật tệp đính kèm.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteAttachment = async (attId: number, fileName: string) => {
+    if (!user || !selectedLead) return;
+    setSubmitting(true);
+    setErrorMsg(null);
+    try {
+      await apiRequest(`/api/v1/leads/attachments/${attId}`, {
+        method: 'DELETE',
+        csrfToken: user.csrfToken,
+      });
+      if (editingAttachmentId === attId) {
+        setEditingAttachmentId(null);
+      }
+      setFeedbackMsg(`Đã xóa tệp "${fileName}" khỏi hồ sơ.`);
+      await fetchLeads();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Lỗi xóa tệp đính kèm.');
     } finally {
       setSubmitting(false);
     }
@@ -1303,37 +1807,325 @@ export function LeadsWorkspace() {
     }
   };
 
+  const handleSendReminderNudge = async (
+    lead: LeadItemDto,
+    reminderLabel: string,
+    customMessage?: string,
+  ) => {
+    if (!user) return;
+    setSubmitting(true);
+    setErrorMsg(null);
+    try {
+      await apiRequest(`/api/v1/leads/${lead.id}`, {
+        method: 'PATCH',
+        csrfToken: user.csrfToken,
+        body: {
+          action: 'send_reminder_nudge',
+          reminderLabel,
+          message: customMessage || '',
+        },
+      });
+      setFeedbackMsg(
+        `🔔 Đã gửi thông báo nhắc việc "${reminderLabel}" tới chuông thông báo của ${lead.assignedSalesName || 'NVKD phụ trách'} (${lead.leadCode}).`,
+      );
+      await fetchLeads();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Không thể gửi thông báo nhắc việc.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleBatchNudgeSales = async (targetSalesId: number | 'all', salesName: string) => {
+    if (!user) return;
+    const targets = timeFilteredLeads.filter((l) => {
+      const r = classifyReminderCategories(l);
+      if (!r.hasAnyReminder) return false;
+      if (targetSalesId === 'all') return true;
+      return (l.assignedSalesId || 0) === targetSalesId;
+    });
+    if (targets.length === 0) {
+      setFeedbackMsg('Không có hồ sơ nào cần gửi thông báo nhắc việc.');
+      return;
+    }
+    setSubmitting(true);
+    setErrorMsg(null);
+    try {
+      const batch = targets.slice(0, 8);
+      await Promise.all(
+        batch.map((l) => {
+          const r = classifyReminderCategories(l);
+          return apiRequest(`/api/v1/leads/${l.id}`, {
+            method: 'PATCH',
+            csrfToken: user.csrfToken,
+            body: {
+              action: 'send_reminder_nudge',
+              reminderLabel: r.primaryBadgeText || 'Nhắc việc tự động',
+              message: r.primaryActionHint,
+            },
+          });
+        }),
+      );
+      setFeedbackMsg(
+        `🔔 Đã bắn ${batch.length} thông báo nhắc việc tự động tới ${targetSalesId === 'all' ? 'toàn bộ đội ngũ Sales' : salesName}!`,
+      );
+      await fetchLeads();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Lỗi gửi thông báo nhắc việc hàng loạt.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleQuickAckReminder = async (
+    lead: LeadItemDto,
+    ackType: 'quote_responded' | 'followed_up',
+    noteContent: string,
+  ) => {
+    if (!user) return;
+    setSubmitting(true);
+    setErrorMsg(null);
+    try {
+      await apiRequest(`/api/v1/leads/${lead.id}`, {
+        method: 'PATCH',
+        csrfToken: user.csrfToken,
+        body: {
+          action: 'quick_ack_reminder',
+          ackType,
+          noteContent,
+        },
+      });
+      setQuickReminderNotes((prev) => ({ ...prev, [lead.id]: '' }));
+      setFeedbackMsg(
+        ackType === 'quote_responded'
+          ? `✓ Đã xác nhận khách phản hồi báo giá cho hồ sơ ${lead.leadCode} và hoàn tất nhắc việc.`
+          : `✓ Đã ghi nhận kết quả chăm sóc nhắc việc cho hồ sơ ${lead.leadCode}.`,
+      );
+      await fetchLeads();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Không thể ghi nhận xử lý nhắc việc.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleQuickTransitionLead = async (
+    lead: LeadItemDto,
+    toStatus: PipelineStatus,
+    noteText: string,
+  ) => {
+    if (!user) return;
+    setSubmitting(true);
+    setErrorMsg(null);
+    try {
+      await apiRequest(`/api/v1/leads/${lead.id}`, {
+        method: 'PATCH',
+        csrfToken: user.csrfToken,
+        body: {
+          action: 'transition_pipeline',
+          expectedVersion: lead.version,
+          toStatus,
+          reason: null,
+          noteContent: noteText,
+          markQuoteResponded: toStatus === 'won',
+          bypassPriceCheckConfirmed: true,
+        },
+      });
+      setFeedbackMsg(
+        `✓ Đã chuyển nhanh ${lead.leadCode} sang "${PIPELINE_STATUS_LABELS[toStatus]}".`,
+      );
+      await fetchLeads();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Không thể chuyển nhanh tiến độ.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="space-y-3.5">
-      {/* Page Header — Clean Modern White Card */}
-      <div className="rounded-2xl bg-white text-slate-900 p-4 shadow-2xs border border-slate-200/90 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        <div className="space-y-0.5 min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="font-display text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
-              Leads
-            </h1>
-            <span className="px-2.5 py-0.5 rounded-full bg-blue-50 border border-blue-200/80 text-xs font-semibold text-[#1E3A8A]">
-              Theo dõi lộ trình dự án &amp; Chăm sóc khách hàng
-            </span>
-          </div>
-          <p className="text-xs sm:text-sm text-slate-500">
-            Tiếp nhận, mở chi tiết để xem và chỉnh sửa trực tiếp theo phân quyền
-          </p>
-        </div>
+      {/* Control Bar — Căn giữa toàn bộ công cụ trên 1 hàng: Mốc thời gian + Chế độ xem + Nhắc việc tự động + Xuất/Nhập Excel + Tạo Lead mới */}
+      <div className="rounded-2xl bg-white text-slate-900 px-4 py-2.5 shadow-2xs border border-slate-200/90 flex flex-wrap items-center justify-center gap-2.5">
+        {/* Dropdown Mốc thời gian (Bấm vào mới sổ ra bảng chọn nhanh & Từ ngày - Đến ngày) */}
+        <div className="relative">
+            <div className="inline-flex items-center rounded-xl border border-slate-200 bg-slate-50/80 hover:bg-slate-100/80 transition shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setShowDateDropdown((prev) => !prev)}
+                className={`h-9 px-3 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition ${
+                  dateRangePreset !== 'ALL' || customStartDate || customEndDate
+                    ? 'bg-blue-50 text-[#1E3A8A] border-blue-200'
+                    : 'text-slate-700'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5 text-[#1E3A8A]" />
+                <span>
+                  {dateRangePreset === 'ALL' && !customStartDate && !customEndDate && 'Mốc thời gian: Tất cả'}
+                  {dateRangePreset === 'TODAY' && 'Mốc thời gian: Hôm nay'}
+                  {dateRangePreset === '7D' && 'Mốc thời gian: 7 ngày qua'}
+                  {dateRangePreset === '30D' && 'Mốc thời gian: 30 ngày qua'}
+                  {dateRangePreset === 'THIS_MONTH' && 'Mốc thời gian: Tháng này'}
+                  {dateRangePreset === 'CUSTOM' &&
+                    (customStartDate || customEndDate
+                      ? `${customStartDate ? new Date(`${customStartDate}T00:00:00`).toLocaleDateString('vi-VN') : '...'} → ${customEndDate ? new Date(`${customEndDate}T00:00:00`).toLocaleDateString('vi-VN') : '...'}`
+                      : 'Tùy chọn khoảng ngày')}
+                </span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-slate-400 transition-transform ${
+                    showDateDropdown ? 'rotate-180 text-[#1E3A8A]' : ''
+                  }`}
+                />
+              </button>
 
-        {/* Search + Create Lead Controls */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 sm:flex-initial">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Tìm khách hàng, dự án, SĐT, mã Lead..."
-              className="h-9 pl-9 pr-3.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-[#1E3A8A] w-full sm:w-72"
-            />
+              {(dateRangePreset !== 'ALL' || customStartDate || customEndDate) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDateRangePreset('ALL');
+                    setCustomStartDate('');
+                    setCustomEndDate('');
+                    setCurrentPage(1);
+                    setShowDateDropdown(false);
+                  }}
+                  className="h-9 px-2 text-xs font-bold text-rose-500 hover:text-rose-700 border-l border-slate-200/80"
+                  title="Xóa lọc thời gian"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
+            {showDateDropdown && (
+              <>
+                <div
+                  className="fixed inset-0 z-30"
+                  onClick={() => setShowDateDropdown(false)}
+                />
+                <div className="absolute left-0 mt-2 w-80 rounded-2xl bg-white border border-slate-200 shadow-xl p-3.5 z-40 space-y-3 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-[#1E3A8A]" />
+                      <span>Chọn nhanh mốc thời gian</span>
+                    </span>
+                    {(dateRangePreset !== 'ALL' || customStartDate || customEndDate) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDateRangePreset('ALL');
+                          setCustomStartDate('');
+                          setCustomEndDate('');
+                          setCurrentPage(1);
+                          setShowDateDropdown(false);
+                        }}
+                        className="text-[11px] font-semibold text-rose-600 hover:underline"
+                      >
+                        Đặt lại mặc định
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {(
+                      [
+                        { id: 'ALL', label: 'Tất cả thời gian' },
+                        { id: 'TODAY', label: 'Hôm nay' },
+                        { id: '7D', label: '7 ngày qua' },
+                        { id: '30D', label: '30 ngày qua' },
+                        { id: 'THIS_MONTH', label: 'Tháng này' },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => {
+                          setDateRangePreset(opt.id);
+                          setCustomStartDate('');
+                          setCustomEndDate('');
+                          setCurrentPage(1);
+                          setShowDateDropdown(false);
+                        }}
+                        className={`h-8 px-2.5 rounded-xl text-xs font-semibold text-left transition flex items-center justify-between ${
+                          dateRangePreset === opt.id
+                            ? 'bg-[#1E3A8A] text-white shadow-2xs'
+                            : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
+                        } ${opt.id === 'ALL' ? 'col-span-2' : ''}`}
+                      >
+                        <span>{opt.label}</span>
+                        {dateRangePreset === opt.id && <CheckCircle2 className="w-3.5 h-3.5" />}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="pt-2.5 border-t border-slate-100 space-y-2">
+                    <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                      Hoặc tra theo khoảng ngày cụ thể
+                    </span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-medium text-slate-500 mb-1">
+                          Từ ngày
+                        </label>
+                        <input
+                          type="date"
+                          value={customStartDate}
+                          onChange={(e) => {
+                            setCustomStartDate(e.target.value);
+                            setDateRangePreset('CUSTOM');
+                            setCurrentPage(1);
+                          }}
+                          className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-slate-500 mb-1">
+                          Đến ngày
+                        </label>
+                        <input
+                          type="date"
+                          value={customEndDate}
+                          onChange={(e) => {
+                            setCustomEndDate(e.target.value);
+                            setDateRangePreset('CUSTOM');
+                            setCurrentPage(1);
+                          }}
+                          className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowDateDropdown(false)}
+                        className="h-8 px-3 rounded-lg bg-[#1E3A8A] hover:bg-blue-800 text-white text-xs font-semibold transition"
+                      >
+                        Xong
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
+
+          {searchQuery.trim() && (
+            <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl bg-blue-50 border border-blue-200 text-xs font-semibold text-[#1E3A8A]">
+              <Search className="w-3.5 h-3.5" />
+              <span>&ldquo;{searchQuery}&rdquo;</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('');
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('tt-lead-search', { detail: '' }));
+                  }
+                }}
+                className="ml-1 text-slate-400 hover:text-rose-600 font-bold"
+                title="Xóa từ khóa tìm kiếm"
+              >
+                ×
+              </button>
+            </div>
+          )}
 
           {user?.roleCode === 'SALES' && (
             <button
@@ -1355,13 +2147,16 @@ export function LeadsWorkspace() {
             </button>
           )}
 
-          {/* Chuyển đổi Bảng / Kanban */}
+          {/* Chuyển đổi Bảng / Kanban / Nhắc việc tự động */}
           <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
             <button
               type="button"
-              onClick={() => setViewMode('table')}
+              onClick={() => {
+                setViewMode('table');
+                setReminderFilter('none');
+              }}
               className={`h-8 px-2.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                viewMode === 'table'
+                viewMode === 'table' && reminderFilter === 'none'
                   ? 'bg-white text-[#1E3A8A] shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
@@ -1371,7 +2166,10 @@ export function LeadsWorkspace() {
             </button>
             <button
               type="button"
-              onClick={() => setViewMode('kanban')}
+              onClick={() => {
+                setViewMode('kanban');
+                setReminderFilter('none');
+              }}
               className={`h-8 px-2.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
                 viewMode === 'kanban'
                   ? 'bg-white text-[#1E3A8A] shadow-2xs'
@@ -1380,6 +2178,28 @@ export function LeadsWorkspace() {
             >
               <Kanban className="w-3.5 h-3.5" />
               <span>Kanban</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode('table');
+                setSpecialAlertFilter('none');
+                setStatusFilter('all');
+                setReminderFilter((prev) => (prev === 'none' ? 'all_reminders' : 'none'));
+                setCurrentPage(1);
+              }}
+              className={`h-8 px-2.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+                reminderFilter !== 'none'
+                  ? 'bg-white text-rose-700 shadow-2xs ring-1 ring-rose-300'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Các Lead cần xử lý theo quy tắc nhắc việc tự động"
+            >
+              <Bell className="w-3.5 h-3.5 text-rose-600" />
+              <span>Nhắc việc tự động</span>
+              <span className="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[10px] font-bold">
+                {reminderStats.totalLeadsWithReminder}
+              </span>
             </button>
           </div>
 
@@ -1423,22 +2243,30 @@ export function LeadsWorkspace() {
               <span>Tạo Lead mới</span>
             </button>
           )}
-        </div>
       </div>
 
-      {/* Unified 6-Card Interactive Status Strip (Replaces duplicate filter bar & replaces 3B with Thất bại) */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2.5">
+      {/* Unified 7-Card Interactive Status Strip (Includes dedicated Duplicate / Returning / Spam Box) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-2.5">
         <button
           type="button"
           onClick={() => {
+            if (viewMode === 'reminders') setViewMode('table');
             setStatusFilter('all');
+            setSpecialAlertFilter('none');
+            setReminderFilter('none');
             setB2bHorizonFilter('all');
             setOverdueOnly(false);
             setUnreceivedOnly(false);
             setCurrentPage(1);
           }}
           className={`text-left rounded-xl p-3 border transition shadow-2xs ${
-            statusFilter === 'all' && b2bHorizonFilter === 'all' && !overdueOnly && !unreceivedOnly
+            viewMode !== 'reminders' &&
+            statusFilter === 'all' &&
+            specialAlertFilter === 'none' &&
+            reminderFilter === 'none' &&
+            b2bHorizonFilter === 'all' &&
+            !overdueOnly &&
+            !unreceivedOnly
               ? 'bg-blue-50/50 border-blue-300 ring-1 ring-blue-500/20'
               : 'bg-white border-slate-200/90 hover:border-slate-300'
           }`}
@@ -1459,14 +2287,20 @@ export function LeadsWorkspace() {
         <button
           type="button"
           onClick={() => {
+            if (viewMode === 'reminders') setViewMode('table');
             setStatusFilter('new_lead');
+            setSpecialAlertFilter('none');
+            setReminderFilter('none');
             setB2bHorizonFilter('all');
             setOverdueOnly(false);
             setUnreceivedOnly(false);
             setCurrentPage(1);
           }}
           className={`text-left rounded-xl p-3 border transition shadow-2xs ${
-            statusFilter === 'new_lead'
+            viewMode !== 'reminders' &&
+            statusFilter === 'new_lead' &&
+            specialAlertFilter === 'none' &&
+            reminderFilter === 'none'
               ? 'bg-violet-50/50 border-violet-300 ring-1 ring-violet-500/20'
               : 'bg-white border-slate-200/90 hover:border-slate-300'
           }`}
@@ -1487,14 +2321,20 @@ export function LeadsWorkspace() {
         <button
           type="button"
           onClick={() => {
+            if (viewMode === 'reminders') setViewMode('table');
             setStatusFilter('quoting');
+            setSpecialAlertFilter('none');
+            setReminderFilter('none');
             setB2bHorizonFilter('all');
             setOverdueOnly(false);
             setUnreceivedOnly(false);
             setCurrentPage(1);
           }}
           className={`text-left rounded-xl p-3 border transition shadow-2xs ${
-            statusFilter === 'quoting'
+            viewMode !== 'reminders' &&
+            statusFilter === 'quoting' &&
+            specialAlertFilter === 'none' &&
+            reminderFilter === 'none'
               ? 'bg-blue-50/50 border-blue-300 ring-1 ring-blue-500/20'
               : 'bg-white border-slate-200/90 hover:border-slate-300'
           }`}
@@ -1515,14 +2355,20 @@ export function LeadsWorkspace() {
         <button
           type="button"
           onClick={() => {
+            if (viewMode === 'reminders') setViewMode('table');
             setStatusFilter('quote_sent');
+            setSpecialAlertFilter('none');
+            setReminderFilter('none');
             setB2bHorizonFilter('all');
             setOverdueOnly(false);
             setUnreceivedOnly(false);
             setCurrentPage(1);
           }}
           className={`text-left rounded-xl p-3 border transition shadow-2xs ${
-            statusFilter === 'quote_sent'
+            viewMode !== 'reminders' &&
+            statusFilter === 'quote_sent' &&
+            specialAlertFilter === 'none' &&
+            reminderFilter === 'none'
               ? 'bg-amber-50/50 border-amber-300 ring-1 ring-amber-500/20'
               : 'bg-white border-slate-200/90 hover:border-slate-300'
           }`}
@@ -1543,14 +2389,20 @@ export function LeadsWorkspace() {
         <button
           type="button"
           onClick={() => {
+            if (viewMode === 'reminders') setViewMode('table');
             setStatusFilter('won');
+            setSpecialAlertFilter('none');
+            setReminderFilter('none');
             setB2bHorizonFilter('all');
             setOverdueOnly(false);
             setUnreceivedOnly(false);
             setCurrentPage(1);
           }}
           className={`text-left rounded-xl p-3 border transition shadow-2xs ${
-            statusFilter === 'won'
+            viewMode !== 'reminders' &&
+            statusFilter === 'won' &&
+            specialAlertFilter === 'none' &&
+            reminderFilter === 'none'
               ? 'bg-emerald-50/50 border-emerald-300 ring-1 ring-emerald-500/20'
               : 'bg-white border-slate-200/90 hover:border-slate-300'
           }`}
@@ -1571,14 +2423,20 @@ export function LeadsWorkspace() {
         <button
           type="button"
           onClick={() => {
+            if (viewMode === 'reminders') setViewMode('table');
             setStatusFilter('lost');
+            setSpecialAlertFilter('none');
+            setReminderFilter('none');
             setB2bHorizonFilter('all');
             setOverdueOnly(false);
             setUnreceivedOnly(false);
             setCurrentPage(1);
           }}
           className={`text-left rounded-xl p-3 border transition shadow-2xs ${
-            statusFilter === 'lost'
+            viewMode !== 'reminders' &&
+            statusFilter === 'lost' &&
+            specialAlertFilter === 'none' &&
+            reminderFilter === 'none'
               ? 'bg-rose-50/60 border-rose-300 ring-1 ring-rose-500/20'
               : 'bg-white border-slate-200/90 hover:border-slate-300'
           }`}
@@ -1595,7 +2453,328 @@ export function LeadsWorkspace() {
             </span>
           </div>
         </button>
+
+        {/* Ô số 6: Xem Trùng / Quay lại / Spam / Nghi dò giá */}
+        <button
+          type="button"
+          onClick={() => {
+            if (viewMode === 'reminders') setViewMode('table');
+            setStatusFilter('all');
+            setReminderFilter('none');
+            setSpecialAlertFilter(specialAlertFilter === 'none' ? 'all_alerts' : 'none');
+            setB2bHorizonFilter('all');
+            setOverdueOnly(false);
+            setUnreceivedOnly(false);
+            setCurrentPage(1);
+          }}
+          className={`text-left rounded-xl p-3 border transition shadow-2xs ${
+            viewMode !== 'reminders' && specialAlertFilter !== 'none'
+              ? 'bg-amber-50/80 border-amber-400 ring-2 ring-amber-500/25'
+              : 'bg-white border-amber-200/90 hover:border-amber-300'
+          }`}
+        >
+          <span className="text-[11px] font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span>6. Lưu ý</span>
+          </span>
+          <div className="flex items-baseline justify-between gap-1 mt-1">
+            <span className="font-display text-2xl font-bold text-amber-900">
+              {b2bSummaryCounts.alertAllCount}
+            </span>
+            <span className="text-[10px] font-semibold text-amber-800 bg-amber-100/80 border border-amber-300/80 px-1.5 py-0.5 rounded whitespace-nowrap">
+              {b2bSummaryCounts.activeDupCount} trùng · {b2bSummaryCounts.returningTotalCount} quay lại · {b2bSummaryCounts.spamProbeCount} spam
+            </span>
+          </div>
+        </button>
       </div>
+
+      {/* Khối Nhắc Việc Tự Động (4 quy tắc tự động như Ảnh 1: Chưa tiếp nhận, Lead đứng yên > 3 ngày, Báo giá chưa phản hồi 1d/1w/>1m, Đến lịch hẹn) */}
+      {reminderFilter !== 'none' && (
+        <div className="rounded-2xl bg-white border border-rose-200 p-4 space-y-3 shadow-xs animate-in fade-in duration-150">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 grid place-items-center">
+                <Bell className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-display font-bold text-slate-900 text-sm">
+                    Nhắc việc tự động
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[11px] font-bold">
+                    {reminderStats.totalLeadsWithReminder}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Các hồ sơ Lead cần xử lý theo quy tắc tự động (bấm từng thẻ để lọc danh sách bên dưới)
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setReminderFilter('all_reminders');
+                  setCurrentPage(1);
+                }}
+                className={`h-8 px-3 rounded-lg text-xs font-semibold transition ${
+                  reminderFilter === 'all_reminders'
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                Tất cả nhắc việc ({reminderStats.totalLeadsWithReminder})
+              </button>
+              <button
+                type="button"
+                onClick={() => setReminderFilter('none')}
+                className="h-8 px-2.5 rounded-lg text-xs font-semibold text-slate-500 hover:text-slate-900"
+              >
+                Đóng ×
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* 1. Chưa tiếp nhận */}
+            <button
+              type="button"
+              onClick={() => {
+                setReminderFilter(reminderFilter === 'unreceived' ? 'all_reminders' : 'unreceived');
+                setCurrentPage(1);
+              }}
+              className={`text-left p-3.5 rounded-xl border transition flex items-start justify-between gap-2 ${
+                reminderFilter === 'unreceived'
+                  ? 'bg-rose-50 border-rose-400 ring-2 ring-rose-500/20'
+                  : 'bg-rose-50/40 border-rose-200/80 hover:border-rose-300'
+              }`}
+            >
+              <div className="flex items-start gap-2.5 min-w-0">
+                <span className="w-8 h-8 rounded-lg bg-rose-100 text-rose-600 grid place-items-center shrink-0 mt-0.5">
+                  <UserCheck className="w-4 h-4" />
+                </span>
+                <div className="min-w-0">
+                  <span className="font-bold text-slate-900 text-xs sm:text-sm block">
+                    Chưa tiếp nhận
+                  </span>
+                  <span className="text-[11px] text-slate-600 block mt-0.5">
+                    Lead mới quá 2 giờ chưa xác nhận tiếp nhận
+                  </span>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-xs font-bold shrink-0">
+                {reminderStats.unreceived}
+              </span>
+            </button>
+
+            {/* 2. Lead đứng yên */}
+            <button
+              type="button"
+              onClick={() => {
+                setReminderFilter(
+                  reminderFilter === 'stagnant_3d' ? 'all_reminders' : 'stagnant_3d',
+                );
+                setCurrentPage(1);
+              }}
+              className={`text-left p-3.5 rounded-xl border transition flex items-start justify-between gap-2 ${
+                reminderFilter === 'stagnant_3d'
+                  ? 'bg-amber-50 border-amber-400 ring-2 ring-amber-500/20'
+                  : 'bg-amber-50/40 border-amber-200/80 hover:border-amber-300'
+              }`}
+            >
+              <div className="flex items-start gap-2.5 min-w-0">
+                <span className="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 grid place-items-center shrink-0 mt-0.5">
+                  <Clock className="w-4 h-4" />
+                </span>
+                <div className="min-w-0">
+                  <span className="font-bold text-slate-900 text-xs sm:text-sm block">
+                    Lead đứng yên
+                  </span>
+                  <span className="text-[11px] text-slate-600 block mt-0.5">
+                    Không có tiến triển &gt; 3 ngày
+                  </span>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 rounded-full bg-amber-500 text-white text-xs font-bold shrink-0">
+                {reminderStats.stagnant3d}
+              </span>
+            </button>
+
+            {/* 3. Báo giá chưa phản hồi */}
+            <button
+              type="button"
+              onClick={() => {
+                setReminderFilter(
+                  reminderFilter === 'quote_unresponded' ? 'all_reminders' : 'quote_unresponded',
+                );
+                setCurrentPage(1);
+              }}
+              className={`text-left p-3.5 rounded-xl border transition flex items-start justify-between gap-2 ${
+                reminderFilter === 'quote_unresponded'
+                  ? 'bg-blue-50 border-blue-400 ring-2 ring-blue-500/20'
+                  : 'bg-blue-50/40 border-blue-200/80 hover:border-blue-300'
+              }`}
+            >
+              <div className="flex items-start gap-2.5 min-w-0">
+                <span className="w-8 h-8 rounded-lg bg-blue-100 text-[#1E3A8A] grid place-items-center shrink-0 mt-0.5">
+                  <Send className="w-4 h-4" />
+                </span>
+                <div className="min-w-0">
+                  <span className="font-bold text-slate-900 text-xs sm:text-sm block">
+                    Báo giá chưa phản hồi
+                  </span>
+                  <span className="text-[11px] text-slate-600 block mt-0.5">
+                    Đã gửi báo giá: 1 ngày ({reminderStats.quote1d}) · 1 tuần ({reminderStats.quote7d}) · &gt; 1 tháng ({reminderStats.quote30d})
+                  </span>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 rounded-full bg-blue-600 text-white text-xs font-bold shrink-0">
+                {reminderStats.quoteUnresponded}
+              </span>
+            </button>
+
+            {/* 4. Đến lịch hẹn */}
+            <button
+              type="button"
+              onClick={() => {
+                setReminderFilter(
+                  reminderFilter === 'scheduled_due' ? 'all_reminders' : 'scheduled_due',
+                );
+                setCurrentPage(1);
+              }}
+              className={`text-left p-3.5 rounded-xl border transition flex items-start justify-between gap-2 ${
+                reminderFilter === 'scheduled_due'
+                  ? 'bg-violet-50 border-violet-400 ring-2 ring-violet-500/20'
+                  : 'bg-violet-50/40 border-violet-200/80 hover:border-violet-300'
+              }`}
+            >
+              <div className="flex items-start gap-2.5 min-w-0">
+                <span className="w-8 h-8 rounded-lg bg-violet-100 text-violet-700 grid place-items-center shrink-0 mt-0.5">
+                  <Calendar className="w-4 h-4" />
+                </span>
+                <div className="min-w-0">
+                  <span className="font-bold text-slate-900 text-xs sm:text-sm block">
+                    Đến lịch hẹn
+                  </span>
+                  <span className="text-[11px] text-slate-600 block mt-0.5">
+                    Có lịch chăm sóc &amp; theo dõi dự án B2B
+                  </span>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 rounded-full bg-violet-600 text-white text-xs font-bold shrink-0">
+                {reminderStats.scheduledDue}
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Sub-Filter Bar khi chọn ô Trùng / Spam / Quay lại */}
+      {specialAlertFilter !== 'none' && (
+        <div className="rounded-xl bg-amber-50/70 border border-amber-200/90 p-3 flex flex-wrap items-center justify-between gap-2.5 shadow-2xs">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-bold text-amber-900 mr-1 inline-flex items-center gap-1">
+              <ShieldAlert className="w-4 h-4 text-amber-700" />
+              Bộ lọc Trùng &amp; Cảnh báo:
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setSpecialAlertFilter('all_alerts');
+                setCurrentPage(1);
+              }}
+              className={`h-8 px-3 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1.5 ${
+                specialAlertFilter === 'all_alerts'
+                  ? 'bg-slate-900 text-white shadow-2xs'
+                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <span>Tất cả ({b2bSummaryCounts.alertAllCount})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSpecialAlertFilter('active_dup');
+                setCurrentPage(1);
+              }}
+              className={`h-8 px-3 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1.5 ${
+                specialAlertFilter === 'active_dup'
+                  ? 'bg-amber-600 text-white shadow-2xs'
+                  : 'bg-white border border-amber-300 text-amber-900 hover:bg-amber-50'
+              }`}
+            >
+              <span>⚠️ Cảnh báo trùng Lead ({b2bSummaryCounts.activeDupCount})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSpecialAlertFilter('won_returning');
+                setCurrentPage(1);
+              }}
+              className={`h-8 px-3 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1.5 ${
+                specialAlertFilter === 'won_returning'
+                  ? 'bg-emerald-600 text-white shadow-2xs'
+                  : 'bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-50'
+              }`}
+            >
+              <span>💎 Khách cũ quay lại · Đã mua ({b2bSummaryCounts.wonReturningCount})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSpecialAlertFilter('lost_returning');
+                setCurrentPage(1);
+              }}
+              className={`h-8 px-3 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1.5 ${
+                specialAlertFilter === 'lost_returning'
+                  ? 'bg-sky-600 text-white shadow-2xs'
+                  : 'bg-white border border-sky-300 text-sky-800 hover:bg-sky-50'
+              }`}
+            >
+              <span>🔄 Khách quay lại hỏi mua · Chưa chốt ({b2bSummaryCounts.lostReturningCount})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSpecialAlertFilter('spam_probe');
+                setCurrentPage(1);
+              }}
+              className={`h-8 px-3 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1.5 ${
+                specialAlertFilter === 'spam_probe'
+                  ? 'bg-rose-600 text-white shadow-2xs'
+                  : 'bg-white border border-rose-300 text-rose-800 hover:bg-rose-50'
+              }`}
+            >
+              <span>🚫 Spam / Số ảo / Nghi dò giá ({b2bSummaryCounts.spamProbeCount})</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowPriceAlertDirectory(true)}
+              className="h-8 px-3 rounded-lg bg-white hover:bg-orange-50 border border-orange-300 text-orange-800 text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs"
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-orange-600" />
+              <span>
+                Sổ đen Nghi dò giá ({priceCheckAlerts.filter((a) => a.status === 'ACTIVE').length})
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSpecialAlertFilter('none')}
+              className="h-8 px-2.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900"
+            >
+              Đóng lọc ×
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Role Anonymization Notice (Clean business wording) */}
       {leads.some((l) => l.isAnonymized) && (
@@ -1826,6 +3005,7 @@ export function LeadsWorkspace() {
                     paginatedLeads.map((lead) => {
                       const cleanDigits = lead.phone.replace(/\D/g, '');
                       const fraud = evaluateLeadFraudCriteria(lead, leads, priceCheckAlerts);
+                      const reminderInfo = classifyReminderCategories(lead);
                       const primaryProduct = lead.products[0];
                       const extraProducts = lead.products.slice(1);
                       const horizon = getB2bFollowUpHorizon(lead);
@@ -2026,40 +3206,100 @@ export function LeadsWorkspace() {
                                   )}
 
                                   {fraud.duplicateScenario === 'SCENARIO_1_ACTIVE_DUP' && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setInvestigativeLead(lead)}
-                                      className={`px-2 py-0.5 rounded-md border text-[11px] font-bold transition ${
-                                        lead.pipelineStatus === 'new_lead'
-                                          ? 'bg-rose-600 hover:bg-rose-700 border-rose-600 text-white'
-                                          : 'bg-amber-100 hover:bg-amber-200 border-amber-300 text-amber-900'
-                                      }`}
-                                      title="Kịch bản 1 (UC01 1.5): Khách gửi thông tin nhiều kênh khi Lead cũ đang mở"
-                                    >
-                                      CẢNH BÁO TRÙNG LEAD
-                                    </button>
+                                    <div className="flex flex-col items-start gap-0.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => setInvestigativeLead(lead)}
+                                        className={`px-2 py-0.5 rounded-md border text-[11px] font-bold transition ${
+                                          lead.pipelineStatus === 'new_lead'
+                                            ? 'bg-rose-600 hover:bg-rose-700 border-rose-600 text-white'
+                                            : 'bg-amber-100 hover:bg-amber-200 border-amber-300 text-amber-900'
+                                        }`}
+                                        title="Kịch bản 1 (UC01 1.5): Khách gửi thông tin nhiều kênh khi Lead đang mở"
+                                      >
+                                        CẢNH BÁO TRÙNG LEAD
+                                      </button>
+                                      {fraud.matchedCustomerLead ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedLeadId(fraud.matchedCustomerLead!.id);
+                                            setLeadDetailTab('info');
+                                          }}
+                                          className="text-[11px] font-semibold text-rose-700 hover:underline text-left truncate max-w-[180px]"
+                                          title={`Mở ngay hồ sơ gốc đang mở: ${fraud.matchedCustomerLead.leadCode}`}
+                                        >
+                                          🔗 Trùng: {fraud.matchedCustomerLead.leadCode} →
+                                        </button>
+                                      ) : (
+                                        <span className="text-[11px] font-medium text-rose-700 truncate max-w-[195px]">
+                                          ⚠️ Liên hệ lại · Đã gộp 1 SĐT
+                                        </span>
+                                      )}
+                                    </div>
                                   )}
 
                                   {fraud.duplicateScenario === 'SCENARIO_2_WON_RETURNING' && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setInvestigativeLead(lead)}
-                                      className="px-2 py-0.5 rounded-md bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 text-emerald-900 text-[11px] font-bold transition"
-                                      title="Khách hàng từng chốt thành công hợp đồng trước đây nay quay lại mua dự án mới"
-                                    >
-                                      KHÁCH CŨ QUAY LẠI
-                                    </button>
+                                    <div className="flex flex-col items-start gap-0.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => setInvestigativeLead(lead)}
+                                        className="px-2 py-0.5 rounded-md bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 text-emerald-900 text-[11px] font-bold transition"
+                                        title="Khách hàng từng chốt thành công hợp đồng trước đây nay quay lại mua dự án mới"
+                                      >
+                                        KHÁCH CŨ QUAY LẠI
+                                      </button>
+                                      {fraud.matchedCustomerLead ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedLeadId(fraud.matchedCustomerLead!.id);
+                                            setLeadDetailTab('info');
+                                          }}
+                                          className="text-[11px] font-semibold text-emerald-800 hover:underline text-left truncate max-w-[180px]"
+                                          title={`Mở ngay hồ sơ đã chốt thành công trước đây: ${fraud.matchedCustomerLead.leadCode}`}
+                                        >
+                                          🔗 Đã mua: {fraud.matchedCustomerLead.leadCode} →
+                                        </button>
+                                      ) : (
+                                        <span className="text-[11px] font-medium text-emerald-800 truncate max-w-[195px]">
+                                          💎 Đã từng chốt HĐ · Gộp 1 SĐT
+                                        </span>
+                                      )}
+                                    </div>
                                   )}
 
                                   {fraud.duplicateScenario === 'SCENARIO_2_LOST_RETURNING' && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setInvestigativeLead(lead)}
-                                      className="px-2 py-0.5 rounded-md bg-blue-100 hover:bg-blue-200 border border-blue-300 text-[#1E3A8A] text-[11px] font-bold transition"
-                                      title="Khách từng hỏi báo giá nhưng chưa chốt (Thất bại) trước đây nay quay lại"
-                                    >
-                                      KHÁCH QUAY LẠI
-                                    </button>
+                                    <div className="flex flex-col items-start gap-0.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => setInvestigativeLead(lead)}
+                                        className="px-2 py-0.5 rounded-md bg-blue-100 hover:bg-blue-200 border border-blue-300 text-[#1E3A8A] text-[11px] font-bold transition"
+                                        title="Khách từng hỏi báo giá trước đây nhưng chưa chốt, nay quay lại tiếp tục muốn mua"
+                                      >
+                                        KHÁCH QUAY LẠI HỎI MUA
+                                      </button>
+                                      {fraud.matchedCustomerLead ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedLeadId(fraud.matchedCustomerLead!.id);
+                                            setLeadDetailTab('info');
+                                          }}
+                                          className="text-[11px] font-semibold text-[#1E3A8A] hover:underline text-left truncate max-w-[195px]"
+                                          title={`Mở xem ngay hồ sơ khách từng hỏi trước đây: ${fraud.matchedCustomerLead.leadCode}${fraud.matchedCustomerLead.lostReason ? ` (${fraud.matchedCustomerLead.lostReason})` : ''}`}
+                                        >
+                                          🔗 Hồ sơ trước: {fraud.matchedCustomerLead.leadCode} →
+                                        </button>
+                                      ) : (
+                                        <span
+                                          className="text-[11px] font-medium text-[#1E3A8A] truncate max-w-[195px]"
+                                          title={`Lần trước chưa chốt: ${lead.reopenReason || lead.lostReason || 'Hỏi lại dự án'}`}
+                                        >
+                                          🔄 Trước: {lead.reopenReason || lead.lostReason || 'Từng hỏi chưa chốt'}
+                                        </span>
+                                      )}
+                                    </div>
                                   )}
 
                                   {fraud.duplicateScenario === 'SCENARIO_3_MULTI_CONTRACTOR' && (
@@ -2164,7 +3404,7 @@ export function LeadsWorkspace() {
                             </>
                           )}
 
-                          {/* Col 7: Consolidated Row Actions with Direct Edit ("Sửa / Chi tiết") */}
+                          {/* Col 7: Consolidated Row Actions with Direct Edit */}
                           <td
                             className="py-2.5 px-3.5 align-middle text-right whitespace-nowrap"
                             onClick={(e) => e.stopPropagation()}
@@ -2312,8 +3552,6 @@ export function LeadsWorkspace() {
                       const primaryProduct = lead.products[0];
                       const extraCount = Math.max(0, lead.products.length - 1);
                       const fraud = evaluateLeadFraudCriteria(lead, leads, priceCheckAlerts);
-                      const horizon = getB2bFollowUpHorizon(lead);
-                      const editable = canEditLead(lead);
                       const isPriceShoppingReasonOnly =
                         fraud.hasPriceProbeBehavior &&
                         lead.spamStatus === 'PENDING_REVIEW' &&
@@ -2363,7 +3601,7 @@ export function LeadsWorkspace() {
                               </p>
                             </div>
 
-                            {/* Card Region 3: Product + B2B Horizon + Warnings */}
+                            {/* Card Region 3: Product + Warnings */}
                             <div className="flex flex-wrap items-center gap-1 pt-0.5">
                               {primaryProduct && (
                                 <span className="text-xs px-2 py-0.5 rounded-md bg-blue-50 text-[#1E3A8A] border border-blue-200/80 font-semibold truncate max-w-[190px]">
@@ -3415,171 +4653,359 @@ export function LeadsWorkspace() {
 
               {/* Nội dung cuộn */}
               <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3.5 bg-slate-50/40">
+                {/* Hiển thị thông báo lỗi / thành công ngay trong Modal để người dùng thấy tức thì */}
+                {errorMsg && (
+                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-center justify-between gap-2">
+                    <span>{errorMsg}</span>
+                    <button
+                      type="button"
+                      onClick={() => setErrorMsg(null)}
+                      className="text-rose-500 hover:text-rose-800 font-bold"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
+                {feedbackMsg && (
+                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center justify-between gap-2">
+                    <span>{feedbackMsg}</span>
+                    <button
+                      type="button"
+                      onClick={() => setFeedbackMsg(null)}
+                      className="text-emerald-600 hover:text-emerald-900 font-bold"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
+
                 {/* TAB 1: THÔNG TIN CHUNG (GỌN, RÕ RÀNG, KHÔNG RỐI) */}
                 {leadDetailTab === 'info' && (
                   <div className="space-y-3.5 text-sm">
-                    {/* 1. Thanh chuyển nhanh trạng thái trên 1 dòng duy nhất */}
-                    {canEditSelectedLead && (
-                      <div className="px-3.5 py-2.5 rounded-xl bg-white border border-slate-200/90 flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-xs font-semibold text-slate-600">
-                          Trạng thái hồ sơ:
-                        </span>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          {PIPELINE_STATUSES.map((st) => {
-                            const isCurrent = selectedLead.pipelineStatus === st;
-                            return (
-                              <button
-                                key={st}
-                                type="button"
-                                disabled={submitting}
-                                onClick={() => {
-                                  if (st === 'lost' || selectedLead.pipelineStatus === 'lost') {
-                                    setTargetStatus(st);
-                                    setLeadDetailTab('pipeline');
-                                    return;
-                                  }
-                                  setTargetStatus(st);
-                                  void (async () => {
-                                    if (!user) return;
-                                    setSubmitting(true);
-                                    setErrorMsg(null);
-                                    try {
-                                      await apiRequest(`/api/v1/leads/${selectedLead.id}`, {
-                                        method: 'PATCH',
-                                        csrfToken: user.csrfToken,
-                                        body: {
-                                          action: 'transition_pipeline',
-                                          expectedVersion: selectedLead.version,
-                                          toStatus: st,
-                                          reason: null,
-                                          noteContent: `Chuyển nhanh trạng thái sang ${PIPELINE_STATUS_LABELS[st]}`,
-                                          markQuoteResponded: st === 'won',
-                                          bypassPriceCheckConfirmed: true,
-                                        },
-                                      });
-                                      setFeedbackMsg(
-                                        `Đã cập nhật trạng thái ${selectedLead.leadCode} sang "${PIPELINE_STATUS_LABELS[st]}".`,
-                                      );
-                                      await fetchLeads();
-                                    } catch (err) {
-                                      setErrorMsg(
-                                        err instanceof Error
-                                          ? err.message
-                                          : 'Lỗi chuyển trạng thái nhanh.',
-                                      );
-                                    } finally {
-                                      setSubmitting(false);
-                                    }
-                                  })();
-                                }}
-                                className={`px-2.5 py-1 rounded-lg border text-xs transition whitespace-nowrap ${
-                                  isCurrent
-                                    ? `${STATUS_BADGE_STYLES[st]} ring-1 ring-blue-500/30`
-                                    : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200 font-medium'
-                                }`}
-                              >
-                                {PIPELINE_STATUS_LABELS[st]}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
+                    {/* 0. Khung Lịch Sử Khách Liên Hệ Lại — Tách biệt 2 kiểu: (1) Khách đã mua quay lại mua tiếp vs (2) Khách từng thất bại / bỏ trống thời gian nay Inbox hỏi lại */}
+                    {(() => {
+                      const cleanSelPhone = (selectedLead.phone || '').replace(/\D/g, '');
+                      const normSelEmail = (selectedLead.email || '').trim().toLowerCase();
+                      const normSelComp = (selectedLead.companyName || '').trim().toLowerCase();
 
-                    {canEditSelectedLead ? (
-                      <form onSubmit={(e) => void handleUpdateLeadInfo(e)} className="space-y-3.5">
-                        {/* Thanh thao tác nhanh đồng bộ với Tạo Lead: Chuyển Lead & Tích nghi vấn */}
-                        <div className="p-3.5 rounded-xl bg-white border border-slate-200/90 space-y-3">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div className="flex flex-wrap items-center gap-2.5">
-                              {canReassign && (
-                                <label
-                                  className={`h-9 px-3.5 rounded-lg border inline-flex items-center gap-2 cursor-pointer select-none text-xs font-bold transition ${
-                                    editTickReassign
-                                      ? 'bg-[#1E3A8A] text-white border-[#1E3A8A] shadow-2xs'
-                                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-blue-300'
-                                  }`}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={editTickReassign}
-                                    onChange={(e) => setEditTickReassign(e.target.checked)}
-                                    className="w-3.5 h-3.5 accent-white rounded"
-                                  />
-                                  <UserCheck className="w-3.5 h-3.5 shrink-0" />
-                                  <span>Chuyển Lead cho NVKD khác</span>
-                                </label>
-                              )}
+                      const relatedHistoryLeads = leads.filter((other) => {
+                        if (other.id === selectedLead.id || other.spamStatus !== 'NONE') return false;
+                        const otherPhone = (other.phone || '').replace(/\D/g, '');
+                        const phoneHit =
+                          cleanSelPhone.length >= 8 &&
+                          !cleanSelPhone.includes('*') &&
+                          otherPhone === cleanSelPhone;
+                        const emailHit =
+                          normSelEmail.length >= 5 &&
+                          !normSelEmail.includes('*') &&
+                          (other.email || '').trim().toLowerCase() === normSelEmail;
+                        const compHit =
+                          normSelComp.length >= 5 &&
+                          (other.companyName || '').trim().toLowerCase() === normSelComp;
+                        return phoneHit || emailHit || compHit;
+                      });
 
-                              <label
-                                className={`h-9 px-3.5 rounded-lg border inline-flex items-center gap-2 cursor-pointer select-none text-xs font-bold transition ${
-                                  editTickSuspect
-                                    ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
-                                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-amber-300'
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={editTickSuspect}
-                                  onChange={(e) => setEditTickSuspect(e.target.checked)}
-                                  className="w-3.5 h-3.5 accent-white rounded"
-                                />
-                                <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-                                <span>Tích nghi vấn</span>
-                              </label>
+                      const mergeOrReopenActivities = (selectedLead.activities || []).filter(
+                        (a) =>
+                          a.actionType === 'reopen_lead' ||
+                          Boolean(
+                            a.noteContent &&
+                              (a.noteContent.includes('[KHÁCH CŨ QUAY LẠI]') ||
+                                a.noteContent.includes('[KHÁCH QUAY LẠI HỎI MUA]') ||
+                                a.noteContent.includes('[TRÙNG SĐT')),
+                          ),
+                      );
+
+                      if (
+                        relatedHistoryLeads.length === 0 &&
+                        selectedFraud.duplicateScenario === 'NONE' &&
+                        mergeOrReopenActivities.length === 0
+                      ) {
+                        return null;
+                      }
+
+                      const formatStatusTextVi = (raw: string | null | undefined): string => {
+                        if (!raw) return '';
+                        return raw
+                          .replace(/\bnew_lead\b/g, 'Vừa nhận thông tin')
+                          .replace(/\bquoting\b/g, 'Đang soạn báo giá')
+                          .replace(/\bquote_sent\b/g, 'Đã gửi báo giá')
+                          .replace(/\bwon\b/g, 'Chốt thành công')
+                          .replace(/\blost\b/g, 'Thất bại');
+                      };
+
+                      const hasWonBefore =
+                        selectedFraud.duplicateScenario === 'SCENARIO_2_WON_RETURNING' ||
+                        relatedHistoryLeads.some((h) => h.pipelineStatus === 'won') ||
+                        mergeOrReopenActivities.some(
+                          (a) =>
+                            a.fromStatus === 'won' ||
+                            Boolean(a.noteContent && a.noteContent.includes('[KHÁCH CŨ QUAY LẠI]')),
+                        );
+
+                      // KIỂU 1: KHÁCH ĐÃ MUA (CHỐT THÀNH CÔNG) — NAY QUAY LẠI MUA TIẾP
+                      if (hasWonBefore) {
+                        const wonHistoryLeads = relatedHistoryLeads.filter(
+                          (h) => h.pipelineStatus === 'won',
+                        );
+                        return (
+                          <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50/70 to-emerald-50/90 border border-emerald-300 text-emerald-950 space-y-3 shadow-2xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="px-3 py-1 rounded-lg bg-emerald-600 text-white text-xs font-extrabold tracking-wide shadow-2xs inline-flex items-center gap-1.5">
+                                  <span>💎 KHÁCH ĐÃ MUA — QUAY LẠI MUA TIẾP</span>
+                                </span>
+                                <span className="px-2.5 py-0.5 rounded-full bg-white/90 border border-emerald-300 text-emerald-800 text-[11px] font-bold">
+                                  Khách hàng thân thiết · SĐT {selectedLead.phone}
+                                </span>
+                              </div>
+                              <span className="text-[11px] font-semibold text-emerald-800">
+                                Đã từng chốt hợp đồng thành công trước đây
+                              </span>
                             </div>
 
-                            <span className="text-xs text-slate-500">
-                              Ngày liên hệ:{' '}
-                              <strong className="text-slate-700">
-                                {new Date(selectedLead.contactedAt).toLocaleString('vi-VN')}
-                              </strong>
-                            </span>
+                            {/* Khối so sánh: Đơn hàng đã mua trước đây -> Lần liên hệ mua tiếp hiện tại */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                              <div className="p-3 rounded-xl bg-white border border-emerald-200 space-y-1">
+                                <div className="flex items-center justify-between text-[11px]">
+                                  <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold">
+                                    ✅ Lần trước: Đã chốt thành công
+                                  </span>
+                                  <span className="text-slate-500 font-medium">
+                                    {wonHistoryLeads[0]
+                                      ? new Date(wonHistoryLeads[0].contactedAt).toLocaleDateString('vi-VN')
+                                      : 'Hồ sơ đã mua'}
+                                  </span>
+                                </div>
+                                <p className="text-xs font-bold text-slate-900">
+                                  {wonHistoryLeads[0]
+                                    ? `${wonHistoryLeads[0].leadCode} · ${wonHistoryLeads[0].projectName || wonHistoryLeads[0].companyName || selectedLead.companyName || selectedLead.phone}`
+                                    : `${selectedLead.companyName || selectedLead.contactName || selectedLead.phone}`}
+                                </p>
+                                <p className="text-[11px] text-slate-600">
+                                  Sản phẩm đã mua:{' '}
+                                  <strong className="text-emerald-800">
+                                    {(wonHistoryLeads[0]?.products?.length
+                                      ? wonHistoryLeads[0].products
+                                      : selectedLead.products
+                                    )
+                                      .map((p) => p.productName)
+                                      .join(', ') || 'Màn hình LED / Bảng điện tử'}
+                                  </strong>
+                                </p>
+                              </div>
+
+                              <div className="p-3 rounded-xl bg-white border border-teal-200 space-y-1">
+                                <div className="flex items-center justify-between text-[11px]">
+                                  <span className="px-2 py-0.5 rounded bg-teal-600 text-white font-bold">
+                                    🚀 Lần này: Liên hệ mua tiếp dự án mới
+                                  </span>
+                                  <span className="text-slate-500 font-medium">
+                                    {mergeOrReopenActivities[0]
+                                      ? new Date(mergeOrReopenActivities[0].createdAt).toLocaleString('vi-VN')
+                                      : new Date(selectedLead.contactedAt).toLocaleString('vi-VN')}
+                                  </span>
+                                </div>
+                                <p className="text-xs font-semibold text-slate-800">
+                                  {mergeOrReopenActivities[0]?.noteContent
+                                    ? formatStatusTextVi(mergeOrReopenActivities[0].noteContent)
+                                    : `Khách cũ liên hệ đặt mua thêm dự án: ${selectedLead.projectName || 'Dự án mới'}`}
+                                </p>
+                                <p className="text-[11px] text-teal-800 font-semibold">
+                                  Trạng thái hiện tại: {PIPELINE_STATUS_LABELS[selectedLead.pipelineStatus]}
+                                </p>
+                              </div>
+                            </div>
+
+                            {relatedHistoryLeads.length > 0 && (
+                              <div className="space-y-1.5 pt-1">
+                                {relatedHistoryLeads.map((hist) => (
+                                  <div
+                                    key={hist.id}
+                                    className="p-2.5 rounded-xl bg-white/95 border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                                  >
+                                    <div className="text-xs text-slate-700 min-w-0">
+                                      <span className="font-mono font-bold text-emerald-800 mr-2">
+                                        {hist.leadCode}
+                                      </span>
+                                      <strong>{hist.companyName || hist.contactName || hist.phone}</strong>
+                                      {hist.projectName ? ` · Dự án cũ: ${hist.projectName}` : ''}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      {canEditSelectedLead && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (hist.companyName) setEditCompanyName(hist.companyName);
+                                            if (hist.contactName) setEditContactName(hist.contactName);
+                                            if (hist.email) setEditEmail(hist.email);
+                                            if (hist.installationAddress)
+                                              setEditAddress(hist.installationAddress);
+                                            setFeedbackMsg(
+                                              `Đã kế thừa thông tin công ty & địa chỉ từ hồ sơ khách cũ ${hist.leadCode}.`,
+                                            );
+                                          }}
+                                          className="h-7 px-2.5 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-900 text-xs font-bold transition"
+                                        >
+                                          ⚡ Kế thừa thông tin khách cũ
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedLeadId(hist.id);
+                                          setLeadDetailTab('info');
+                                        }}
+                                        className="h-7 px-2.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold transition"
+                                      >
+                                        Xem đơn cũ {hist.leadCode} →
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      // KIỂU 2: KHÁCH TỪNG THẤT BẠI (CHƯA CHỐT) HOẶC BỎ TRỐNG THỜI GIAN — SAU ĐÓ INBOX / LIÊN HỆ HỎI LẠI
+                      const latestReopenAct = mergeOrReopenActivities[0] || null;
+                      const priorHistLead = relatedHistoryLeads[0] || null;
+                      const priorLostReason =
+                        selectedLead.lostReason ||
+                        latestReopenAct?.reason ||
+                        priorHistLead?.lostReason ||
+                        null;
+
+                      return (
+                        <div className="p-4 rounded-2xl bg-amber-50/75 border border-amber-300 text-slate-900 space-y-3 shadow-2xs">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="px-3 py-1 rounded-lg bg-amber-600 text-white text-xs font-extrabold tracking-wide shadow-2xs">
+                                🔄 KHÁCH TỪNG CHƯA CHỐT / GIÁN ĐOẠN — NAY INBOX HỎI LẠI
+                              </span>
+                              <span className="px-2.5 py-0.5 rounded-full bg-white border border-amber-300 text-amber-900 text-[11px] font-bold">
+                                Gộp 1 SĐT duy nhất: {selectedLead.phone}
+                              </span>
+                            </div>
                           </div>
 
-                          {editTickReassign && canReassign && (
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2.5 border-t border-slate-100 animate-in fade-in duration-150">
-                              <select
-                                value={reassignTargetId}
-                                onChange={(e) =>
-                                  setReassignTargetId(e.target.value ? Number(e.target.value) : '')
-                                }
-                                className="h-9 px-3 rounded-lg border border-blue-300 bg-white text-xs font-semibold text-slate-800"
-                              >
-                                <option value="">Chọn NVKD nhận bàn giao</option>
-                                {filteredSalesForReassign.map((s) => (
-                                  <option key={s.id} value={s.id}>
-                                    {s.fullName} — {s.activeLeadCount} Lead
-                                  </option>
-                                ))}
-                              </select>
-                              <select
-                                value={reassignCategory}
-                                onChange={(e) =>
-                                  setReassignCategory(
-                                    e.target.value as (typeof REASSIGN_REASONS)[number],
-                                  )
-                                }
-                                className="h-9 px-3 rounded-lg border border-blue-300 bg-white text-xs font-medium text-slate-800"
-                              >
-                                {REASSIGN_REASONS.map((r) => (
-                                  <option key={r} value={r}>
-                                    Lý do: {r}
-                                  </option>
-                                ))}
-                              </select>
-                              <button
-                                type="button"
-                                disabled={submitting || !reassignTargetId}
-                                onClick={(e) => void handleReassignSales(e)}
-                                className="h-9 px-4 rounded-lg bg-[#1E3A8A] hover:bg-blue-800 text-white text-xs font-bold disabled:opacity-50 transition"
-                              >
-                                Xác nhận chuyển Lead
-                              </button>
+                          {/* Tiến trình 2 bước rõ ràng: [1. Lần trước: Thất bại / Bỏ trống thời gian] ---> [2. Sau đó: Inbox hỏi lại] */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                            {/* Bước 1: Trạng thái Thất bại trước đó hoặc Bỏ trống thông tin thời gian */}
+                            <div className="p-3 rounded-xl bg-white border border-rose-200/90 space-y-1.5">
+                              <div className="flex items-center justify-between gap-2 text-[11px]">
+                                <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-200 font-bold">
+                                  1. Lần trước: {priorLostReason ? 'Thất bại / Chưa chốt' : 'Tạm ngưng / Bỏ trống'}
+                                </span>
+                                <span className="text-slate-400 italic">
+                                  {priorHistLead
+                                    ? `Ngày hỏi cũ: ${new Date(priorHistLead.contactedAt).toLocaleDateString('vi-VN')}`
+                                    : 'Thời gian trước: Bỏ trống / Gián đoạn'}
+                                </span>
+                              </div>
+                              <p className="text-xs font-bold text-rose-800">
+                                {priorLostReason
+                                  ? `Lý do chưa chốt lần trước: ${priorLostReason}`
+                                  : 'Khách từng hỏi thông tin nhưng bỏ trống một thời gian chưa chốt'}
+                              </p>
+                              {priorHistLead && (
+                                <p className="text-[11px] text-slate-600 truncate">
+                                  Hồ sơ cũ: <strong className="font-mono">{priorHistLead.leadCode}</strong>
+                                  {priorHistLead.projectName ? ` · ${priorHistLead.projectName}` : ''}
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Bước 2: Sau đó khách Inbox / Liên hệ hỏi lại */}
+                            <div className="p-3 rounded-xl bg-white border border-blue-200/90 space-y-1.5">
+                              <div className="flex items-center justify-between gap-2 text-[11px]">
+                                <span className="px-2 py-0.5 rounded bg-[#1E3A8A] text-white font-bold">
+                                  2. Sau đó: Khách Inbox / Liên hệ hỏi lại
+                                </span>
+                                <span className="text-slate-600 font-semibold">
+                                  {latestReopenAct
+                                    ? new Date(latestReopenAct.createdAt).toLocaleString('vi-VN')
+                                    : new Date(selectedLead.contactedAt).toLocaleString('vi-VN')}
+                                </span>
+                              </div>
+                              <p className="text-xs font-semibold text-slate-800">
+                                {latestReopenAct?.noteContent
+                                  ? formatStatusTextVi(latestReopenAct.noteContent)
+                                  : 'Khách hàng liên hệ lại tiếp tục hỏi mua dự án trên cùng số điện thoại.'}
+                              </p>
+                              <p className="text-[11px] text-[#1E3A8A] font-bold">
+                                Tiến độ hiện tại: {PIPELINE_STATUS_LABELS[selectedLead.pipelineStatus]}
+                              </p>
+                            </div>
+                          </div>
+
+                          {relatedHistoryLeads.length > 0 && (
+                            <div className="space-y-1.5">
+                              {relatedHistoryLeads.map((hist) => (
+                                <div
+                                  key={hist.id}
+                                  className="p-2.5 rounded-xl bg-white border border-slate-200/90 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                                >
+                                  <div className="text-xs text-slate-700 min-w-0">
+                                    <span className="font-mono font-bold text-[#1E3A8A] mr-2">
+                                      {hist.leadCode}
+                                    </span>
+                                    <span
+                                      className={`px-2 py-0.5 rounded border text-[10px] font-bold mr-2 ${
+                                        STATUS_BADGE_STYLES[hist.pipelineStatus]
+                                      }`}
+                                    >
+                                      {PIPELINE_STATUS_LABELS[hist.pipelineStatus]}
+                                    </span>
+                                    <strong>{hist.companyName || hist.contactName || hist.phone}</strong>
+                                    {hist.projectName ? ` · Dự án: ${hist.projectName}` : ''}
+                                  </div>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    {canEditSelectedLead && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (hist.companyName) setEditCompanyName(hist.companyName);
+                                          if (hist.contactName) setEditContactName(hist.contactName);
+                                          if (hist.projectName) setEditProjectName(hist.projectName);
+                                          if (hist.email) setEditEmail(hist.email);
+                                          if (hist.installationAddress)
+                                            setEditAddress(hist.installationAddress);
+                                          if (hist.products.length > 0) {
+                                            setEditProductIds(hist.products.map((p) => p.id));
+                                          }
+                                          setFeedbackMsg(
+                                            `Đã kế thừa thông tin khách hàng từ hồ sơ cũ ${hist.leadCode}.`,
+                                          );
+                                        }}
+                                        className="h-7 px-2.5 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold transition"
+                                      >
+                                        ⚡ Kế thừa thông tin cũ
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedLeadId(hist.id);
+                                        setLeadDetailTab('info');
+                                      }}
+                                      className="h-7 px-2.5 rounded-lg bg-[#1E3A8A] hover:bg-blue-900 text-white text-xs font-bold transition"
+                                    >
+                                      Xem hồ sơ {hist.leadCode} →
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           )}
                         </div>
+                      );
+                    })()}
 
+                    {canEditSelectedLead ? (
+                      <form onSubmit={(e) => void handleUpdateLeadInfo(e)} className="space-y-3.5">
                         {/* 1. Khối Thông tin Khách hàng & Công trình (Lưới 3 cột gọn gàng) */}
                         <div className="p-4 rounded-xl border border-slate-200/90 bg-white space-y-3">
                           <div className="flex items-center justify-between border-b border-slate-100 pb-2">
@@ -3745,27 +5171,49 @@ export function LeadsWorkspace() {
                           </div>
                         </div>
 
-                        {/* 2. Khối Danh mục sản phẩm & dịch vụ (Đồng bộ 3 cột + Ô tự nhập Dịch vụ khác) */}
-                        <div className="p-4 rounded-xl border border-slate-200/90 bg-white space-y-3.5">
-                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                        {/* 2. Khối Sản phẩm quan tâm (Bấm mục nào sổ mục đó ra bên phải theo đúng chuẩn Ảnh 5) */}
+                        <div className="p-4 rounded-xl border border-slate-200/90 bg-white space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="flex items-center gap-2">
                               <Layers className="w-4 h-4 text-[#1E3A8A]" />
                               <span className="font-bold text-slate-900 text-sm">
-                                2. Danh mục sản phẩm &amp; dịch vụ *
-                              </span>
-                              <span className="px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-[#1E3A8A] text-xs font-bold">
-                                Đã chọn {editProductIds.length + editCustomServiceItems.length}
+                                2. Sản phẩm quan tâm *
                               </span>
                             </div>
+                            <span className="px-2.5 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-[#1E3A8A] text-xs font-bold">
+                              Đã chọn {editProductIds.length + editCustomServiceItems.length} sản phẩm
+                            </span>
+                          </div>
 
-                            {/* Hiển thị nhanh các sản phẩm đang được chọn */}
+                          {/* Thanh tìm kiếm sản phẩm + Các thẻ sản phẩm đã chọn */}
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                            <div className="relative w-full sm:w-80 shrink-0">
+                              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                              <input
+                                type="text"
+                                value={editProductSearch}
+                                onChange={(e) => setEditProductSearch(e.target.value)}
+                                placeholder="Tìm sản phẩm (ví dụ: Màn hình LED, Bảng điện tử...)"
+                                className="w-full h-8 pl-8 pr-7 rounded-lg border border-slate-200 bg-slate-50/70 focus:bg-white text-xs text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
+                              />
+                              {editProductSearch && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEditProductSearch('')}
+                                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 text-xs font-bold"
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </div>
+
                             <div className="flex flex-wrap items-center gap-1.5">
                               {products
                                 .filter((p) => editProductIds.includes(p.id))
                                 .map((sel) => (
                                   <span
                                     key={sel.id}
-                                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-[#1E3A8A] text-white text-xs font-medium"
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-[#1E3A8A] text-xs font-semibold"
                                   >
                                     <span>
                                       {sel.productName
@@ -3781,7 +5229,7 @@ export function LeadsWorkspace() {
                                             prev.filter((id) => id !== sel.id),
                                           )
                                         }
-                                        className="hover:text-rose-200 ml-0.5"
+                                        className="hover:text-rose-600 ml-0.5 font-bold"
                                         title="Bỏ chọn sản phẩm này"
                                       >
                                         ×
@@ -3792,7 +5240,7 @@ export function LeadsWorkspace() {
                               {editCustomServiceItems.map((item) => (
                                 <span
                                   key={item}
-                                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-amber-600 text-white text-xs font-medium"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-300 text-amber-900 text-xs font-semibold"
                                 >
                                   <span>{item}</span>
                                   <button
@@ -3802,7 +5250,7 @@ export function LeadsWorkspace() {
                                         prev.filter((x) => x !== item),
                                       )
                                     }
-                                    className="hover:text-rose-200 ml-0.5"
+                                    className="hover:text-rose-600 ml-0.5 font-bold"
                                     title="Xóa mục này"
                                   >
                                     ×
@@ -3812,173 +5260,160 @@ export function LeadsWorkspace() {
                             </div>
                           </div>
 
-                          {/* Chia 3 nhóm sản phẩm rõ ràng + Ô nhập trực tiếp trong Dịch vụ / Nhu cầu khác */}
-                          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                            {(
-                              [
-                                {
-                                  category: 'MAN_HINH_LED' as const,
-                                  title: 'Màn hình LED Indoor & Outdoor',
-                                  dot: 'bg-blue-600',
-                                  activeCls:
-                                    'bg-blue-50 text-[#1E3A8A] border-blue-300 font-semibold shadow-2xs',
-                                },
-                                {
-                                  category: 'BANG_DIEN_TU' as const,
-                                  title: 'Bảng điện tử & Hiển thị số',
-                                  dot: 'bg-emerald-600',
-                                  activeCls:
-                                    'bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold shadow-2xs',
-                                },
-                                {
-                                  category: 'KHAC' as const,
-                                  title: 'Dịch vụ / Nhu cầu khác',
-                                  dot: 'bg-amber-500',
-                                  activeCls:
-                                    'bg-amber-50 text-amber-900 border-amber-300 font-semibold shadow-2xs',
-                                },
-                              ]
-                            ).map((grp) => {
-                              const grpProducts = products.filter(
-                                (p) => p.category === grp.category,
-                              );
-                              return (
-                                <div
-                                  key={grp.category}
-                                  className="p-3 rounded-xl bg-slate-50/70 border border-slate-200/80 flex flex-col justify-between space-y-2.5"
-                                >
-                                  <div className="space-y-2">
-                                    <div className="flex items-center justify-between">
-                                      <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                                        <span className={`w-2 h-2 rounded-full ${grp.dot}`} />
-                                        <span>{grp.title}</span>
-                                      </span>
-                                      <span className="text-[11px] text-slate-400">
-                                        {grpProducts.length} mục
-                                      </span>
-                                    </div>
+                          {/* Bố cục 2 cột: Cột trái chọn mục -> Cột phải chỉ sổ các sản phẩm thuộc mục đó */}
+                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start pt-1">
+                            <div className="sm:col-span-4 flex flex-col gap-1">
+                              {(
+                                [
+                                  {
+                                    category: 'MAN_HINH_LED' as const,
+                                    title: 'Màn hình LED',
+                                    count: products.filter((p) => p.category === 'MAN_HINH_LED')
+                                      .length,
+                                  },
+                                  {
+                                    category: 'BANG_DIEN_TU' as const,
+                                    title: 'Bảng điện tử & Hiển thị số',
+                                    count: products.filter((p) => p.category === 'BANG_DIEN_TU')
+                                      .length,
+                                  },
+                                  {
+                                    category: 'KHAC' as const,
+                                    title: 'Dịch vụ / Nhu cầu khác',
+                                    count: products.filter((p) => p.category === 'KHAC').length,
+                                  },
+                                ]
+                              ).map((cat) => {
+                                const isActive =
+                                  !editProductSearch.trim() &&
+                                  editActiveProductCategory === cat.category;
+                                return (
+                                  <button
+                                    key={cat.category}
+                                    type="button"
+                                    onClick={() => {
+                                      setEditProductSearch('');
+                                      setEditActiveProductCategory(cat.category);
+                                    }}
+                                    className={`w-full text-left px-3 py-2 rounded-lg text-xs transition flex items-center justify-between ${
+                                      isActive
+                                        ? 'bg-blue-50/90 text-[#1E3A8A] font-bold border-l-4 border-l-[#2563EB]'
+                                        : 'text-slate-700 hover:bg-slate-50 font-medium'
+                                    }`}
+                                  >
+                                    <span>{cat.title}</span>
+                                    <span className="text-[11px] text-slate-400">
+                                      ({cat.count})
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
 
-                                    <div className="flex flex-wrap gap-1.5">
-                                      {grpProducts.map((p) => {
-                                        const checked = editProductIds.includes(p.id);
-                                        const cleanName = p.productName
-                                          .replace(/^Khác\s*\(([^)]+)\)$/i, '$1 khác')
-                                          .replace(/\s*\([^)]*\)/g, '')
-                                          .trim();
-                                        return (
-                                          <button
-                                            key={p.id}
-                                            type="button"
-                                            onClick={() => {
-                                              setEditProductIds((prev) =>
-                                                prev.includes(p.id)
-                                                  ? prev.length > 1
-                                                    ? prev.filter((id) => id !== p.id)
-                                                    : prev
-                                                  : [...prev, p.id],
-                                              );
-                                            }}
-                                            className={`px-2.5 py-1 rounded-lg border text-xs transition text-left ${
-                                              checked
-                                                ? grp.activeCls
-                                                : 'bg-white text-slate-600 border-slate-200/90 hover:border-slate-300 hover:text-slate-900'
-                                            }`}
-                                          >
-                                            {checked ? '✓ ' : '+ '}
-                                            {cleanName}
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-
-                                  {grp.category === 'KHAC' && (
-                                    <div className="pt-2 border-t border-slate-200/80 space-y-2">
-                                      <div className="flex gap-1.5">
+                            <div className="sm:col-span-8 p-3 rounded-xl border border-slate-200/90 bg-slate-50/40 space-y-2.5">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                {products
+                                  .filter((p) => {
+                                    const q = editProductSearch.trim().toLowerCase();
+                                    if (q) {
+                                      return p.productName.toLowerCase().includes(q);
+                                    }
+                                    return p.category === editActiveProductCategory;
+                                  })
+                                  .map((p) => {
+                                    const checked = editProductIds.includes(p.id);
+                                    const cleanName = p.productName
+                                      .replace(/^Khác\s*\(([^)]+)\)$/i, '$1 khác')
+                                      .replace(/\s*\([^)]*\)/g, '')
+                                      .trim();
+                                    return (
+                                      <label
+                                        key={p.id}
+                                        onClick={() => {
+                                          setEditProductIds((prev) =>
+                                            prev.includes(p.id)
+                                              ? prev.length > 1
+                                                ? prev.filter((id) => id !== p.id)
+                                                : prev
+                                              : [...prev, p.id],
+                                          );
+                                        }}
+                                        className={`flex items-center gap-2.5 p-2 rounded-lg border text-xs cursor-pointer select-none transition ${
+                                          checked
+                                            ? 'bg-blue-50/80 border-blue-300 text-[#1E3A8A] font-semibold'
+                                            : 'bg-white border-slate-200/80 text-slate-700 hover:border-slate-300'
+                                        }`}
+                                      >
                                         <input
-                                          type="text"
-                                          value={editCustomServiceDraft}
-                                          onChange={(e) =>
-                                            setEditCustomServiceDraft(e.target.value)
-                                          }
-                                          onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                              e.preventDefault();
-                                              const trimmed = editCustomServiceDraft.trim();
-                                              if (!trimmed) return;
-                                              setEditCustomServiceItems((prev) =>
-                                                prev.includes(trimmed) ? prev : [...prev, trimmed],
-                                              );
-                                              const khacProd = products.find(
-                                                (p) => p.category === 'KHAC',
-                                              );
-                                              if (khacProd) {
-                                                setEditProductIds((prev) =>
-                                                  prev.includes(khacProd.id)
-                                                    ? prev
-                                                    : [...prev, khacProd.id],
-                                                );
-                                              }
-                                              setEditCustomServiceDraft('');
-                                            }
-                                          }}
-                                          placeholder="Nhập dịch vụ / nhu cầu khác..."
-                                          className="flex-1 min-w-0 h-8 px-2.5 rounded-lg border border-amber-300 bg-white text-xs text-slate-800 focus:border-[#1E3A8A] outline-none"
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={() => {}}
+                                          className="w-4 h-4 accent-[#2563EB] rounded pointer-events-none"
                                         />
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            const trimmed = editCustomServiceDraft.trim();
-                                            if (!trimmed) return;
-                                            setEditCustomServiceItems((prev) =>
-                                              prev.includes(trimmed) ? prev : [...prev, trimmed],
-                                            );
-                                            const khacProd = products.find(
-                                              (p) => p.category === 'KHAC',
-                                            );
-                                            if (khacProd) {
-                                              setEditProductIds((prev) =>
-                                                prev.includes(khacProd.id)
-                                                  ? prev
-                                                  : [...prev, khacProd.id],
-                                              );
-                                            }
-                                            setEditCustomServiceDraft('');
-                                          }}
-                                          className="h-8 px-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold inline-flex items-center gap-1 shrink-0 transition"
-                                        >
-                                          <span>+ Thêm</span>
-                                        </button>
-                                      </div>
+                                        <span className="truncate">{cleanName}</span>
+                                      </label>
+                                    );
+                                  })}
+                              </div>
 
-                                      {editCustomServiceItems.length > 0 && (
-                                        <div className="flex flex-wrap gap-1">
-                                          {editCustomServiceItems.map((item) => (
-                                            <span
-                                              key={item}
-                                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-xs font-semibold"
-                                            >
-                                              <span>✓ {item}</span>
-                                              <button
-                                                type="button"
-                                                onClick={() =>
-                                                  setEditCustomServiceItems((prev) =>
-                                                    prev.filter((x) => x !== item),
-                                                  )
-                                                }
-                                                className="text-amber-700 hover:text-red-600 ml-0.5"
-                                              >
-                                                ×
-                                              </button>
-                                            </span>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
+                              {(editActiveProductCategory === 'KHAC' ||
+                                editProductSearch.trim() !== '') && (
+                                <div className="pt-2 border-t border-slate-200/80 flex gap-1.5">
+                                  <input
+                                    type="text"
+                                    value={editCustomServiceDraft}
+                                    onChange={(e) => setEditCustomServiceDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        const trimmed = editCustomServiceDraft.trim();
+                                        if (!trimmed) return;
+                                        setEditCustomServiceItems((prev) =>
+                                          prev.includes(trimmed) ? prev : [...prev, trimmed],
+                                        );
+                                        const khacProd = products.find(
+                                          (p) => p.category === 'KHAC',
+                                        );
+                                        if (khacProd) {
+                                          setEditProductIds((prev) =>
+                                            prev.includes(khacProd.id)
+                                              ? prev
+                                              : [...prev, khacProd.id],
+                                          );
+                                        }
+                                        setEditCustomServiceDraft('');
+                                      }
+                                    }}
+                                    placeholder="Nhập thêm dịch vụ / nhu cầu khác..."
+                                    className="flex-1 min-w-0 h-8 px-2.5 rounded-lg border border-amber-300 bg-white text-xs text-slate-800 focus:border-[#1E3A8A] outline-none"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const trimmed = editCustomServiceDraft.trim();
+                                      if (!trimmed) return;
+                                      setEditCustomServiceItems((prev) =>
+                                        prev.includes(trimmed) ? prev : [...prev, trimmed],
+                                      );
+                                      const khacProd = products.find(
+                                        (p) => p.category === 'KHAC',
+                                      );
+                                      if (khacProd) {
+                                        setEditProductIds((prev) =>
+                                          prev.includes(khacProd.id)
+                                            ? prev
+                                            : [...prev, khacProd.id],
+                                        );
+                                      }
+                                      setEditCustomServiceDraft('');
+                                    }}
+                                    className="h-8 px-3 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold inline-flex items-center gap-1 shrink-0 transition"
+                                  >
+                                    <span>+ Thêm</span>
+                                  </button>
                                 </div>
-                              );
-                            })}
+                              )}
+                            </div>
                           </div>
 
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
@@ -4167,375 +5602,745 @@ export function LeadsWorkspace() {
                   </div>
                 )}
 
-              {/* TAB 2: TIẾN ĐỘ PIPELINE & BÀN GIAO */}
+              {/* TAB 2: TIẾN ĐỘ PIPELINE & PHỐI HỢP (Theo đúng chuẩn Ảnh 2) */}
               {leadDetailTab === 'pipeline' && (
-                <div className="space-y-5 text-sm">
-                  {/* Current Assignee Card */}
-                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 flex items-center justify-between">
-                    <div>
-                      <span className="text-slate-500 text-xs block">Nhân viên kinh doanh phụ trách hiện tại:</span>
-                      <span className="text-base font-bold text-slate-900">
-                        {selectedLead.assignedSalesName || 'Chưa phân công'}
-                      </span>
-                    </div>
-                    {!selectedLead.receivedConfirmedAt && canEditSelectedLead && (
-                      <button
-                        type="button"
-                        disabled={submitting}
-                        onClick={() => void handleConfirmReceive(selectedLead)}
-                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold inline-flex items-center gap-1.5 shadow-sm"
-                      >
+                <div className="space-y-4 text-xs sm:text-sm">
+                  {/* Thanh thông tin tóm tắt 4 cột trên cùng */}
+                  <div className="p-3.5 rounded-2xl border border-slate-200 bg-white grid grid-cols-2 lg:grid-cols-4 gap-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-100 shadow-2xs">
+                    <div className="flex items-center gap-2.5 pr-2">
+                      <span className="w-9 h-9 rounded-full bg-blue-50 border border-blue-100 text-[#1E3A8A] grid place-items-center shrink-0">
                         <UserCheck className="w-4 h-4" />
-                        <span>Xác nhận tiếp nhận Lead</span>
-                      </button>
-                    )}
+                      </span>
+                      <div className="min-w-0">
+                        <span className="text-[11px] text-slate-500 block">
+                          Nhân viên kinh doanh phụ trách
+                        </span>
+                        <strong className="text-slate-900 font-bold text-xs sm:text-sm truncate block">
+                          {selectedLead.assignedSalesName || 'Chưa phân công'}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 sm:pl-3 pt-2 sm:pt-0">
+                      <span className="w-9 h-9 rounded-full bg-violet-50 border border-violet-100 text-violet-700 grid place-items-center shrink-0">
+                        <Layers className="w-4 h-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <span className="text-[11px] text-slate-500 block mb-0.5">
+                          Trạng thái Lead
+                        </span>
+                        <span
+                          className={`inline-block px-2.5 py-0.5 rounded-full border text-xs ${
+                            STATUS_BADGE_STYLES[selectedLead.pipelineStatus]
+                          }`}
+                        >
+                          {PIPELINE_STATUS_LABELS[selectedLead.pipelineStatus]}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 lg:pl-3 pt-2 lg:pt-0">
+                      <span className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 text-slate-700 grid place-items-center shrink-0">
+                        <Calendar className="w-4 h-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <span className="text-[11px] text-slate-500 block">Ngày nhận</span>
+                        <strong className="text-slate-900 font-bold text-xs sm:text-sm block">
+                          {new Date(selectedLead.contactedAt).toLocaleDateString('vi-VN', {
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                          })}{' '}
+                          {new Date(selectedLead.contactedAt).toLocaleTimeString('vi-VN', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 sm:pl-3 pt-2 lg:pt-0">
+                      <span className="w-9 h-9 rounded-full bg-amber-50 border border-amber-200 text-amber-600 grid place-items-center shrink-0">
+                        <Star className="w-4 h-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <span className="text-[11px] text-slate-500 block mb-0.5">
+                          Mức độ ưu tiên
+                        </span>
+                        <span
+                          className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                            selectedLead.projectName ||
+                            selectedLead.companyName ||
+                            selectedFraud.duplicateScenario === 'SCENARIO_2_WON_RETURNING'
+                              ? 'bg-rose-50 border border-rose-200 text-rose-700'
+                              : 'bg-blue-50 border border-blue-200 text-[#1E3A8A]'
+                          }`}
+                        >
+                          {selectedLead.projectName ||
+                          selectedLead.companyName ||
+                          selectedFraud.duplicateScenario === 'SCENARIO_2_WON_RETURNING'
+                            ? 'Cao'
+                            : 'Tiêu chuẩn'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* 1. Chuyển trạng thái Pipeline 5 bước */}
-                  {canEditSelectedLead && (
-                    <form
-                      onSubmit={(e) => void handleTransitionPipeline(e)}
-                      className="p-5 rounded-2xl bg-blue-50/50 border border-blue-200/80 space-y-4"
-                    >
-                      <p className="font-bold text-slate-900 flex items-center gap-2 text-base">
-                        <CheckCircle2 className="w-4 h-4 text-[#1E3A8A]" />
-                        <span>Cập nhật Tiến độ Pipeline (Phiên bản dữ liệu v{selectedLead.version})</span>
-                      </p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block font-semibold text-slate-700 mb-1">
-                            Trạng thái đích
-                          </label>
-                          <select
-                            value={targetStatus}
-                            onChange={(e) => setTargetStatus(e.target.value as PipelineStatus)}
-                            className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white font-medium"
+                  {/* Lưới 2x2: Tiến độ Pipeline | Chuyển giao NVKD | Kiểm soát rủi ro | Ghi chú phối hợp */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+                    {/* CỘT TRÁI (7/12): Tiến độ Pipeline + Kiểm soát rủi ro */}
+                    <div className="lg:col-span-7 space-y-4">
+                      {/* 1. Tiến độ Pipeline với thanh 5 bước trực quan (Bỏ ô lý do khi chưa chọn Thất bại) */}
+                      <form
+                        onSubmit={(e) => void handleTransitionPipeline(e)}
+                        className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 space-y-4 shadow-2xs"
+                      >
+                        <div className="flex items-center justify-between">
+                          <p className="font-bold text-slate-900 flex items-center gap-2 text-sm sm:text-base">
+                            <RefreshCw className="w-4 h-4 text-[#1E3A8A]" />
+                            <span>Tiến độ Pipeline</span>
+                          </p>
+                          <span className="text-[11px] text-slate-400">
+                            Phiên bản v{selectedLead.version}
+                          </span>
+                        </div>
+
+                        {/* Sơ đồ 5 bước ngang có thể bấm chọn trực tiếp */}
+                        <div className="relative pt-2 pb-1 px-2">
+                          <div className="absolute left-8 right-8 top-6 h-0.5 bg-slate-200" />
+                          <div className="relative grid grid-cols-5 gap-1">
+                            {PIPELINE_STATUSES.map((st, idx) => {
+                              const isSelected = targetStatus === st;
+                              const isCurrent = selectedLead.pipelineStatus === st;
+                              const isWon = st === 'won';
+                              const isLost = st === 'lost';
+                              return (
+                                <button
+                                  key={st}
+                                  type="button"
+                                  disabled={!canEditSelectedLead || submitting}
+                                  onClick={() => setTargetStatus(st)}
+                                  className="group flex flex-col items-center text-center focus:outline-none disabled:cursor-not-allowed"
+                                >
+                                  <span
+                                    className={`w-8 h-8 rounded-full grid place-items-center text-xs font-bold border-2 transition shadow-2xs ${
+                                      isSelected
+                                        ? isLost
+                                          ? 'bg-rose-600 border-rose-600 text-white ring-4 ring-rose-100'
+                                          : isWon
+                                            ? 'bg-emerald-600 border-emerald-600 text-white ring-4 ring-emerald-100'
+                                            : 'bg-[#2563EB] border-[#2563EB] text-white ring-4 ring-blue-100'
+                                        : isCurrent
+                                          ? 'bg-blue-50 border-[#2563EB] text-[#1E3A8A]'
+                                          : isWon
+                                            ? 'bg-white border-emerald-400 text-emerald-600 group-hover:bg-emerald-50'
+                                            : isLost
+                                              ? 'bg-white border-rose-400 text-rose-600 group-hover:bg-rose-50'
+                                              : 'bg-white border-slate-300 text-slate-500 group-hover:border-blue-400'
+                                    }`}
+                                  >
+                                    {isWon ? '✓' : isLost ? '✕' : isSelected ? '●' : idx + 1}
+                                  </span>
+                                  <span
+                                    className={`mt-2 text-[11px] leading-tight px-1 ${
+                                      isSelected
+                                        ? 'font-bold text-[#1E3A8A]'
+                                        : isCurrent
+                                          ? 'font-semibold text-slate-800'
+                                          : 'font-medium text-slate-500'
+                                    }`}
+                                  >
+                                    {PIPELINE_STATUS_LABELS[st]}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {targetStatus === 'quote_sent' && canEditSelectedLead && (
+                          <div className="space-y-2">
+                            <label className="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={markQuoteResponded}
+                                onChange={(e) => setMarkQuoteResponded(e.target.checked)}
+                              />
+                              <span>
+                                Đánh dấu khách hàng đã phản hồi báo giá (Tắt nhắc việc quá hạn)
+                              </span>
+                            </label>
+
+                            {selectedLead.isPriceCheckSuspect && (
+                              <div className="p-3 rounded-xl bg-orange-50 border border-orange-300 text-orange-950 space-y-1">
+                                <p className="font-bold text-xs flex items-center gap-1.5">
+                                  <ShieldAlert className="w-4 h-4 text-orange-600 shrink-0" />
+                                  <span>
+                                    Chốt chặn Bảo mật Giá: Hồ sơ đang có cảnh báo Nghi khảo giá / dò giá
+                                  </span>
+                                </p>
+                                <label className="inline-flex items-start gap-2 cursor-pointer text-[11px] font-semibold">
+                                  <input
+                                    type="checkbox"
+                                    checked={bypassPriceCheckConfirmed}
+                                    onChange={(e) =>
+                                      setBypassPriceCheckConfirmed(e.target.checked)
+                                    }
+                                    className="mt-0.5"
+                                  />
+                                  <span>
+                                    Tôi xác nhận đã thẩm tra địa chỉ công trình thực tế hoặc đã được Quản lý duyệt gửi báo giá.
+                                  </span>
+                                </label>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Khi chọn Thất bại (hoặc mở lại từ Thất bại): Chỉ hiện duy nhất 1 ô nhập lý do + nút Cập nhật Pipeline */}
+                        {targetStatus === 'lost' || selectedLead.pipelineStatus === 'lost' ? (
+                          <div className="p-3 rounded-xl bg-rose-50/60 border border-rose-200/80 space-y-2 animate-in fade-in duration-150">
+                            <label className="block text-xs font-bold text-rose-900">
+                              {targetStatus === 'lost'
+                                ? 'Lý do thất bại *'
+                                : 'Lý do mở lại hồ sơ Lead *'}
+                            </label>
+                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+                              <input
+                                type="text"
+                                required
+                                disabled={!canEditSelectedLead}
+                                value={statusReason}
+                                onChange={(e) => setStatusReason(e.target.value)}
+                                placeholder={
+                                  targetStatus === 'lost'
+                                    ? 'Nhập lý do thất bại...'
+                                    : 'Nhập lý do mở lại hồ sơ Lead...'
+                                }
+                                className="flex-1 h-9 px-3 rounded-xl border border-rose-300 bg-white text-xs text-slate-800 focus:outline-none focus:border-rose-600"
+                              />
+                              {canEditSelectedLead && (
+                                <button
+                                  type="submit"
+                                  disabled={submitting}
+                                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold inline-flex items-center justify-center gap-1.5 shrink-0 shadow-2xs transition"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                  <span>Cập nhật Pipeline</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-1">
+                            <div className="relative flex-1">
+                              <Pencil className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                              <input
+                                type="text"
+                                disabled={!canEditSelectedLead}
+                                value={statusNote}
+                                onChange={(e) => setStatusNote(e.target.value)}
+                                placeholder="Ghi chú tiến độ, nội dung trao đổi..."
+                                className="w-full h-9 pl-8 pr-3 rounded-xl border border-slate-200 bg-slate-50/70 focus:bg-white text-xs text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
+                              />
+                            </div>
+                            {canEditSelectedLead && (
+                              <button
+                                type="submit"
+                                disabled={submitting}
+                                className="h-9 px-4 rounded-xl bg-[#2563EB] hover:bg-[#1E3A8A] text-white text-xs font-bold inline-flex items-center justify-center gap-1.5 shrink-0 shadow-2xs transition"
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                                <span>Cập nhật Pipeline</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </form>
+
+                      {/* 3. Kiểm soát rủi ro (Cảnh báo nghi dò giá + Đánh dấu Spam) */}
+                      {canEditSelectedLead && (
+                        <div className="p-4 sm:p-5 rounded-2xl bg-orange-50/60 border border-orange-200/90 space-y-3.5 shadow-2xs">
+                          <p className="font-bold text-orange-950 flex items-center gap-2 text-sm sm:text-base">
+                            <ShieldAlert className="w-4 h-4 text-orange-600" />
+                            <span>Kiểm soát rủi ro</span>
+                          </p>
+
+                          {/* Cảnh báo nghi dò giá */}
+                          <form
+                            onSubmit={(e) => void handleCreatePriceAlert(e)}
+                            className="space-y-1.5"
                           >
-                            {PIPELINE_STATUSES.map((st) => (
-                              <option key={st} value={st}>
-                                {PIPELINE_STATUS_LABELS[st]}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block font-semibold text-slate-700 mb-1">
-                            Lý do (Bắt buộc khi Thất bại hoặc Mở lại Lead)
-                          </label>
-                          <input
-                            type="text"
-                            list="lost-reasons-list"
-                            value={statusReason}
-                            onChange={(e) => setStatusReason(e.target.value)}
-                            placeholder="Chọn hoặc nhập lý do..."
-                            className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white"
-                          />
-                          <datalist id="lost-reasons-list">
-                            {LOST_REASONS.map((r) => (
-                              <option key={r} value={r} />
-                            ))}
-                          </datalist>
-                        </div>
-                      </div>
+                            <label className="text-xs font-bold text-orange-900 flex items-center gap-1.5">
+                              <AlertTriangle className="w-3.5 h-3.5 text-orange-600" />
+                              <span>Cảnh báo nghi dò giá</span>
+                            </label>
+                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                              <input
+                                type="text"
+                                required
+                                value={priceCheckReason}
+                                onChange={(e) => setPriceCheckReason(e.target.value)}
+                                placeholder="Căn cứ xác định đối thủ khảo giá..."
+                                className="flex-1 h-9 px-3 rounded-xl border border-orange-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-orange-500"
+                              />
+                              <button
+                                type="submit"
+                                disabled={submitting}
+                                className="h-9 px-4 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold shrink-0 shadow-2xs transition"
+                              >
+                                Phát cảnh báo
+                              </button>
+                            </div>
+                          </form>
 
-                      {targetStatus === 'quote_sent' && (
-                        <div className="space-y-2">
-                          <label className="inline-flex items-center gap-2 text-slate-700 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={markQuoteResponded}
-                              onChange={(e) => setMarkQuoteResponded(e.target.checked)}
-                            />
-                            <span>Đánh dấu khách hàng đã phản hồi báo giá (Tắt cảnh báo quá 7 ngày)</span>
-                          </label>
+                          {/* Đánh dấu Spam */}
+                          <form
+                            onSubmit={(e) => void handleMarkSpam(e)}
+                            className="space-y-1.5 pt-2 border-t border-orange-200/60"
+                          >
+                            <label className="text-xs font-bold text-orange-900 flex items-center gap-1.5">
+                              <Ban className="w-3.5 h-3.5 text-orange-600" />
+                              <span>Đánh dấu Spam</span>
+                            </label>
+                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                              <select
+                                value={spamReason}
+                                onChange={(e) =>
+                                  setSpamReason(e.target.value as (typeof SPAM_REASONS)[number])
+                                }
+                                className="flex-1 h-9 px-3 rounded-xl border border-orange-200 bg-white text-xs font-medium text-slate-800 focus:outline-none focus:border-orange-500"
+                              >
+                                {SPAM_REASONS.map((r) => (
+                                  <option key={r} value={r}>
+                                    {r}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="submit"
+                                disabled={submitting}
+                                className="h-9 px-4 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold shrink-0 shadow-2xs transition"
+                              >
+                                Gắn cờ Spam
+                              </button>
+                            </div>
+                            <p className="text-[11px] text-slate-500 leading-relaxed">
+                              SĐT sai / Nhầm máy tự loại khỏi báo cáo Ads; Đối thủ khảo giá vào diện chờ xác nhận.
+                            </p>
+                          </form>
 
-                          {selectedLead.isPriceCheckSuspect && (
-                            <div className="p-3.5 rounded-xl bg-orange-50 border border-orange-300 text-orange-950 space-y-1.5">
-                              <p className="font-bold text-sm flex items-center gap-1.5">
-                                <ShieldAlert className="w-4 h-4 text-orange-600 shrink-0" />
-                                <span>
-                                  Chốt chặn Bảo mật Giá: Hồ sơ đang có cảnh báo Nghi khảo giá / dò giá
+                          {/* Duyệt Spam dành cho Quản lý / Admin nếu Lead đang có cờ Spam */}
+                          {selectedLead.spamStatus !== 'NONE' && canReassign && (
+                            <div className="p-3 rounded-xl bg-white border border-orange-300 flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-xs text-amber-950">
+                                <span className="font-bold block">
+                                  Đang gắn cờ Spam: {selectedLead.spamReason || 'Chưa rõ lý do'}
                                 </span>
-                              </p>
-                              <label className="inline-flex items-start gap-2 cursor-pointer text-xs font-semibold">
-                                <input
-                                  type="checkbox"
-                                  checked={bypassPriceCheckConfirmed}
-                                  onChange={(e) => setBypassPriceCheckConfirmed(e.target.checked)}
-                                  className="mt-0.5"
-                                />
-                                <span>
-                                  Tôi xác nhận đã thẩm tra địa chỉ khảo sát công trình thực tế hoặc đã được Trưởng phòng Kinh doanh phê duyệt gửi báo giá cho hồ sơ này.
+                                <span className="text-[11px] text-slate-500">
+                                  Quản lý duyệt loại khỏi báo cáo Ads hoặc khôi phục Lead
                                 </span>
-                              </label>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  disabled={submitting}
+                                  onClick={() => void handleReviewSpam('confirm_spam')}
+                                  className="h-8 px-3 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold"
+                                >
+                                  Duyệt loại khỏi Ads
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={submitting}
+                                  onClick={() => void handleReviewSpam('restore_lead')}
+                                  className="h-8 px-3 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold"
+                                >
+                                  Khôi phục Lead
+                                </button>
+                              </div>
                             </div>
                           )}
                         </div>
                       )}
-
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="text"
-                          value={statusNote}
-                          onChange={(e) => setStatusNote(e.target.value)}
-                          placeholder="Ghi chú tiến độ báo giá / phương án kỹ thuật..."
-                          className="flex-1 h-10 px-3.5 rounded-xl border border-slate-200 bg-white"
-                        />
-                        <button
-                          type="submit"
-                          disabled={submitting}
-                          className="h-10 px-5 rounded-xl bg-[#1E3A8A] hover:bg-[#1E40AF] text-white font-semibold shrink-0 shadow-sm"
-                        >
-                          Cập nhật Pipeline
-                        </button>
-                      </div>
-                    </form>
-                  )}
-
-                  {/* 2. Chuyển giao Kinh doanh */}
-                  {canReassign && (
-                    <form
-                      onSubmit={(e) => void handleReassignSales(e)}
-                      className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-4"
-                    >
-                      <p className="font-bold text-slate-900 flex items-center gap-2 text-base">
-                        <ArrowRightLeft className="w-4 h-4 text-[#1E3A8A]" />
-                        <span>Chuyển giao Nhân viên Kinh doanh</span>
-                      </p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block font-semibold text-slate-700 mb-1">Lý do chuyển *</label>
-                          <select
-                            value={reassignCategory}
-                            onChange={(e) =>
-                              setReassignCategory(e.target.value as (typeof REASSIGN_REASONS)[number])
-                            }
-                            className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white font-medium"
-                          >
-                            {REASSIGN_REASONS.map((r) => (
-                              <option key={r} value={r}>
-                                {r}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block font-semibold text-slate-700 mb-1">
-                            NVKD đủ điều kiện nhận *
-                          </label>
-                          <select
-                            required
-                            value={reassignTargetId}
-                            onChange={(e) =>
-                              setReassignTargetId(e.target.value ? Number(e.target.value) : '')
-                            }
-                            className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white font-medium"
-                          >
-                            <option value="">-- Chọn NVKD --</option>
-                            {filteredSalesForReassign.map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.fullName} ({s.activeLeadCount} Lead · Đang làm việc)
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="text"
-                          value={reassignDetail}
-                          onChange={(e) => setReassignDetail(e.target.value)}
-                          placeholder="Chi tiết bàn giao..."
-                          className="flex-1 h-10 px-3.5 rounded-xl border border-slate-200 bg-white"
-                        />
-                        <button
-                          type="submit"
-                          disabled={submitting}
-                          className="h-10 px-5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-semibold shrink-0 shadow-sm"
-                        >
-                          Chuyển giao
-                        </button>
-                      </div>
-                    </form>
-                  )}
-
-                  {/* 3. Nút Tích nghi vấn 1 chạm (Hệ thống tự phát hiện trùng / dò giá) */}
-                  {canEditSelectedLead && (
-                    <div className="p-4 rounded-xl bg-amber-50/70 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="space-y-0.5">
-                        <p className="font-bold text-amber-950 text-sm flex items-center gap-1.5">
-                          <ShieldAlert className="w-4 h-4 text-amber-600" />
-                          <span>Đánh dấu nghi vấn</span>
-                        </p>
-                        <p className="text-xs text-amber-800">
-                          Hệ thống tự động phát hiện trùng SĐT, dò giá, Spam. Bấm nút bên cạnh nếu muốn chủ động gắn hoặc gỡ cờ nghi vấn.
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={submitting}
-                        onClick={() => {
-                          void (async () => {
-                            if (!user) return;
-                            const nextSuspect = !selectedLead.isPriceCheckSuspect;
-                            setSubmitting(true);
-                            try {
-                              await apiRequest(`/api/v1/leads/${selectedLead.id}`, {
-                                method: 'PATCH',
-                                csrfToken: user.csrfToken,
-                                body: {
-                                  action: 'update_info',
-                                  expectedVersion: selectedLead.version,
-                                  phone: selectedLead.phone,
-                                  note: nextSuspect
-                                    ? '[NGHI VẤN: Đánh dấu nghi vấn kiểm tra]'
-                                    : '[BỎ NGHI VẤN]',
-                                },
-                              });
-                              setEditTickSuspect(nextSuspect);
-                              setFeedbackMsg(
-                                nextSuspect
-                                  ? `Đã tích nghi vấn cho hồ sơ ${selectedLead.leadCode}.`
-                                  : `Đã gỡ cờ nghi vấn cho hồ sơ ${selectedLead.leadCode}.`,
-                              );
-                              await fetchLeads();
-                            } catch (err) {
-                              setErrorMsg(
-                                err instanceof Error ? err.message : 'Lỗi cập nhật cờ nghi vấn.',
-                              );
-                            } finally {
-                              setSubmitting(false);
-                            }
-                          })();
-                        }}
-                        className={`h-9 px-4 rounded-lg text-xs font-bold shrink-0 inline-flex items-center gap-1.5 transition ${
-                          selectedLead.isPriceCheckSuspect
-                            ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-2xs'
-                            : 'bg-white hover:bg-amber-100 text-amber-900 border border-amber-300'
-                        }`}
-                      >
-                        <ShieldAlert className="w-3.5 h-3.5" />
-                        <span>
-                          {selectedLead.isPriceCheckSuspect ? 'Đã tích nghi vấn (Bấm để gỡ)' : 'Tích nghi vấn'}
-                        </span>
-                      </button>
                     </div>
-                  )}
 
-                  {/* 4. Duyệt Spam chờ xác nhận (Mục 3.2 - Quản lý/Admin) */}
-                  {selectedLead.spamStatus !== 'NONE' && canReassign && (
-                    <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="text-xs text-amber-900">
-                        <p className="font-bold">Hồ sơ đang gắn cờ Spam ({selectedLead.spamReason || 'Chưa rõ lý do'})</p>
-                        <p className="text-[11px] text-amber-700 mt-0.5">
-                          Quản lý có thể xác nhận loại trừ khỏi báo cáo Ads hoặc khôi phục lại Lead hợp lệ.
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          type="button"
-                          disabled={submitting}
-                          onClick={() => void handleReviewSpam('confirm_spam')}
-                          className="h-9 px-3.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold"
+                    {/* CỘT PHẢI (5/12): Chuyển giao Nhân viên kinh doanh */}
+                    <div className="lg:col-span-5 space-y-4">
+                      {/* 2. Chuyển giao Nhân viên kinh doanh */}
+                      {canReassign && (
+                        <form
+                          onSubmit={(e) => void handleReassignSales(e)}
+                          className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 space-y-3.5 shadow-2xs"
                         >
-                          Duyệt loại khỏi Ads
-                        </button>
-                        <button
-                          type="button"
-                          disabled={submitting}
-                          onClick={() => void handleReviewSpam('restore_lead')}
-                          className="h-9 px-3.5 rounded-lg bg-white border border-amber-300 hover:bg-amber-100 text-amber-900 text-xs font-bold"
-                        >
-                          Khôi phục Lead
-                        </button>
-                      </div>
+                          <p className="font-bold text-slate-900 flex items-center gap-2 text-sm sm:text-base">
+                            <ArrowRightLeft className="w-4 h-4 text-[#1E3A8A]" />
+                            <span>Chuyển giao Nhân viên kinh doanh</span>
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                Lý do chuyển <span className="text-rose-600">*</span>
+                              </label>
+                              <select
+                                value={reassignCategory}
+                                onChange={(e) =>
+                                  setReassignCategory(
+                                    e.target.value as (typeof REASSIGN_REASONS)[number],
+                                  )
+                                }
+                                className="w-full h-9 px-2.5 rounded-xl border border-slate-200 bg-white text-xs font-medium text-slate-800"
+                              >
+                                {REASSIGN_REASONS.map((r) => (
+                                  <option key={r} value={r}>
+                                    {r}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                NVKD nhận <span className="text-rose-600">*</span>
+                              </label>
+                              <select
+                                required
+                                value={reassignTargetId}
+                                onChange={(e) =>
+                                  setReassignTargetId(
+                                    e.target.value ? Number(e.target.value) : '',
+                                  )
+                                }
+                                className="w-full h-9 px-2.5 rounded-xl border border-slate-200 bg-white text-xs font-medium text-slate-800"
+                              >
+                                <option value="">-- Chọn nhân viên --</option>
+                                {filteredSalesForReassign.map((s) => (
+                                  <option key={s.id} value={s.id}>
+                                    {s.fullName} ({s.activeLeadCount} Lead)
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                          <div>
+                            <textarea
+                              rows={2}
+                              value={reassignDetail}
+                              onChange={(e) => setReassignDetail(e.target.value)}
+                              placeholder="Ghi chú bàn giao..."
+                              className="w-full p-2.5 rounded-xl border border-slate-200 bg-slate-50/70 focus:bg-white text-xs text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
+                            />
+                          </div>
+                          <button
+                            type="submit"
+                            disabled={submitting || !reassignTargetId}
+                            className="w-full h-9 px-4 rounded-xl bg-[#1E3A8A] hover:bg-blue-900 text-white text-xs font-bold inline-flex items-center justify-center gap-1.5 disabled:opacity-50 shadow-2xs transition"
+                          >
+                            <ArrowRightLeft className="w-3.5 h-3.5" />
+                            <span>Chuyển giao</span>
+                          </button>
+                        </form>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
               )}
 
-              {/* TAB 3: TỆP ĐÍNH KÈM */}
+              {/* TAB 3: TỆP ĐÍNH KÈM (Hỗ trợ đa định dạng + Sửa tên / Thay tệp + Xóa tệp) */}
               {leadDetailTab === 'attachments' && (
                 <div className="space-y-4 text-xs">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="font-bold text-slate-900 text-sm">
-                        Tệp đính kèm hiện trạng công trình & bản vẽ
-                      </h3>
-                      <p className="text-slate-500 text-[11px] mt-0.5">
-                        Lưu trữ an toàn trên máy chủ riêng tư Toàn Trung · Phân quyền truy cập theo vai trò
-                      </p>
-                    </div>
-                  </div>
-
-                  {selectedLead.attachments && selectedLead.attachments.length > 0 ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {selectedLead.attachments.map((att) => (
-                        <div
-                          key={att.id}
-                          className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3 hover:border-slate-300 transition"
-                        >
-                          <div className="min-w-0">
-                            <span className="font-semibold text-slate-900 block truncate">
-                              {att.fileName}
-                            </span>
-                            <span className="text-[11px] text-slate-400 mt-0.5 block">
-                              Người tải: {att.uploadedByName}
-                            </span>
-                          </div>
-                          <a
-                            href={att.downloadUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="px-3 py-1.5 rounded-lg bg-brand-soft text-brand hover:bg-brand hover:text-white font-bold text-xs shrink-0 transition"
-                          >
-                            Xem / Tải về
-                          </a>
+                  <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 space-y-4 shadow-2xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Paperclip className="w-4 h-4 text-[#1E3A8A]" />
+                        <div>
+                          <h3 className="font-display font-bold text-slate-900 text-sm sm:text-base">
+                            Tệp đính kèm hiện trạng công trình, bản vẽ &amp; hồ sơ dự án
+                          </h3>
+                          <p className="text-slate-500 text-[11px]">
+                            Hỗ trợ đa định dạng: Ảnh/Video (PNG, JPG, WEBP, HEIC, MP4), Bản vẽ (CAD DWG/DXF, PDF, AI, CDR), Văn phòng (Word, Excel, PowerPoint, TXT) &amp; File nén (ZIP, RAR)
+                          </p>
                         </div>
-                      ))}
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-[#1E3A8A] font-bold text-xs">
+                        {selectedLead.attachments?.length || 0} tệp đã tải lên
+                      </span>
                     </div>
-                  ) : (
-                    <div className="p-8 text-center border border-dashed border-slate-200 rounded-2xl text-slate-400">
-                      <FileText className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                      <p className="font-medium text-slate-600">Chưa có tệp đính kèm nào</p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">
-                        Tải ảnh hiện trạng công trình hoặc bản vẽ CAD/PDF ở khung bên dưới
-                      </p>
-                    </div>
-                  )}
 
-                  {canUploadAttachment && !selectedLead.isAnonymized && (
-                    <form
-                      onSubmit={(e) => void handleUploadAttachment(e)}
-                      className="p-4 rounded-xl bg-blue-50/50 border border-blue-200/80 flex flex-wrap items-center gap-3 pt-4 mt-4"
-                    >
-                      <select
-                        value={attachmentType}
-                        onChange={(e) =>
-                          setAttachmentType(
-                            e.target.value as 'site_photo' | 'customer_drawing_doc',
-                          )
-                        }
-                        className="h-10 px-3 rounded-xl border border-slate-200 bg-white font-medium"
+                    {canUploadAttachment && !selectedLead.isAnonymized && (
+                      <form
+                        onSubmit={(e) => void handleUploadAttachment(e)}
+                        className="p-4 rounded-2xl bg-slate-50/80 border border-dashed border-blue-300 space-y-3"
                       >
-                        <option value="site_photo">Ảnh hiện trạng công trình</option>
-                        <option value="customer_drawing_doc">Bản vẽ / Tài liệu PDF</option>
-                      </select>
-                      <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp,application/pdf"
-                        onChange={(e) => setAttachmentFile(e.target.files?.[0] || null)}
-                        className="text-xs flex-1"
-                      />
-                      <button
-                        type="submit"
-                        disabled={submitting || !attachmentFile}
-                        className="h-10 px-5 rounded-xl bg-brand hover:bg-brand-deep text-white font-bold disabled:opacity-50 shadow-sm"
-                      >
-                        Tải lên máy chủ
-                      </button>
-                    </form>
-                  )}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="flex flex-wrap items-center gap-2.5 flex-1">
+                            <select
+                              value={attachmentType}
+                              onChange={(e) =>
+                                setAttachmentType(
+                                  e.target.value as 'site_photo' | 'customer_drawing_doc' | 'other',
+                                )
+                              }
+                              className="h-9 px-3 rounded-xl border border-slate-200 bg-white font-semibold text-slate-800 text-xs"
+                            >
+                              <option value="site_photo">📷 Ảnh / Video hiện trạng công trình</option>
+                              <option value="customer_drawing_doc">📐 Bản vẽ kỹ thuật (CAD / PDF / 3D)</option>
+                              <option value="other">📄 Hồ sơ dự án (Word / Excel / ZIP / Khác)</option>
+                            </select>
+                            <input
+                              ref={attachmentInputRef}
+                              type="file"
+                              multiple
+                              accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.svg,.heic,.pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.txt,.dwg,.dxf,.cdr,.ai,.psd,.zip,.rar,.7z,.mp4,.mov,.webm,image/*,video/*,application/pdf"
+                              onChange={(e) => {
+                                const list = e.target.files ? Array.from(e.target.files) : [];
+                                setAttachmentFiles(list);
+                                setAttachmentFile(list[0] || null);
+                              }}
+                              className="text-xs text-slate-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-[#1E3A8A] hover:file:bg-blue-100"
+                            />
+                          </div>
+                          <button
+                            type="submit"
+                            disabled={submitting || (attachmentFiles.length === 0 && !attachmentFile)}
+                            className="h-9 px-4 rounded-xl bg-[#1E3A8A] hover:bg-blue-800 text-white font-bold text-xs inline-flex items-center justify-center gap-1.5 disabled:opacity-50 shadow-2xs shrink-0 transition"
+                          >
+                            <FolderUp className="w-3.5 h-3.5" />
+                            <span>
+                              {submitting
+                                ? 'Đang tải lên...'
+                                : attachmentFiles.length > 1
+                                  ? `Tải ${attachmentFiles.length} tệp lên`
+                                  : 'Tải tệp lên'}
+                            </span>
+                          </button>
+                        </div>
+
+                        {attachmentFiles.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                            <span className="text-[11px] font-semibold text-slate-500">
+                              Đã chọn ({attachmentFiles.length}):
+                            </span>
+                            {attachmentFiles.map((f, idx) => (
+                              <span
+                                key={`${f.name}-${idx}`}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-blue-200 text-[11px] font-medium text-slate-700"
+                              >
+                                <span className="truncate max-w-[180px]">{f.name}</span>
+                                <span className="text-slate-400">
+                                  ({Math.max(1, Math.round(f.size / 1024))} KB)
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </form>
+                    )}
+
+                    {selectedLead.attachments && selectedLead.attachments.length > 0 ? (
+                      <div className="grid grid-cols-1 gap-2.5">
+                        {selectedLead.attachments.map((att) => {
+                          const lower = att.fileName.toLowerCase();
+                          const extBadge = lower.endsWith('.pdf')
+                            ? { label: 'PDF', style: 'bg-rose-50 border-rose-200 text-rose-700' }
+                            : lower.endsWith('.doc') || lower.endsWith('.docx')
+                              ? { label: 'DOC', style: 'bg-blue-50 border-blue-200 text-blue-700' }
+                              : lower.endsWith('.xls') || lower.endsWith('.xlsx') || lower.endsWith('.csv')
+                                ? { label: 'XLS', style: 'bg-emerald-50 border-emerald-200 text-emerald-700' }
+                                : lower.endsWith('.dwg') || lower.endsWith('.dxf')
+                                  ? { label: 'CAD', style: 'bg-amber-50 border-amber-200 text-amber-800' }
+                                  : lower.endsWith('.zip') || lower.endsWith('.rar') || lower.endsWith('.7z')
+                                    ? { label: 'ZIP', style: 'bg-purple-50 border-purple-200 text-purple-700' }
+                                    : lower.endsWith('.mp4') || lower.endsWith('.mov') || lower.endsWith('.webm')
+                                      ? { label: 'VID', style: 'bg-indigo-50 border-indigo-200 text-indigo-700' }
+                                      : { label: 'IMG', style: 'bg-sky-50 border-sky-200 text-[#1E3A8A]' };
+
+                          const isEditingThis = editingAttachmentId === att.id;
+
+                          return (
+                            <div
+                              key={att.id}
+                              className="p-3.5 rounded-xl bg-white border border-slate-200/90 hover:border-blue-300 shadow-2xs transition space-y-2.5"
+                            >
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <span
+                                    className={`w-10 h-10 rounded-xl border grid place-items-center shrink-0 font-extrabold text-xs ${extBadge.style}`}
+                                  >
+                                    {extBadge.label}
+                                  </span>
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <span className="font-bold text-slate-900 truncate text-xs sm:text-sm">
+                                        {att.fileName}
+                                      </span>
+                                      <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-semibold">
+                                        {att.fileType === 'site_photo'
+                                          ? 'Ảnh/Video hiện trạng'
+                                          : att.fileType === 'cad_drawing'
+                                            ? 'Bản vẽ kỹ thuật'
+                                            : 'Tài liệu dự án'}
+                                      </span>
+                                    </div>
+                                    <span className="text-[11px] text-slate-500 mt-0.5 block">
+                                      Người tải: <strong className="text-slate-700">{att.uploadedByName}</strong>
+                                      {att.createdAt
+                                        ? ` · ${new Date(att.createdAt).toLocaleString('vi-VN')}`
+                                        : ''}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                                  <a
+                                    href={att.downloadUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="h-8 px-2.5 rounded-lg bg-blue-50 hover:bg-[#1E3A8A] text-[#1E3A8A] hover:text-white border border-blue-200 font-bold text-xs inline-flex items-center gap-1 transition"
+                                    title="Mở xem hoặc tải tệp về máy"
+                                  >
+                                    <Download className="w-3.5 h-3.5" />
+                                    <span>Xem / Tải</span>
+                                  </a>
+
+                                  {canUploadAttachment && !selectedLead.isAnonymized && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        disabled={submitting}
+                                        onClick={() => {
+                                          if (isEditingThis) {
+                                            setEditingAttachmentId(null);
+                                            setEditingAttachmentReplaceFile(null);
+                                          } else {
+                                            setEditingAttachmentId(att.id);
+                                            setEditingAttachmentName(att.fileName);
+                                            setEditingAttachmentType(
+                                              att.fileType === 'site_photo'
+                                                ? 'site_photo'
+                                                : att.fileType === 'cad_drawing'
+                                                  ? 'customer_drawing_doc'
+                                                  : 'other',
+                                            );
+                                            setEditingAttachmentReplaceFile(null);
+                                          }
+                                        }}
+                                        className={`h-8 px-2.5 rounded-lg border font-bold text-xs inline-flex items-center gap-1 transition ${
+                                          isEditingThis
+                                            ? 'bg-amber-600 text-white border-amber-600'
+                                            : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200'
+                                        }`}
+                                        title="Sửa tên tệp, đổi phân loại hoặc thay bằng tệp mới"
+                                      >
+                                        <Pencil className="w-3.5 h-3.5" />
+                                        <span>Sửa</span>
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        disabled={submitting}
+                                        onClick={() => void handleDeleteAttachment(att.id, att.fileName)}
+                                        className="h-8 px-2.5 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 font-bold text-xs inline-flex items-center gap-1 transition"
+                                        title="Xóa tệp đính kèm này"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                        <span>Xóa</span>
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Khung sửa trực tiếp tệp đính kèm (Đổi tên, Đổi loại, hoặc Thay tệp mới) */}
+                              {isEditingThis && (
+                                <div className="p-3 rounded-xl bg-amber-50/60 border border-amber-200 space-y-2.5 animate-in fade-in duration-150">
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                                    <div className="sm:col-span-2">
+                                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                                        Tên tệp đính kèm
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={editingAttachmentName}
+                                        onChange={(e) => setEditingAttachmentName(e.target.value)}
+                                        className="w-full h-8 px-2.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                                        Phân loại tệp
+                                      </label>
+                                      <select
+                                        value={editingAttachmentType}
+                                        onChange={(e) =>
+                                          setEditingAttachmentType(
+                                            e.target.value as 'site_photo' | 'customer_drawing_doc' | 'other',
+                                          )
+                                        }
+                                        className="w-full h-8 px-2 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800"
+                                      >
+                                        <option value="site_photo">📷 Ảnh / Video hiện trạng</option>
+                                        <option value="customer_drawing_doc">📐 Bản vẽ kỹ thuật</option>
+                                        <option value="other">📄 Hồ sơ dự án khác</option>
+                                      </select>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[11px] font-semibold text-slate-600">
+                                        Thay bằng file khác (tùy chọn):
+                                      </span>
+                                      <input
+                                        type="file"
+                                        accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.svg,.heic,.pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.txt,.dwg,.dxf,.cdr,.ai,.psd,.zip,.rar,.7z,.mp4,.mov,.webm,image/*,video/*,application/pdf"
+                                        onChange={(e) => {
+                                          const f = e.target.files?.[0] || null;
+                                          setEditingAttachmentReplaceFile(f);
+                                          if (f) setEditingAttachmentName(f.name);
+                                        }}
+                                        className="text-[11px] text-slate-700 file:mr-2 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-[11px] file:font-semibold file:bg-white file:text-amber-900"
+                                      />
+                                    </div>
+
+                                    <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setEditingAttachmentId(null);
+                                          setEditingAttachmentReplaceFile(null);
+                                        }}
+                                        className="h-8 px-3 rounded-lg border border-slate-300 bg-white text-slate-600 font-semibold text-xs"
+                                      >
+                                        Hủy
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={submitting}
+                                        onClick={() => void handleSaveEditAttachment(att.id)}
+                                        className="h-8 px-3.5 rounded-lg bg-[#1E3A8A] hover:bg-blue-800 text-white font-bold text-xs transition"
+                                      >
+                                        Lưu thay đổi
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="py-10 text-center border border-dashed border-slate-200 rounded-2xl text-slate-400">
+                        <FileText className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                        <p className="font-semibold text-slate-600 text-xs sm:text-sm">
+                          Chưa có tệp đính kèm nào trong hồ sơ này
+                        </p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          Hỗ trợ tải lên Ảnh, Video, PDF, Word, Excel, Bản vẽ AutoCAD (DWG/DXF), File nén ZIP/RAR...
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 

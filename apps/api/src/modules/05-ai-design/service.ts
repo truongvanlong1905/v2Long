@@ -1585,6 +1585,57 @@ export async function deleteProjectPhoto(
   return { ok: true, remainingCount: updatedPhotos.length };
 }
 
+export async function deleteDesignAssetVersion(
+  actor: SessionUserDto,
+  requestId: number,
+  versionId: number
+) {
+  const existing = await prisma.designRequest.findUnique({
+    where: { id: requestId },
+    include: {
+      assetVersions: {
+        orderBy: { versionNumber: 'asc' },
+      },
+    },
+  });
+  if (!existing) throw new Error('Không tìm thấy dự án thiết kế.');
+
+  const targetVer = existing.assetVersions.find((v) => v.id === versionId);
+  if (!targetVer) {
+    throw new Error('Không tìm thấy phiên bản ảnh AI cần xóa.');
+  }
+
+  await prisma.designAssetVersion.delete({
+    where: { id: versionId },
+  });
+
+  const remaining = existing.assetVersions.filter((v) => v.id !== versionId);
+  const latestRemaining = remaining[remaining.length - 1] || null;
+  const nextApprovedId =
+    existing.approvedVersionId === versionId ? null : existing.approvedVersionId;
+
+  await prisma.designRequest.update({
+    where: { id: requestId },
+    data: {
+      approvedVersionId: nextApprovedId,
+      finalRenderUrl: nextApprovedId ? existing.finalRenderUrl : null,
+      aiDraftImageUrl: latestRemaining?.storageObjectKey || null,
+      designStatus: nextApprovedId
+        ? 'completed'
+        : latestRemaining
+          ? 'ai_drafting'
+          : 'pending',
+      version: { increment: 1 },
+    },
+  });
+
+  return {
+    ok: true,
+    deletedVersionId: versionId,
+    remainingCount: remaining.length,
+  };
+}
+
 export async function deleteDesignProject(
   actor: SessionUserDto,
   requestId: number,

@@ -85,6 +85,35 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     pathname === '/design' || pathname === '/ai-design',
   );
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [globalSearchText, setGlobalSearchText] = useState('');
+  const globalSearchInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get('search');
+    if (q !== null) {
+      setGlobalSearchText(q);
+    }
+  }, [pathname]);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isInputFocused =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+      if (!isInputFocused && e.key === '/') {
+        e.preventDefault();
+        globalSearchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
 
   // Bell Notification Popover state (Step 1 & Step 4.1)
   const [bellOpen, setBellOpen] = useState(false);
@@ -501,18 +530,52 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
               <Search className="w-4 h-4" />
             </button>
 
-            {/* Desktop Quick Search hint */}
-            <Link
-              href="/leads"
-              className="hidden md:flex items-center gap-2 h-9 px-3 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs text-slate-500 w-52 lg:w-64 transition"
-              title="Nhấn phím / tại trang Lead để tìm nhanh"
-            >
+            {/* Desktop Quick Search Input */}
+            <div className="hidden md:flex items-center gap-2 h-9 px-3 rounded-xl bg-slate-50 focus-within:bg-white border border-slate-200 focus-within:border-[#1E3A8A] text-xs text-slate-700 w-56 lg:w-72 transition">
               <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              <span className="truncate">Tìm nhanh Lead, SĐT, Dự án...</span>
-              <kbd className="ml-auto text-[10px] font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200 text-slate-400">
-                /
-              </kbd>
-            </Link>
+              <input
+                ref={globalSearchInputRef}
+                type="text"
+                value={globalSearchText}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setGlobalSearchText(val);
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('tt-lead-search', { detail: val }));
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && pathname !== '/leads') {
+                    router.push(
+                      globalSearchText.trim()
+                        ? `/leads?search=${encodeURIComponent(globalSearchText.trim())}`
+                        : '/leads',
+                    );
+                  }
+                }}
+                placeholder="Tìm nhanh Lead, SĐT, dự án, công ty..."
+                className="flex-1 bg-transparent outline-none text-xs text-slate-800 placeholder:text-slate-400 min-w-0"
+              />
+              {globalSearchText ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGlobalSearchText('');
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('tt-lead-search', { detail: '' }));
+                    }
+                  }}
+                  className="text-slate-400 hover:text-slate-700 text-xs font-bold px-1"
+                  title="Xóa từ khóa tìm kiếm"
+                >
+                  ×
+                </button>
+              ) : (
+                <kbd className="ml-auto text-[10px] font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200 text-slate-400 shrink-0">
+                  /
+                </kbd>
+              )}
+            </div>
 
             {/* Notification Bell + Quick Popover (Step 4.1) */}
             <div ref={bellRef} className="relative">
@@ -669,11 +732,25 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
             <Search className="w-4 h-4 text-slate-400 shrink-0" />
             <input
               type="text"
+              value={globalSearchText}
+              onChange={(e) => {
+                const val = e.target.value;
+                setGlobalSearchText(val);
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('tt-lead-search', { detail: val }));
+                }
+              }}
               placeholder="Nhập tên khách hàng, SĐT hoặc mã Lead..."
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   setMobileSearchOpen(false);
-                  window.location.href = '/leads';
+                  if (pathname !== '/leads') {
+                    router.push(
+                      globalSearchText.trim()
+                        ? `/leads?search=${encodeURIComponent(globalSearchText.trim())}`
+                        : '/leads',
+                    );
+                  }
                 }
               }}
               className="flex-1 text-xs bg-transparent outline-none text-slate-800"

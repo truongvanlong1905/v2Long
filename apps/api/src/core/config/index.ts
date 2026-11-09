@@ -6,7 +6,7 @@ export const APP_CONFIG = {
   sessionTtlMs: 1000 * 60 * 60 * 12, // 12 hours
   maxLogoSizeBytes: 2 * 1024 * 1024, // 2 MB
   maxHeroSizeBytes: 5 * 1024 * 1024, // 5 MB
-  maxAttachmentSizeBytes: 10 * 1024 * 1024, // 10 MB technical guard (Q06 tracked)
+  maxAttachmentSizeBytes: 100 * 1024 * 1024, // 100 MB technical guard for CAD/PDF/Photos/Video/Archives
   defaultLogoUrl: '/brand/logo-toan-trung.png',
   defaultHeroUrl: '/brand/login-hero-led-building.jpg',
   getStorageRoot(): string {

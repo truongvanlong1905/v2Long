@@ -144,11 +144,16 @@ export function AiDesignWorkspace() {
   // Side dock tab when viewing Phối cảnh on wide desktop
   const [sideDockTab, setSideDockTab] = useState<'assistant' | 'specs'>('assistant');
 
-  // Canvas View Mode: 'original' (Ảnh gốc) | 'result' (Kết quả AI) | 'live_3d' (Chấm điểm & Ghép 3D $0) | 'bom' (Thông số BOM)
+  // Canvas View Mode: 'original' (Ảnh gốc) | 'result' (Kết quả AI) | 'live_3d' (Chấm điểm & Ghép 3D $0) | 'compare' (So sánh Trước/Sau) | 'bom' (Sơ đồ Cabin & BOM)
   const [viewMode, setViewMode] = useState<'original' | 'result' | 'live_3d' | 'compare' | 'bom'>('result');
   const [live3dTheme, setLive3dTheme] = useState<
     'ai_version' | 'conference_navy' | 'ocean_4k' | 'gala_stage' | 'factory_andon'
   >('conference_navy');
+  const [ledScreenVisualTheme, setLedScreenVisualTheme] = useState<
+    'gala_red' | 'corp_navy' | 'vivid_commercial' | 'factory_andon' | 'mapped_poster'
+  >('gala_red');
+  const [includeCadOverlay, setIncludeCadOverlay] = useState<boolean>(true);
+  const [exportingBlueprint, setExportingBlueprint] = useState<boolean>(false);
   const [savingComposite, setSavingComposite] = useState(false);
 
   // Dual-AI Chat Consultant Model State
@@ -971,11 +976,32 @@ export function AiDesignWorkspace() {
       const boxW = Math.max(80, maxX - minX);
       const boxH = Math.max(50, maxY - minY);
 
-      // 1. Outer cabinet shadow & casing
+      // 1. Outer cabinet shadow, ambient LED wall glow & casing
+      const promptLower = promptText.toLowerCase();
+      const effectiveTheme =
+        /áp\s*(?:mẫu\s*)?(?:banner|poster)|ghép\s*(?:banner|poster)|nutifood/i.test(promptText)
+          ? 'mapped_poster'
+          : /nhà\s*máy|andon|sản\s*xuất|bảng\s*điện\s*tử|xanh\s*lá/i.test(promptLower)
+            ? 'factory_andon'
+            : /hội\s*nghị|phòng\s*họp|xanh\s*navy|xanh\s*dương|doanh\s*nghiệp/i.test(promptLower)
+              ? 'corp_navy'
+              : /thương\s*mại|showroom|sân\s*khấu|concert|đa\s*sắc/i.test(promptLower)
+                ? 'vivid_commercial'
+                : ledScreenVisualTheme;
+
+      const glowColor =
+        effectiveTheme === 'corp_navy'
+          ? 'rgba(37, 99, 235, 0.52)'
+          : effectiveTheme === 'vivid_commercial'
+            ? 'rgba(6, 182, 212, 0.52)'
+            : effectiveTheme === 'factory_andon'
+              ? 'rgba(16, 185, 129, 0.48)'
+              : 'rgba(220, 38, 38, 0.48)';
+
       ctx.save();
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
-      ctx.shadowBlur = 24;
-      ctx.shadowOffsetY = 8;
+      ctx.shadowColor = glowColor;
+      ctx.shadowBlur = 34;
+      ctx.shadowOffsetY = 4;
       ctx.beginPath();
       pts.forEach((p, idx) => (idx === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
       ctx.closePath();
@@ -983,17 +1009,14 @@ export function AiDesignWorkspace() {
       ctx.fill();
       ctx.restore();
 
-      // 2. Clip inside polygon & draw vivid LED screen content (BDU red-gold style or mapped Poster/Banner graphic)
-      const wantsMappedPoster = /áp\s*(?:mẫu\s*)?(?:banner|poster)|ghép\s*(?:banner|poster)|nutifood/i.test(
-        promptText
-      );
+      // 2. Clip inside polygon & draw vivid LED screen content
       const latestPosterVer = (currentProject?.assetVersions || [])
         .slice()
         .reverse()
         .find((v) => /poster|banner|nutifood/i.test(v.promptUsed || ''));
 
       let mappedPosterImg: HTMLImageElement | null = null;
-      if (wantsMappedPoster) {
+      if (effectiveTheme === 'mapped_poster') {
         const posterSrc = latestPosterVer
           ? `/api/v1/design/asset/${latestPosterVer.id}`
           : '/brand/toantrung-nutifood-poster.jpg';
@@ -1014,6 +1037,97 @@ export function AiDesignWorkspace() {
 
       if (mappedPosterImg) {
         ctx.drawImage(mappedPosterImg, minX, minY, boxW, boxH);
+      } else if (effectiveTheme === 'corp_navy') {
+        const ledGrad = ctx.createLinearGradient(minX, minY, maxX, maxY);
+        ledGrad.addColorStop(0, '#09152b');
+        ledGrad.addColorStop(0.5, '#1e3a8a');
+        ledGrad.addColorStop(1, '#0284c7');
+        ctx.fillStyle = ledGrad;
+        ctx.fillRect(minX, minY, boxW, boxH);
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.textAlign = 'left';
+        ctx.font = `bold ${Math.max(10, Math.round(boxH * 0.085))}px monospace`;
+        ctx.fillText('TOAN TRUNG TELECOM · ENTERPRISE LED DISPLAY 4K', minX + boxW * 0.06, minY + boxH * 0.22);
+
+        ctx.fillStyle = '#ffffff';
+        const titleFontPx = Math.max(15, Math.min(34, Math.round(boxH * 0.16)));
+        ctx.font = `900 ${titleFontPx}px sans-serif`;
+        ctx.fillText(
+          (currentProject?.projectName || 'HỘI NGHỊ TRỰC TUYẾN & ĐIỀU HÀNH').slice(0, 34).toUpperCase(),
+          minX + boxW * 0.06,
+          minY + boxH * 0.44
+        );
+
+        ctx.fillStyle = '#bae6fd';
+        const subFontPx = Math.max(11, Math.min(19, Math.round(boxH * 0.095)));
+        ctx.font = `bold ${subFontPx}px sans-serif`;
+        ctx.fillText(cleanCaption.slice(0, 52).toUpperCase(), minX + boxW * 0.06, minY + boxH * 0.62);
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+        ctx.beginPath();
+        ctx.roundRect(minX + boxW * 0.06, minY + boxH * 0.7, boxW * 0.52, boxH * 0.2, 6);
+        ctx.fill();
+        ctx.fillStyle = '#1e3a8a';
+        ctx.font = `bold ${Math.max(10, Math.round(boxH * 0.08))}px sans-serif`;
+        ctx.fillText(
+          `LED ${paramForm.pixelPitch} · ${Math.round(paramForm.screenWidthM * 1000)}×${Math.round(paramForm.screenHeightM * 1000)}mm · ${computedLiveSpecs.resW}×${computedLiveSpecs.resH}px`,
+          minX + boxW * 0.08,
+          minY + boxH * 0.83
+        );
+      } else if (effectiveTheme === 'vivid_commercial') {
+        const ledGrad = ctx.createLinearGradient(minX, minY, maxX, maxY);
+        ledGrad.addColorStop(0, '#3b0764');
+        ledGrad.addColorStop(0.45, '#be185d');
+        ledGrad.addColorStop(1, '#f59e0b');
+        ctx.fillStyle = ledGrad;
+        ctx.fillRect(minX, minY, boxW, boxH);
+
+        ctx.fillStyle = '#fde047';
+        ctx.textAlign = 'left';
+        ctx.font = `bold ${Math.max(10, Math.round(boxH * 0.085))}px sans-serif`;
+        ctx.fillText('HIGH-BRIGHTNESS COMMERCIAL LED WALL · TOÀN TRUNG', minX + boxW * 0.06, minY + boxH * 0.22);
+
+        ctx.fillStyle = '#ffffff';
+        const titleFontPx = Math.max(15, Math.min(34, Math.round(boxH * 0.165)));
+        ctx.font = `900 ${titleFontPx}px sans-serif`;
+        ctx.fillText(cleanCaption.slice(0, 38).toUpperCase(), minX + boxW * 0.06, minY + boxH * 0.46);
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+        ctx.beginPath();
+        ctx.roundRect(minX + boxW * 0.06, minY + boxH * 0.66, boxW * 0.48, boxH * 0.22, 6);
+        ctx.fill();
+        ctx.fillStyle = '#fef08a';
+        ctx.font = `bold ${Math.max(10, Math.round(boxH * 0.085))}px sans-serif`;
+        ctx.fillText(
+          `${paramForm.pixelPitch} UHD · ${computedLiveSpecs.cabinetCount} CABINET (${computedLiveSpecs.areaM2}m²)`,
+          minX + boxW * 0.08,
+          minY + boxH * 0.8
+        );
+      } else if (effectiveTheme === 'factory_andon') {
+        ctx.fillStyle = '#061a14';
+        ctx.fillRect(minX, minY, boxW, boxH);
+
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(minX + 8, minY + 8, boxW - 16, boxH - 16);
+
+        ctx.fillStyle = '#10b981';
+        ctx.textAlign = 'left';
+        ctx.font = `bold ${Math.max(12, Math.round(boxH * 0.12))}px monospace`;
+        ctx.fillText('BẢNG ĐIỆN TỬ GIÁM SÁT SẢN XUẤT & AN TOÀN — TOÀN TRUNG', minX + boxW * 0.05, minY + boxH * 0.25);
+
+        ctx.fillStyle = '#facc15';
+        ctx.font = `bold ${Math.max(14, Math.round(boxH * 0.15))}px monospace`;
+        ctx.fillText('MỤC TIÊU: 1,250 SP   |   THỰC ĐẠT: 1,248 SP (99.8%)', minX + boxW * 0.05, minY + boxH * 0.52);
+
+        ctx.fillStyle = '#ef4444';
+        ctx.font = `bold ${Math.max(11, Math.round(boxH * 0.1))}px monospace`;
+        ctx.fillText(
+          `CẤU HÌNH: ${paramForm.pixelPitch} · KÍCH THƯỚC ${Math.round(paramForm.screenWidthM * 1000)}×${Math.round(paramForm.screenHeightM * 1000)}MM`,
+          minX + boxW * 0.05,
+          minY + boxH * 0.78
+        );
       } else {
         const ledGrad = ctx.createLinearGradient(minX, minY, maxX, maxY);
         ledGrad.addColorStop(0, '#b91c1c');
@@ -1049,6 +1163,26 @@ export function AiDesignWorkspace() {
         );
       }
 
+      // Subtle LED Cabinet Grid Seams (640x480mm physical cabinet matrix)
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.09)';
+      ctx.lineWidth = 1;
+      const gridCols = Math.min(16, Math.max(2, computedLiveSpecs.cabinetCols));
+      const gridRows = Math.min(10, Math.max(2, computedLiveSpecs.cabinetRows));
+      for (let c = 1; c < gridCols; c++) {
+        const gx = minX + (c / gridCols) * boxW;
+        ctx.beginPath();
+        ctx.moveTo(gx, minY);
+        ctx.lineTo(gx, maxY);
+        ctx.stroke();
+      }
+      for (let r = 1; r < gridRows; r++) {
+        const gy = minY + (r / gridRows) * boxH;
+        ctx.beginPath();
+        ctx.moveTo(minX, gy);
+        ctx.lineTo(maxX, gy);
+        ctx.stroke();
+      }
+
       // Subtle 3D curved highlight sheen across the LED cabinet surface
       const sheen = ctx.createLinearGradient(minX, minY, maxX, minY);
       sheen.addColorStop(0, 'rgba(255,255,255,0.06)');
@@ -1070,139 +1204,359 @@ export function AiDesignWorkspace() {
       ctx.stroke();
       ctx.restore();
 
-      // 4. Blue CAD Technical Dimension Callouts (mm) along top & right edges (like BDU Toàn Trung photo)
-      const widthMm = Math.round(paramForm.screenWidthM * 1000);
-      const heightMm = Math.round(paramForm.screenHeightM * 1000);
-      const customEdgeLengthsMm = pts
-        .map((p) => (p.edgeLengthM && p.edgeLengthM > 0 ? Math.round(p.edgeLengthM * 1000) : null))
-        .filter((v): v is number => v !== null);
-      const widthFormulaText =
-        customEdgeLengthsMm.length >= 2
-          ? `(${customEdgeLengthsMm.join(' + ')})`
-          : widthMm >= 15000
-          ? '(4800 + 720 + 8000 + 720 + 4800)'
-          : `${widthMm}`;
+      // 4. Blue CAD Technical Dimension Callouts (mm) & Spec Box (when includeCadOverlay is true or prompt requests mm/cận cảnh)
+      const isCloseUpTechnical = /cận\s*cảnh|chi\s*tiết|zoom/i.test(promptText);
+      const shouldDrawCad = includeCadOverlay || isCloseUpTechnical || /đường\s*gióng|\bmm\b/i.test(promptText);
 
-      const drawCadBadge = (cx: number, cy: number, text: string) => {
+      if (shouldDrawCad) {
+        const widthMm = Math.round(paramForm.screenWidthM * 1000);
+        const heightMm = Math.round(paramForm.screenHeightM * 1000);
+        const customEdgeLengthsMm = pts
+          .map((p) => (p.edgeLengthM && p.edgeLengthM > 0 ? Math.round(p.edgeLengthM * 1000) : null))
+          .filter((v): v is number => v !== null);
+        const widthFormulaText =
+          customEdgeLengthsMm.length >= 2
+            ? `(${customEdgeLengthsMm.join(' + ')})`
+            : widthMm >= 15000
+              ? '(4800 + 720 + 8000 + 720 + 4800)'
+              : `${widthMm}`;
+
+        const drawCadBadge = (cx: number, cy: number, text: string) => {
+          ctx.save();
+          ctx.font = 'bold 13px sans-serif';
+          const tw = ctx.measureText(text).width + 14;
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.roundRect(cx - tw / 2, cy - 11, tw, 22, 5);
+          ctx.fill();
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = '#0284c7';
+          ctx.stroke();
+          ctx.fillStyle = '#0369a1';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(text, cx, cy);
+          ctx.restore();
+        };
+
+        // Top dimension line
         ctx.save();
-        ctx.font = 'bold 13px sans-serif';
-        const tw = ctx.measureText(text).width + 14;
-        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = '#0284c7';
+        ctx.lineWidth = 2;
+        const topY = Math.max(24, minY - 22);
         ctx.beginPath();
-        ctx.roundRect(cx - tw / 2, cy - 11, tw, 22, 5);
+        ctx.moveTo(minX, minY - 4);
+        ctx.lineTo(minX, topY - 6);
+        ctx.moveTo(maxX, minY - 4);
+        ctx.lineTo(maxX, topY - 6);
+        ctx.moveTo(minX, topY);
+        ctx.lineTo(maxX, topY);
+        ctx.stroke();
+
+        if (widthFormulaText.startsWith('(')) {
+          const segLabels =
+            customEdgeLengthsMm.length >= 2
+              ? customEdgeLengthsMm.map(String)
+              : ['4800', '720', '8000', '720', '4800'];
+          segLabels.forEach((lbl, idx) => {
+            const sx = minX + ((idx + 0.5) / segLabels.length) * boxW;
+            drawCadBadge(sx, topY, lbl);
+          });
+        } else {
+          drawCadBadge((minX + maxX) / 2, topY, `${widthMm}`);
+        }
+
+        // Right height dimension lines (screen height + ground clearance + total height)
+        const rightX = Math.min(W - 60, maxX + 26);
+        const rightTotalX = Math.min(W - 24, maxX + 62);
+        const groundY = Math.min(H - 36, maxY + 140);
+        ctx.beginPath();
+        ctx.moveTo(maxX + 4, minY);
+        ctx.lineTo(rightTotalX + 6, minY);
+        ctx.moveTo(maxX + 4, maxY);
+        ctx.lineTo(rightX + 6, maxY);
+        ctx.moveTo(maxX + 4, groundY);
+        ctx.lineTo(rightTotalX + 6, groundY);
+        ctx.moveTo(rightX, minY);
+        ctx.lineTo(rightX, maxY);
+        ctx.moveTo(rightX, maxY);
+        ctx.lineTo(rightX, groundY);
+        ctx.moveTo(rightTotalX, minY);
+        ctx.lineTo(rightTotalX, groundY);
+        ctx.stroke();
+        drawCadBadge(rightX, (minY + maxY) / 2, `${heightMm}`);
+        drawCadBadge(rightX, (maxY + groundY) / 2, '1200');
+        drawCadBadge(rightTotalX, (minY + groundY) / 2, `${heightMm + 1200}`);
+        ctx.restore();
+
+        // 5. If user requested Zoomed-in Technical View ("cận cảnh" / "chi tiết"), crop into the LED + CAD callout zone
+        if (isCloseUpTechnical) {
+          const cropX = Math.max(0, minX - 75);
+          const cropY = Math.max(0, topY - 36);
+          const cropW = Math.min(W - cropX, boxW + 175);
+          const cropH = Math.min(H - cropY, groundY - cropY + 28);
+          const zoomCanvas = document.createElement('canvas');
+          zoomCanvas.width = W;
+          zoomCanvas.height = H;
+          const zCtx = zoomCanvas.getContext('2d');
+          if (zCtx && cropW > 120 && cropH > 80) {
+            zCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, W, H);
+            return zoomCanvas.toDataURL('image/jpeg', 0.92).split(',')[1] || null;
+          }
+        }
+
+        // 6. Bottom-Left Toàn Trung Specification Box
+        ctx.save();
+        const specBoxX = 32;
+        const specBoxY = H - 106;
+        const specBoxW = 660;
+        const specBoxH = 84;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+        ctx.beginPath();
+        ctx.roundRect(specBoxX, specBoxY, specBoxW, specBoxH, 10);
         ctx.fill();
         ctx.lineWidth = 1.5;
-        ctx.strokeStyle = '#0284c7';
+        ctx.strokeStyle = '#1e3a8a';
         ctx.stroke();
-        ctx.fillStyle = '#0369a1';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(text, cx, cy);
+
+        ctx.fillStyle = '#1e3a8a';
+        ctx.textAlign = 'left';
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText(
+          `PHƯƠNG ÁN KỸ THUẬT TOÀN TRUNG: MÀN HÌNH LED ${paramForm.pixelPitch} (${computedLiveSpecs.areaM2} m²)`,
+          specBoxX + 16,
+          specBoxY + 23
+        );
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillStyle = '#0f172a';
+        ctx.fillText(
+          `• KÍCH THƯỚC HIỂN THỊ: ${widthFormulaText} × ${heightMm} mm  |  ĐỘ PHÂN GIẢI: ${computedLiveSpecs.resW} × ${computedLiveSpecs.resH} px`,
+          specBoxX + 16,
+          specBoxY + 45
+        );
+        ctx.fillStyle = '#334155';
+        ctx.fillText(
+          `• CẤU HÌNH CABINET: ${computedLiveSpecs.cabinetCols}×${computedLiveSpecs.cabinetRows} = ${computedLiveSpecs.cabinetCount} Cabin (640×480mm) · ${computedLiveSpecs.moduleCount} Module · Nguồn: ${computedLiveSpecs.avgKw}/${computedLiveSpecs.maxKw} kW`,
+          specBoxX + 16,
+          specBoxY + 66
+        );
         ctx.restore();
-      };
-
-      // Top dimension line (multi-segment like 4800 | 720 | 8000 | 720 | 4800)
-      ctx.save();
-      ctx.strokeStyle = '#0284c7';
-      ctx.lineWidth = 2;
-      const topY = Math.max(24, minY - 22);
-      ctx.beginPath();
-      ctx.moveTo(minX, minY - 4);
-      ctx.lineTo(minX, topY - 6);
-      ctx.moveTo(maxX, minY - 4);
-      ctx.lineTo(maxX, topY - 6);
-      ctx.moveTo(minX, topY);
-      ctx.lineTo(maxX, topY);
-      ctx.stroke();
-
-      if (widthFormulaText.startsWith('(')) {
-        const segLabels =
-          customEdgeLengthsMm.length >= 2
-            ? customEdgeLengthsMm.map(String)
-            : ['4800', '720', '8000', '720', '4800'];
-        segLabels.forEach((lbl, idx) => {
-          const sx = minX + ((idx + 0.5) / segLabels.length) * boxW;
-          drawCadBadge(sx, topY, lbl);
-        });
-      } else {
-        drawCadBadge((minX + maxX) / 2, topY, `${widthMm}`);
       }
-
-      // Right height dimension lines (screen height + ground clearance + total height)
-      const rightX = Math.min(W - 60, maxX + 26);
-      const rightTotalX = Math.min(W - 24, maxX + 62);
-      const groundY = Math.min(H - 36, maxY + 140);
-      ctx.beginPath();
-      ctx.moveTo(maxX + 4, minY);
-      ctx.lineTo(rightTotalX + 6, minY);
-      ctx.moveTo(maxX + 4, maxY);
-      ctx.lineTo(rightX + 6, maxY);
-      ctx.moveTo(maxX + 4, groundY);
-      ctx.lineTo(rightTotalX + 6, groundY);
-      ctx.moveTo(rightX, minY);
-      ctx.lineTo(rightX, maxY);
-      ctx.moveTo(rightX, maxY);
-      ctx.lineTo(rightX, groundY);
-      ctx.moveTo(rightTotalX, minY);
-      ctx.lineTo(rightTotalX, groundY);
-      ctx.stroke();
-      drawCadBadge(rightX, (minY + maxY) / 2, `${heightMm}`);
-      drawCadBadge(rightX, (maxY + groundY) / 2, '3232');
-      drawCadBadge(rightTotalX, (minY + groundY) / 2, `${heightMm + 3337}`);
-      ctx.restore();
-
-      // 5. If user requested Zoomed-in Technical View ("cận cảnh" / "chi tiết" like Ảnh 3), crop into the LED + CAD callout zone
-      const isCloseUpTechnical = /cận\s*cảnh|chi\s*tiết|zoom/i.test(promptText);
-      if (isCloseUpTechnical) {
-        const cropX = Math.max(0, minX - 75);
-        const cropY = Math.max(0, topY - 36);
-        const cropW = Math.min(W - cropX, boxW + 175);
-        const cropH = Math.min(H - cropY, groundY - cropY + 28);
-        const zoomCanvas = document.createElement('canvas');
-        zoomCanvas.width = W;
-        zoomCanvas.height = H;
-        const zCtx = zoomCanvas.getContext('2d');
-        if (zCtx && cropW > 120 && cropH > 80) {
-          zCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, W, H);
-          return zoomCanvas.toDataURL('image/jpeg', 0.92).split(',')[1] || null;
-        }
-      }
-
-      // 6. Bottom-Left Toàn Trung Specification Box (exact match to BDU Ảnh 2)
-      ctx.save();
-      const specBoxX = 36;
-      const specBoxY = H - 98;
-      const specBoxW = 630;
-      const specBoxH = 76;
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.93)';
-      ctx.beginPath();
-      ctx.roundRect(specBoxX, specBoxY, specBoxW, specBoxH, 10);
-      ctx.fill();
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = '#94a3b8';
-      ctx.stroke();
-
-      ctx.fillStyle = '#0f172a';
-      ctx.textAlign = 'left';
-      ctx.font = 'bold 15px sans-serif';
-      ctx.fillText('MÀN HÌNH LED OUTDOOR VỊ TRÍ 1', specBoxX + 16, specBoxY + 24);
-      ctx.font = '13px sans-serif';
-      ctx.fillStyle = '#1e293b';
-      ctx.fillText(
-        `KÍCH THƯỚC HIỂN THỊ: ${widthFormulaText} x ${heightMm}mm (W x H)`,
-        specBoxX + 16,
-        specBoxY + 46
-      );
-      ctx.fillText(
-        `KÍCH THƯỚC TỔNG THỂ: ${widthFormulaText} x ${heightMm}mm (W x H - CABINET)`,
-        specBoxX + 16,
-        specBoxY + 65
-      );
-      ctx.restore();
 
       return canvas.toDataURL('image/jpeg', 0.92).split(',')[1] || null;
     } catch {
       return null;
+    }
+  };
+
+  // Export 2D CAD Cabinet Matrix & BOM Blueprint Sheet as an official AI Version
+  const handleExportCadBlueprintVersion = async () => {
+    if (!currentProject || exportingBlueprint) return;
+    setExportingBlueprint(true);
+    setError(null);
+    try {
+      const canvas = document.createElement('canvas');
+      const W = 1280;
+      const H = 720;
+      canvas.width = W;
+      canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Không thể khởi tạo Canvas bản vẽ kỹ thuật.');
+
+      // Blueprint background
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, W, H);
+
+      // Subtle engineering grid
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.08)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < W; x += 32) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, H);
+        ctx.stroke();
+      }
+      for (let y = 0; y < H; y += 32) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+        ctx.stroke();
+      }
+
+      // Header Banner
+      ctx.fillStyle = '#1e3a8a';
+      ctx.fillRect(28, 24, W - 56, 68);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(28, 24, W - 56, 68);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText(
+        `BẢN VẼ SƠ ĐỒ GHÉP CABINET & BÓC TÁCH VẬT TƯ LED TOÀN TRUNG — ${currentProject.projectName.toUpperCase()}`,
+        48,
+        54
+      );
+      ctx.fillStyle = '#bae6fd';
+      ctx.font = 'bold 13px monospace';
+      ctx.fillText(
+        `MÃ DỰ ÁN: DA-${String(currentProject.id).padStart(4, '0')}  |  DÒNG LED: ${paramForm.pixelPitch}  |  KÍCH THƯỚC: ${Math.round(paramForm.screenWidthM * 1000)} × ${Math.round(paramForm.screenHeightM * 1000)} mm (${computedLiveSpecs.areaM2} m²)`,
+        48,
+        76
+      );
+
+      // Left Zone: 2D Cabinet Matrix Diagram
+      const diagX = 48;
+      const diagY = 126;
+      const diagW = 700;
+      const diagH = 440;
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+      ctx.fillRect(diagX, diagY, diagW, diagH);
+      ctx.strokeStyle = '#0284c7';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(diagX, diagY, diagW, diagH);
+
+      const cols = Math.min(14, Math.max(1, computedLiveSpecs.cabinetCols));
+      const rows = Math.min(10, Math.max(1, computedLiveSpecs.cabinetRows));
+      const pad = 42;
+      const gridW = diagW - pad * 2;
+      const gridH = diagH - pad * 2;
+      const cellW = gridW / cols;
+      const cellH = gridH / rows;
+
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const cx = diagX + pad + c * cellW;
+          const cy = diagY + pad + r * cellH;
+          ctx.fillStyle = (r + c) % 2 === 0 ? 'rgba(30, 58, 138, 0.65)' : 'rgba(15, 23, 42, 0.85)';
+          ctx.fillRect(cx, cy, cellW, cellH);
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 1.2;
+          ctx.strokeRect(cx, cy, cellW, cellH);
+
+          ctx.fillStyle = '#e0f2fe';
+          ctx.font = 'bold 10px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(`C${r + 1}-${c + 1}`, cx + cellW / 2, cy + cellH / 2 + 3);
+        }
+      }
+
+      // Dimension callouts on diagram
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 14px monospace';
+      ctx.fillText(
+        `← NGANG: ${Math.round(paramForm.screenWidthM * 1000)} mm (${computedLiveSpecs.cabinetCols} Cột × 640mm) →`,
+        diagX + diagW / 2,
+        diagY + 24
+      );
+      ctx.fillText(
+        `CAO: ${Math.round(paramForm.screenHeightM * 1000)} mm (${computedLiveSpecs.cabinetRows} Hàng × 480mm) · Tổng ${computedLiveSpecs.cabinetCount} Cabinet`,
+        diagX + diagW / 2,
+        diagY + diagH - 14
+      );
+
+      // Right Zone: Engineering BOM Table
+      const bomX = 772;
+      const bomY = 126;
+      const bomW = W - bomX - 28;
+      const bomH = 440;
+
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(bomX, bomY, bomW, bomH);
+      ctx.strokeStyle = '#475569';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(bomX, bomY, bomW, bomH);
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillText('BẢNG BÓC TÁCH KHỐI LƯỢNG VẬT TƯ (BOM)', bomX + 18, bomY + 30);
+
+      const spareModules = Math.max(2, Math.ceil(computedLiveSpecs.moduleCount * 0.02));
+      const powerSupplies = Math.max(2, computedLiveSpecs.cabinetCount * 2);
+      const bomRows = [
+        ['1. Tấm Module LED (320×160mm)', `${computedLiveSpecs.moduleCount} tấm (+${spareModules} dự phòng)`],
+        ['2. Khung Cabinet nhôm đúc (640×480)', `${computedLiveSpecs.cabinetCount} bộ (${computedLiveSpecs.cabinetCols}×${computedLiveSpecs.cabinetRows})`],
+        ['3. Card thu tín hiệu Novastar MRV328', `${computedLiveSpecs.cabinetCount} cái (1 card/cabin)`],
+        ['4. Nguồn chuyên dụng Meanwell 5V-40A', `${powerSupplies} bộ`],
+        ['5. Bộ xử lý hình ảnh trung tâm', computedLiveSpecs.resW * computedLiveSpecs.resH > 2300000 ? '01 bộ Novastar VX1000 (4K)' : '01 bộ Novastar VX600'],
+        ['6. Độ phân giải điểm ảnh thực tế', `${computedLiveSpecs.resW} × ${computedLiveSpecs.resH} px`],
+        ['7. Công suất điện (TB / Cực đại)', `${computedLiveSpecs.avgKw} kW / ${computedLiveSpecs.maxKw} kW (3 Pha)`],
+        ['8. Khung sắt mạ kẽm & Viền Alu', `${computedLiveSpecs.areaM2} m² hoàn thiện`],
+      ];
+
+      bomRows.forEach(([label, val], idx) => {
+        const ry = bomY + 64 + idx * 45;
+        ctx.fillStyle = idx % 2 === 0 ? 'rgba(15, 23, 42, 0.55)' : 'rgba(30, 41, 59, 0.55)';
+        ctx.fillRect(bomX + 12, ry - 18, bomW - 24, 38);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.font = '12px sans-serif';
+        ctx.fillText(label, bomX + 20, ry + 4);
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 12px monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(val, bomX + bomW - 20, ry + 4);
+        ctx.textAlign = 'left';
+      });
+
+      // Footer Sign-off Block
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(28, 588, W - 56, 104);
+      ctx.strokeStyle = '#334155';
+      ctx.strokeRect(28, 588, W - 56, 104);
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillText(
+        `VỊ TRÍ LẮP ĐẶT: ${paramForm.installationInfo || 'Theo khảo sát thực tế công trình'}  |  KHÁCH HÀNG: ${paramForm.contactName || currentProject.leadProjectLabel || 'Dự án Toàn Trung'}`,
+        48,
+        618
+      );
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '13px sans-serif';
+      ctx.fillText(
+        '• Tiêu chuẩn thi công: Khung thép hộp mạ kẽm 40×40mm, ốp viền nhôm anot đen chống lóa, hệ thống tiếp địa an toàn < 4Ω, bảo hành chính hãng Toàn Trung.',
+        48,
+        646
+      );
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 13px sans-serif';
+      ctx.fillText(
+        `• Xuất tự động từ Toàn Trung AI Studio · Ngày lập: ${new Date().toLocaleDateString('vi-VN')}`,
+        48,
+        672
+      );
+
+      const b64 = canvas.toDataURL('image/png').split(',')[1] || '';
+      const saved = await apiRequest<{ versionId: number; versionNumber: number }>(
+        `/api/v1/design/${currentProject.id}`,
+        {
+          method: 'POST',
+          csrfToken: user?.csrfToken,
+          body: {
+            action: 'save_composited_version',
+            fileName: `ban-ve-so-do-cabin-bom-req-${currentProject.id}.png`,
+            mimeType: 'image/png',
+            base64Data: b64,
+            note: `@TaoAnh: Bản vẽ Sơ đồ ghép ${computedLiveSpecs.cabinetCols}×${computedLiveSpecs.cabinetRows} Cabinet (${computedLiveSpecs.cabinetCount} Cabin) & Bóc tách vật tư BOM LED ${paramForm.pixelPitch}`,
+            placementQuad: quad,
+          },
+        }
+      );
+
+      setSuccessToast(
+        `Đã xuất Bản vẽ Sơ đồ Cabin & BOM thành Phiên bản AI v${saved.versionNumber}! Bạn có thể tải về hoặc Phê duyệt bàn giao Sales.`
+      );
+      await loadData(currentProject.id);
+      if (saved.versionId) {
+        setSelectedVersionId(saved.versionId);
+        setViewMode('result');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lỗi xuất bản vẽ kỹ thuật BOM.');
+    } finally {
+      setExportingBlueprint(false);
     }
   };
 
@@ -2508,47 +2862,56 @@ export function AiDesignWorkspace() {
         onChange={handleUploadTechnicalPhotos}
       />
 
-      {/* 1. TOP MODULE HEADER BAR (MATCHING REFERENCE SCREENSHOT) */}
-      <div className="flex h-13 w-full shrink-0 items-center justify-between gap-3 border-b border-[#D8E2F0] bg-white px-4 shadow-2xs">
-        {/* Left: Brand Logo + Module 05 Title */}
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#1553A2] text-white font-extrabold text-sm shadow-2xs">
-            T
-          </div>
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="font-extrabold text-[#17253F] text-sm whitespace-nowrap">
-              Toàn Trung
-            </span>
-            <span className="text-slate-300">|</span>
-            <span className="text-sm font-bold text-[#17253F] truncate">
-              Thiết kế 3D
-            </span>
-          </div>
-        </div>
-
-        {/* Center: Workflow Switcher Pills (Phối cảnh 3D LED vs Thiết kế Banner LED) */}
+      {/* 1. TOP MODULE HEADER BAR (CLEAN CENTERED STUDIO TOOLBAR + BOM & FOCUS CONTROLS) */}
+      <div className="flex min-h-13 w-full shrink-0 flex-wrap items-center justify-center gap-2.5 border-b border-[#D8E2F0] bg-white px-4 py-1.5 shadow-2xs">
+        {/* Workflow Switcher Pills (Màn hình Studio AI | Sơ đồ Cabin & BOM | Cài đặt thông số) */}
         <div
           role="tablist"
           aria-label="Khu vực làm việc Studio"
-          className="flex shrink-0 items-center gap-1.5"
+          className="flex flex-wrap items-center gap-1.5"
         >
           <button
             type="button"
             role="tab"
             data-testid="workspace-tab-perspective"
-            aria-selected={activeWorkspaceArea !== 'specs'}
+            aria-selected={activeWorkspaceArea !== 'specs' && viewMode !== 'bom'}
             onClick={() => {
               setActiveWorkspaceArea('perspective');
+              if (viewMode === 'bom') {
+                setViewMode(currentVersion ? 'result' : 'original');
+              }
               setMobilePane('canvas');
             }}
             className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3.5 py-1.5 text-xs font-bold transition shadow-2xs ${
-              activeWorkspaceArea !== 'specs'
+              activeWorkspaceArea !== 'specs' && viewMode !== 'bom'
                 ? 'bg-[#1553A2] text-white'
                 : 'border border-[#D8E2F0] bg-white text-[#17253F] hover:bg-slate-50'
             }`}
           >
             <Monitor className="h-3.5 w-3.5" />
             <span>Màn hình Studio AI</span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            data-testid="workspace-tab-bom"
+            aria-selected={activeWorkspaceArea !== 'specs' && viewMode === 'bom'}
+            onClick={() => {
+              setActiveWorkspaceArea('perspective');
+              setShowHandles(false);
+              setViewMode((prev) => (prev === 'bom' ? (currentVersion ? 'result' : 'original') : 'bom'));
+              setMobilePane('canvas');
+            }}
+            className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-bold transition shadow-2xs ${
+              activeWorkspaceArea !== 'specs' && viewMode === 'bom'
+                ? 'bg-[#0BAF7C] text-white'
+                : 'border border-emerald-200 bg-emerald-50/70 text-emerald-800 hover:bg-emerald-100'
+            }`}
+            title="Xem Sơ đồ Ma trận Cabin 2D & Bảng bóc tách khối lượng vật tư LED (BOM)"
+          >
+            <Layers className="h-3.5 w-3.5" />
+            <span>📐 Sơ đồ Cabin &amp; BOM ({computedLiveSpecs.cabinetCount} Cabin)</span>
           </button>
 
           <button
@@ -2567,12 +2930,38 @@ export function AiDesignWorkspace() {
             title="Mở bảng cài đặt chi tiết thông số dự án & LED"
           >
             <Settings2 className="h-3.5 w-3.5" />
-            <span className="hidden xl:inline">Cài đặt thông số</span>
+            <span>Cài đặt thông số</span>
           </button>
+
+          <button
+            type="button"
+            onClick={toggleFocusCanvas}
+            className={`hidden md:inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
+              focusCanvas
+                ? 'bg-amber-500 text-white shadow-2xs'
+                : 'border border-[#D8E2F0] bg-white text-slate-600 hover:bg-slate-50'
+            }`}
+            title="Ẩn/Hiện cột Danh sách dự án bên trái để mở rộng tối đa vùng nhìn Phối cảnh 3D"
+          >
+            {focusCanvas ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+            <span>{focusCanvas ? 'Hiện cột trái' : 'Mở rộng vùng nhìn'}</span>
+          </button>
+
+          {currentProject?.leadId && (
+            <a
+              href={`/leads?leadId=${currentProject.leadId}`}
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-extrabold text-[#1553A2] hover:bg-blue-100 transition"
+              title={`Mở nhanh hồ sơ Lead ${currentProject.leadCode || currentProject.leadId} tại Module 01`}
+            >
+              <span>🔗 Lead: {currentProject.leadCode || `#${currentProject.leadId}`}</span>
+            </a>
+          )}
         </div>
 
+        <div className="hidden xl:block h-5 w-px bg-slate-200" />
+
         {/* Right: Admin 2-AI Manager, Upload Final, Export ZIP, Approve & Handoff Sales */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             data-testid="open-multi-ai-hub-btn"
@@ -3081,66 +3470,113 @@ export function AiDesignWorkspace() {
               } flex-1 flex-col overflow-hidden bg-[#F5F7FC] p-2.5 pl-0`}
             >
               <div className="flex flex-1 min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-3.5 shadow-2xs">
-                {/* CLEAN SINGLE-LINE HEADER: SWITCH ORIGINAL/AI + POINT MARKING + DOWNLOAD */}
+                {/* CLEAN HEADER: SWITCH ORIGINAL / AI / BEFORE-AFTER COMPARE / CABINET BOM + POINT MARKING + ZOOM + DOWNLOAD */}
                 <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
                     <h2 className="text-[13px] font-extrabold uppercase tracking-wide text-[#17253F] truncate">
-                      MÀN HÌNH KẾT QUẢ AI ĐÃ SỬA (@TAOANH &amp; @TAOANHPOSTER)
+                      {viewMode === 'bom'
+                        ? `SƠ ĐỒ MA TRẬN CABIN 2D & BÓC TÁCH VẬT TƯ LED (${paramForm.pixelPitch})`
+                        : viewMode === 'compare'
+                          ? 'SO SÁNH TRƯỚC & SAU KHI LẮP MÀN HÌNH LED AI'
+                          : 'MÀN HÌNH KẾT QUẢ AI ĐÃ SỬA (@TAOANH & @TAOANHPOSTER)'}
                     </h2>
-                    {selectedPhoto && currentVersion && (
-                      <div className="inline-flex items-center rounded-xl border border-slate-200 bg-slate-100 p-0.5 text-[11px] font-bold">
+                    <div className="inline-flex flex-wrap items-center rounded-xl border border-slate-200 bg-slate-100 p-0.5 text-[11px] font-bold">
+                      <button
+                        type="button"
+                        data-testid="view-mode-original"
+                        onClick={() => {
+                          setViewMode('original');
+                        }}
+                        className={`rounded-lg px-2.5 py-1 transition ${
+                          (viewMode === 'original' || showHandles) && viewMode !== 'bom'
+                            ? 'bg-white text-[#1553A2] shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        📷 Ảnh gốc khảo sát
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="view-mode-result"
+                        onClick={() => {
+                          setShowHandles(false);
+                          setViewMode('result');
+                        }}
+                        className={`rounded-lg px-2.5 py-1 transition ${
+                          viewMode === 'result' && !showHandles
+                            ? 'bg-[#7846FF] text-white shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        ✨ Kết quả AI{currentVersion ? ` (v${currentVersion.versionNumber})` : ''}
+                      </button>
+                      {selectedPhoto && currentVersion && (
                         <button
                           type="button"
-                          data-testid="view-mode-original"
-                          onClick={() => {
-                            setViewMode('original');
-                          }}
-                          className={`rounded-lg px-2.5 py-1 transition ${
-                            viewMode === 'original' || showHandles
-                              ? 'bg-white text-[#1553A2] shadow-2xs'
-                              : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          📷 Ảnh gốc khảo sát
-                        </button>
-                        <button
-                          type="button"
-                          data-testid="view-mode-result"
+                          data-testid="view-mode-compare"
                           onClick={() => {
                             setShowHandles(false);
-                            setViewMode('result');
+                            setViewMode('compare');
                           }}
                           className={`rounded-lg px-2.5 py-1 transition ${
-                            viewMode !== 'original' && !showHandles
-                              ? 'bg-[#7846FF] text-white shadow-2xs'
+                            viewMode === 'compare' && !showHandles
+                              ? 'bg-[#1553A2] text-white shadow-2xs'
                               : 'text-slate-600 hover:text-slate-900'
                           }`}
+                          title="Kéo thanh trượt để so sánh trực quan ảnh hiện trạng Trước và Sau khi lắp màn hình LED AI"
                         >
-                          ✨ Kết quả AI (v{currentVersion.versionNumber})
+                          🔀 Kéo So sánh Trước/Sau
                         </button>
-                      </div>
-                    )}
-                    {(!selectedPhoto || !currentVersion) && (
-                      <div className="sr-only">
-                        <button
-                          type="button"
-                          data-testid="view-mode-original"
-                          onClick={() => setViewMode('original')}
-                        >
-                          Ảnh gốc
-                        </button>
-                        <button
-                          type="button"
-                          data-testid="view-mode-result"
-                          onClick={() => setViewMode('result')}
-                        >
-                          Kết quả AI
-                        </button>
-                      </div>
-                    )}
+                      )}
+                      <button
+                        type="button"
+                        data-testid="view-mode-bom"
+                        onClick={() => {
+                          setShowHandles(false);
+                          setViewMode('bom');
+                        }}
+                        className={`rounded-lg px-2.5 py-1 transition ${
+                          viewMode === 'bom'
+                            ? 'bg-[#0BAF7C] text-white shadow-2xs'
+                            : 'text-emerald-800 hover:text-emerald-950'
+                        }`}
+                        title="Xem sơ đồ ghép Cabin tiêu chuẩn 640×480mm và Bảng bóc tách khối lượng vật tư (BOM)"
+                      >
+                        📐 Sơ đồ Cabin &amp; BOM
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-1.5">
+                    {viewMode !== 'bom' && (
+                      <div className="hidden sm:inline-flex items-center rounded-xl border border-slate-200 bg-slate-50 px-1 py-0.5 text-[11px] font-bold text-slate-700">
+                        <button
+                          type="button"
+                          onClick={() => setZoomLevel((z) => Math.max(60, z - 15))}
+                          className="rounded px-1.5 py-0.5 hover:bg-white"
+                          title="Thu nhỏ"
+                        >
+                          <Minus className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setZoomLevel(100)}
+                          className="px-1.5 text-[10px] font-extrabold text-slate-600 hover:text-[#1553A2]"
+                          title="Bấm để đưa tỷ lệ thu phóng về 100%"
+                        >
+                          {zoomLevel}%
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setZoomLevel((z) => Math.min(200, z + 15))}
+                          className="rounded px-1.5 py-0.5 hover:bg-white"
+                          title="Phóng to kiểm tra chi tiết đường gióng"
+                        >
+                          <Plus className="h-3 w-3" />
+                        </button>
+                      </div>
+                    )}
+
                     {showHandles && (
                       <>
                         <button
@@ -3181,7 +3617,7 @@ export function AiDesignWorkspace() {
                       </>
                     )}
 
-                    {(selectedPhoto || currentVersion) && (
+                    {(selectedPhoto || currentVersion) && viewMode !== 'bom' && (
                       <a
                         href={
                           showHandles || viewMode === 'original' || !currentVersion
@@ -3230,9 +3666,157 @@ export function AiDesignWorkspace() {
                   </div>
                 </div>
 
-                {/* MAIN VIEWPORT: SHOWS AI-EDITED IMAGE, SITE PHOTO, OR CLEAN UPLOAD DROPZONE WHEN NEW PROJECT HAS NO PHOTOS */}
+                {/* MAIN VIEWPORT: SHOWS 2D CABINET BOM, BEFORE/AFTER SPLIT, AI-EDITED IMAGE, SITE PHOTO, OR UPLOAD DROPZONE */}
                 <div className="relative flex-1 min-h-0 overflow-hidden rounded-xl bg-slate-900 flex items-center justify-center [container-type:size]">
-                  {!selectedPhoto && !currentVersion ? (
+                  {viewMode === 'bom' ? (
+                    /* INTERACTIVE 2D CAD CABINET MATRIX & BILL OF MATERIALS (BOM) VIEW */
+                    <div className="flex h-full w-full flex-col overflow-y-auto bg-slate-950 p-4 text-white">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-900/90 px-4 py-2.5">
+                        <div>
+                          <div className="text-xs font-extrabold uppercase tracking-wider text-amber-400">
+                            BẢN VẼ KỸ THUẬT SƠ ĐỒ GHÉP CABIN &amp; BÓC TÁCH VẬT TƯ LED TOÀN TRUNG
+                          </div>
+                          <div className="mt-0.5 text-xs text-slate-300">
+                            Dự án: <strong className="text-white">{currentProject?.projectName}</strong> · Chủng loại:{' '}
+                            <strong className="text-cyan-300">{paramForm.pixelPitch}</strong> · Kích thước:{' '}
+                            <strong className="text-emerald-300">
+                              {Math.round(computedLiveSpecs.w * 1000)} × {Math.round(computedLiveSpecs.h * 1000)} mm (
+                              {computedLiveSpecs.areaM2} m²)
+                            </strong>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={exportingBlueprint || !currentProject}
+                            onClick={handleExportCadBlueprintVersion}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-[#0BAF7C] px-3.5 py-2 text-xs font-extrabold text-white shadow-md hover:bg-emerald-700 disabled:opacity-50 transition"
+                            title="Kết xuất sơ đồ Cabin 2D & Bảng vật tư BOM thành 1 Phiên bản Ảnh kỹ thuật để đính kèm báo giá và bàn giao Sales"
+                          >
+                            <FileSpreadsheet className="h-4 w-4" />
+                            <span>
+                              {exportingBlueprint
+                                ? 'Đang xuất bản vẽ...'
+                                : '📸 Xuất Bản Vẽ Sơ Đồ Cabin & BOM thành Phiên bản AI'}
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid flex-1 min-h-0 grid-cols-1 lg:grid-cols-12 gap-4">
+                        {/* Left 7 cols: Interactive 2D Cabinet Grid Matrix */}
+                        <div className="lg:col-span-7 flex flex-col items-center justify-center rounded-xl border border-slate-800 bg-[#0B1528] p-4 relative">
+                          <div className="mb-2 text-center">
+                            <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/40 bg-cyan-950/70 px-3 py-0.5 text-[11px] font-extrabold text-cyan-300">
+                              <span>
+                                NGANG: {Math.round(computedLiveSpecs.w * 1000)} mm ({computedLiveSpecs.cabinetCols} Cột Cabin × 640mm)
+                              </span>
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-3 w-full justify-center">
+                            <div className="hidden sm:flex flex-col items-center justify-center rounded-lg border border-cyan-400/30 bg-cyan-950/50 px-2 py-3 text-[11px] font-extrabold text-cyan-300 [writing-mode:vertical-rl] rotate-180">
+                              CAO: {Math.round(computedLiveSpecs.h * 1000)} mm ({computedLiveSpecs.cabinetRows} Hàng × 480mm)
+                            </div>
+
+                            <div
+                              className="grid gap-1 rounded-lg border-2 border-amber-400/80 bg-slate-950 p-2 shadow-xl max-w-full overflow-auto"
+                              style={{
+                                gridTemplateColumns: `repeat(${Math.min(14, computedLiveSpecs.cabinetCols)}, minmax(34px, 1fr))`,
+                              }}
+                            >
+                              {Array.from({
+                                length:
+                                  Math.min(14, computedLiveSpecs.cabinetCols) *
+                                  Math.min(10, computedLiveSpecs.cabinetRows),
+                              }).map((_, idx) => {
+                                const c = (idx % Math.min(14, computedLiveSpecs.cabinetCols)) + 1;
+                                const r = Math.floor(idx / Math.min(14, computedLiveSpecs.cabinetCols)) + 1;
+                                return (
+                                  <div
+                                    key={`cab-${r}-${c}`}
+                                    className="flex flex-col items-center justify-center rounded border border-cyan-500/40 bg-gradient-to-br from-blue-950/90 to-slate-900 px-1.5 py-2 text-center hover:border-amber-400 transition"
+                                    title={`Cabin C${r}-${c} (640×480mm · 6 Module 320×160mm)`}
+                                  >
+                                    <span className="text-[10px] font-extrabold text-cyan-200">
+                                      C{r}-{c}
+                                    </span>
+                                    <span className="text-[8px] font-semibold text-slate-400">
+                                      640×480
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[11px] text-slate-300">
+                            <span className="rounded-md bg-slate-800 px-2.5 py-1 font-bold text-amber-300">
+                              Tổng: {computedLiveSpecs.cabinetCount} Cabin nhôm đúc (640×480mm)
+                            </span>
+                            <span className="rounded-md bg-slate-800 px-2.5 py-1 font-bold text-emerald-300">
+                              Tổng Module: {computedLiveSpecs.moduleCount} tấm (320×160mm)
+                            </span>
+                            <span className="rounded-md bg-slate-800 px-2.5 py-1 font-bold text-cyan-300">
+                              Độ phân giải: {computedLiveSpecs.resW} × {computedLiveSpecs.resH} px
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Right 5 cols: Bill of Materials (BOM) Table */}
+                        <div className="lg:col-span-5 flex flex-col justify-between rounded-xl border border-slate-800 bg-slate-900/90 p-4">
+                          <div>
+                            <h4 className="text-xs font-extrabold uppercase tracking-wider text-amber-400 mb-2.5">
+                              BẢNG BÓC TÁCH KHỐI LƯỢNG VẬT TƯ CHÍNH (BOM)
+                            </h4>
+                            <div className="divide-y divide-slate-800 text-xs">
+                              {[
+                                {
+                                  label: '1. Chủng loại Module LED',
+                                  val: `${paramForm.pixelPitch} (${paramForm.screenStyle === 'curved' ? 'Màn cong' : paramForm.screenStyle === 'corner_90' ? 'Góc 90°' : 'Màn phẳng'})`,
+                                },
+                                {
+                                  label: '2. Kích thước hiển thị (W×H)',
+                                  val: `${Math.round(computedLiveSpecs.w * 1000)} × ${Math.round(computedLiveSpecs.h * 1000)} mm (${computedLiveSpecs.areaM2} m²)`,
+                                },
+                                {
+                                  label: '3. Số lượng Cabin (640×480mm)',
+                                  val: `${computedLiveSpecs.cabinetCols} cột × ${computedLiveSpecs.cabinetRows} hàng = ${computedLiveSpecs.cabinetCount} Cabin`,
+                                },
+                                {
+                                  label: '4. Số lượng Module (320×160mm)',
+                                  val: `${computedLiveSpecs.moduleCount} Module (+ ${Math.max(4, Math.ceil(computedLiveSpecs.moduleCount * 0.03))} Module dự phòng)`,
+                                },
+                                {
+                                  label: '5. Độ phân giải điểm ảnh',
+                                  val: `${computedLiveSpecs.resW} × ${computedLiveSpecs.resH} px (${((computedLiveSpecs.resW * computedLiveSpecs.resH) / 1_000_000).toFixed(2)} MP)`,
+                                },
+                                {
+                                  label: '6. Bộ nguồn 5V-60A & Card thu',
+                                  val: `${computedLiveSpecs.cabinetCount} Nguồn CL · ${computedLiveSpecs.cabinetCount} Card thu Novastar`,
+                                },
+                                {
+                                  label: '7. Công suất điện (TB / Max)',
+                                  val: `${computedLiveSpecs.avgKw} kW / ${computedLiveSpecs.maxKw} kW (Tủ điện 3 pha)`,
+                                },
+                              ].map((item) => (
+                                <div key={item.label} className="flex items-center justify-between gap-2 py-2">
+                                  <span className="text-slate-400 font-medium">{item.label}</span>
+                                  <span className="font-extrabold text-white text-right">{item.val}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-950/40 p-2.5 text-[11px] text-emerald-200">
+                            💡 <strong>Mẹo kỹ thuật:</strong> Bấm nút{' '}
+                            <strong className="text-white">&ldquo;📸 Xuất Bản Vẽ Sơ Đồ Cabin &amp; BOM&rdquo;</strong>{' '}
+                            ở góc trên để lưu sơ đồ này vào danh sách Phiên bản của dự án và tự động gửi kèm sang Hồ sơ Lead cho Sales báo giá!
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : !selectedPhoto && !currentVersion ? (
                     <div className="flex max-w-lg flex-col items-center justify-center p-8 text-center text-white">
                       <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-500/20 border border-blue-400/30 text-cyan-300">
                         <Upload className="h-7 w-7" />
@@ -3279,15 +3863,57 @@ export function AiDesignWorkspace() {
                         transform: `scale(${zoomLevel / 100})`,
                         transformOrigin: 'center center',
                         transition:
-                          draggingPointIdx !== null || draggingHandle
+                          draggingPointIdx !== null || draggingHandle || draggingCompare
                             ? 'none'
                             : 'transform 0.15s ease-out',
                       }}
                       className={`relative select-none overflow-hidden rounded-xl bg-slate-900 shadow-lg ${
-                        showHandles ? 'cursor-crosshair' : ''
+                        showHandles ? 'cursor-crosshair' : viewMode === 'compare' ? 'cursor-ew-resize' : ''
                       }`}
                     >
-                      {viewMode === 'original' || showHandles || !currentVersion ? (
+                      {viewMode === 'compare' && selectedPhoto && currentVersion ? (
+                        /* INTERACTIVE BEFORE / AFTER SPLIT SLIDER */
+                        <div
+                          className="relative h-full w-full select-none"
+                          onMouseDown={() => setDraggingCompare(true)}
+                        >
+                          {/* Full AI Result Image (After) as bottom layer */}
+                          <img
+                            data-testid="canvas-result-image"
+                            src={versionImageUrl}
+                            alt={`Phiên bản AI v${currentVersion.versionNumber}`}
+                            className="h-full w-full object-cover"
+                          />
+                          {/* Clipped Original Site Photo (Before) as top layer */}
+                          <div
+                            className="absolute inset-0 overflow-hidden"
+                            style={{ clipPath: `inset(0 ${100 - compareSplit}% 0 0)` }}
+                          >
+                            <img
+                              data-testid="canvas-original-image"
+                              src={sitePhotoUrl}
+                              alt={selectedPhoto.name}
+                              className="h-full w-full object-cover"
+                            />
+                          </div>
+                          {/* Labels */}
+                          <span className="pointer-events-none absolute left-3 top-3 rounded-lg bg-slate-900/80 px-2.5 py-1 text-[11px] font-extrabold text-white shadow">
+                            📷 TRƯỚC KHI LẮP (Ảnh gốc)
+                          </span>
+                          <span className="pointer-events-none absolute right-3 top-3 rounded-lg bg-[#7846FF]/90 px-2.5 py-1 text-[11px] font-extrabold text-white shadow">
+                            ✨ SAU KHI LẮP LED AI (v{currentVersion.versionNumber})
+                          </span>
+                          {/* Vertical Slider Line & Handle */}
+                          <div
+                            className="pointer-events-none absolute inset-y-0 w-0.5 bg-white shadow-[0_0_12px_rgba(0,0,0,0.8)]"
+                            style={{ left: `${compareSplit}%` }}
+                          >
+                            <div className="pointer-events-auto absolute top-1/2 -translate-x-1/2 -translate-y-1/2 flex h-9 w-9 cursor-ew-resize items-center justify-center rounded-full border-2 border-white bg-[#1553A2] text-xs font-extrabold text-white shadow-xl">
+                              ⇄
+                            </div>
+                          </div>
+                        </div>
+                      ) : viewMode === 'original' || showHandles || !currentVersion ? (
                         <img
                           data-testid="canvas-original-image"
                           src={sitePhotoUrl}
@@ -3435,7 +4061,7 @@ export function AiDesignWorkspace() {
                   )}
                 </div>
 
-                {/* BOTTOM STRIP: ONLY AI-EDITED VERSIONS (NO ORIGINAL PHOTO OR FAKE 3D CARDS) */}
+                {/* BOTTOM STRIP: AI-EDITED VERSIONS WITH RENAME (✎) & DELETE (×) ACTIONS */}
                 <div className="mt-3 shrink-0">
                   <div className="mb-1.5 flex items-center justify-between text-[11px] font-bold text-slate-600">
                     <span>
@@ -3443,28 +4069,36 @@ export function AiDesignWorkspace() {
                       phiên bản)
                     </span>
                     <span className="text-slate-400">
-                      Bấm vào phiên bản bất kỳ để xem lại hoặc phê duyệt chốt
+                      Bấm vào phiên bản để xem lại · Di chuột lên thẻ để đổi tên (✎) hoặc xoá (×)
                     </span>
                   </div>
                   <div className="flex gap-2.5 overflow-x-auto pb-1">
                     {(currentProject?.assetVersions || []).map((ver) => {
                       const isSelectedVer =
                         !showHandles &&
+                        viewMode !== 'bom' &&
                         (selectedVersionId === ver.id || currentVersion?.id === ver.id);
                       const isPosterVer =
                         /poster|banner/i.test(ver.promptUsed || '') ||
                         currentProject?.designType === 'banner';
+                      const isCadBlueprintVer = /Sơ đồ ghép Cabin|BOM/i.test(ver.promptUsed || '');
+                      const customTitle =
+                        ver.promptUsed &&
+                        !isCadBlueprintVer &&
+                        !/^\s*@(?:taoanh|taoanhposter)/i.test(ver.promptUsed.trim()) &&
+                        ver.promptUsed.trim().length <= 42
+                          ? ver.promptUsed.trim()
+                          : null;
                       return (
-                        <button
+                        <div
                           key={ver.id}
-                          type="button"
                           data-testid={`version-card-v${ver.versionNumber}`}
                           onClick={() => {
                             setSelectedVersionId(ver.id);
                             setShowHandles(false);
                             setViewMode('result');
                           }}
-                          className="group flex w-44 shrink-0 flex-col text-left focus:outline-none"
+                          className="group relative flex w-44 shrink-0 cursor-pointer flex-col text-left focus:outline-none"
                         >
                           <div
                             className={`relative h-20 w-full overflow-hidden rounded-xl border-2 bg-slate-900 transition ${
@@ -3483,6 +4117,77 @@ export function AiDesignWorkspace() {
                                 Đã chốt
                               </span>
                             )}
+                            {/* Hover Rename & Delete controls */}
+                            <div
+                              className="absolute left-1.5 top-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!currentProject) return;
+                                  const targetPid = currentProject.id;
+                                  setPromptModal({
+                                    title: `Đổi tên Phiên bản AI v${ver.versionNumber}`,
+                                    label: 'Nhập tên gợi nhớ cho phương án thiết kế này:',
+                                    value:
+                                      customTitle ||
+                                      `Phương án v${ver.versionNumber} (${paramForm.pixelPitch})`,
+                                    placeholder: 'VD: Phương án P2.5 Kèm đường gióng CAD',
+                                    onConfirm: async (newLabel) => {
+                                      if (!newLabel.trim()) return;
+                                      await apiRequest(`/api/v1/design/${targetPid}`, {
+                                        method: 'PATCH',
+                                        csrfToken: user?.csrfToken,
+                                        body: {
+                                          action: 'update_project',
+                                          renameVersionId: ver.id,
+                                          renameVersionLabel: newLabel.trim(),
+                                        },
+                                      });
+                                      setSuccessToast(
+                                        `Đã đổi tên Phiên bản v${ver.versionNumber} thành "${newLabel.trim()}".`
+                                      );
+                                      await loadData(targetPid);
+                                    },
+                                  });
+                                }}
+                                className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-900/80 text-[10px] font-bold text-white hover:bg-[#1553A2]"
+                                title="Đổi tên phiên bản này"
+                              >
+                                ✎
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!currentProject) return;
+                                  const targetPid = currentProject.id;
+                                  setConfirmModal({
+                                    title: `Xoá Phiên bản AI v${ver.versionNumber}`,
+                                    subtitle: `Dự án: ${currentProject.projectName}`,
+                                    message: `Bạn có chắc chắn muốn xoá Phiên bản AI v${ver.versionNumber} khỏi dự án này?`,
+                                    confirmLabel: 'Xoá phiên bản',
+                                    onConfirm: async () => {
+                                      await apiRequest(
+                                        `/api/v1/design/${targetPid}?versionId=${ver.id}`,
+                                        {
+                                          method: 'DELETE',
+                                          csrfToken: user?.csrfToken,
+                                        }
+                                      );
+                                      setSuccessToast(
+                                        `Đã xoá Phiên bản AI v${ver.versionNumber}.`
+                                      );
+                                      await loadData(targetPid);
+                                    },
+                                  });
+                                }}
+                                className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-900/80 text-xs font-bold text-white hover:bg-red-600"
+                                title="Xoá phiên bản này"
+                              >
+                                ×
+                              </button>
+                            </div>
                           </div>
                           <span
                             className={`mt-1 truncate rounded-md px-1.5 py-0.5 text-center text-[11px] font-extrabold ${
@@ -3490,12 +4195,20 @@ export function AiDesignWorkspace() {
                                 ? 'bg-purple-100 text-[#6D28D9]'
                                 : 'text-slate-700 group-hover:text-[#6D28D9]'
                             }`}
+                            title={customTitle || ver.promptUsed || ''}
                           >
-                            Phiên bản AI v{ver.versionNumber}:{' '}
-                            {isPosterVer ? '@TaoAnhPoster' : `@TaoAnh ${paramForm.pixelPitch}`}
+                            {customTitle
+                              ? `v${ver.versionNumber}: ${customTitle}`
+                              : `Phiên bản AI v${ver.versionNumber}: ${
+                                  isCadBlueprintVer
+                                    ? 'Bản vẽ Cabin & BOM'
+                                    : isPosterVer
+                                      ? '@TaoAnhPoster'
+                                      : `@TaoAnh ${paramForm.pixelPitch}`
+                                }`}
                             {isSelectedVer ? ' [Đang xem]' : ''}
                           </span>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -3812,6 +4525,48 @@ export function AiDesignWorkspace() {
                   </div>
                 </div>
 
+                {/* 1-Click LED Screen Visual Theme & CAD Dimension Overlay Bar */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-2 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2 text-[11px]">
+                    <span className="font-extrabold text-slate-700">
+                      🎨 Chủ đề hiển thị trên màn hình LED:
+                    </span>
+                    <label className="inline-flex cursor-pointer items-center gap-1 font-bold text-[#1553A2]">
+                      <input
+                        type="checkbox"
+                        checked={includeCadOverlay}
+                        onChange={(e) => setIncludeCadOverlay(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded accent-[#1553A2]"
+                      />
+                      <span>📏 Kèm đường gióng CAD (mm)</span>
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {(
+                      [
+                        { id: 'gala_red', label: '🔴 Đỏ Sự kiện' },
+                        { id: 'corp_navy', label: '🔵 Hội nghị 4K' },
+                        { id: 'vivid_commercial', label: '🟡 Showroom' },
+                        { id: 'factory_andon', label: '🟢 Andon Nhà máy' },
+                        { id: 'mapped_poster', label: '🖼️ Áp Poster' },
+                      ] as const
+                    ).map((th) => (
+                      <button
+                        key={th.id}
+                        type="button"
+                        onClick={() => setLedScreenVisualTheme(th.id)}
+                        className={`rounded-lg px-2 py-1 text-[10px] font-extrabold transition ${
+                          ledScreenVisualTheme === th.id
+                            ? 'bg-[#1553A2] text-white shadow-2xs'
+                            : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        {th.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Clean 2x2 Action Buttons Grid (Never clips or overflows) */}
                 <div className="grid grid-cols-2 gap-1.5">
                   <button
@@ -3826,7 +4581,7 @@ export function AiDesignWorkspace() {
                       handlePromptChange(
                         `@TaoAnh: ${
                           clean ||
-                          `Ghép màn hình LED ${paramForm.pixelPitch} kích thước ${Math.round(paramForm.screenWidthM * 1000)}×${Math.round(paramForm.screenHeightM * 1000)}mm vào các điểm chạm đã chấm trên ảnh, kèm đường gióng kích thước kỹ thuật`
+                          `Ghép màn hình LED ${paramForm.pixelPitch} kích thước ${Math.round(paramForm.screenWidthM * 1000)}×${Math.round(paramForm.screenHeightM * 1000)}mm vào các điểm chạm đã chấm trên ảnh${includeCadOverlay ? ', kèm đường gióng kích thước kỹ thuật (mm)' : ''}`
                         }`
                       );
                     }}
@@ -3838,6 +4593,7 @@ export function AiDesignWorkspace() {
                   <button
                     type="button"
                     onClick={() => {
+                      setIncludeCadOverlay(true);
                       handlePromptChange(
                         `@TaoAnh: Cận cảnh chi tiết đường gióng kỹ thuật màn hình LED ${paramForm.pixelPitch} kích thước ${Math.round(paramForm.screenWidthM * 1000)}×${Math.round(paramForm.screenHeightM * 1000)}mm theo đơn vị mm`
                       );
@@ -3871,6 +4627,7 @@ export function AiDesignWorkspace() {
                   <button
                     type="button"
                     onClick={() => {
+                      setLedScreenVisualTheme('mapped_poster');
                       handlePromptChange(
                         `@TaoAnh: Áp mẫu Banner Poster vừa thiết kế lên màn hình LED ${paramForm.pixelPitch} (${Math.round(paramForm.screenWidthM * 1000)}×${Math.round(paramForm.screenHeightM * 1000)}mm) tại các điểm chạm đã chấm trên công trình`
                       );

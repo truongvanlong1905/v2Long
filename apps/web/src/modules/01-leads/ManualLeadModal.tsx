@@ -90,6 +90,10 @@ const ProductCheckboxGrid = memo(function ProductCheckboxGrid({
   onAddCustomItem,
   onRemoveCustomItem,
 }: ProductCheckboxGridProps) {
+  const [activeCategory, setActiveCategory] = useState<'MAN_HINH_LED' | 'BANG_DIEN_TU' | 'KHAC'>(
+    'MAN_HINH_LED',
+  );
+  const [productSearch, setProductSearch] = useState('');
   const [customDraft, setCustomDraft] = useState('');
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -101,17 +105,66 @@ const ProductCheckboxGrid = memo(function ProductCheckboxGrid({
     setCustomDraft('');
   };
 
+  const categoryDefs = [
+    {
+      category: 'MAN_HINH_LED' as const,
+      title: 'Màn hình LED',
+      count: products.filter((p) => p.category === 'MAN_HINH_LED').length,
+    },
+    {
+      category: 'BANG_DIEN_TU' as const,
+      title: 'Bảng điện tử & Hiển thị số',
+      count: products.filter((p) => p.category === 'BANG_DIEN_TU').length,
+    },
+    {
+      category: 'KHAC' as const,
+      title: 'Dịch vụ / Nhu cầu khác',
+      count: products.filter((p) => p.category === 'KHAC').length,
+    },
+  ];
+
+  const visibleProducts = useMemo(() => {
+    const q = productSearch.trim().toLowerCase();
+    return products.filter((p) => {
+      if (q) {
+        return cleanProductLabel(p.productName).toLowerCase().includes(q);
+      }
+      return p.category === activeCategory;
+    });
+  }, [products, activeCategory, productSearch]);
+
   return (
-    <div className="p-4 rounded-xl border border-slate-200/90 bg-white space-y-3.5">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+    <div className="p-4 rounded-xl border border-slate-200/90 bg-white space-y-3">
+      {/* Header: Sản phẩm quan tâm + Đã chọn N sản phẩm */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Layers className="w-4 h-4 text-[#1E3A8A]" />
-          <span className="font-bold text-slate-900 text-sm">
-            2. Danh mục sản phẩm &amp; dịch vụ *
-          </span>
-          <span className="px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-[#1E3A8A] text-xs font-bold">
-            Đã chọn {selectedIds.length + customItems.length}
-          </span>
+          <span className="font-bold text-slate-900 text-sm">Sản phẩm quan tâm *</span>
+        </div>
+        <span className="px-2.5 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-[#1E3A8A] text-xs font-bold">
+          Đã chọn {selectedIds.length + customItems.length} sản phẩm
+        </span>
+      </div>
+
+      {/* Thanh tìm sản phẩm + Các thẻ sản phẩm đã chọn */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+        <div className="relative w-full sm:w-80 shrink-0">
+          <input
+            type="text"
+            value={productSearch}
+            onChange={(e) => setProductSearch(e.target.value)}
+            placeholder="Tìm sản phẩm (ví dụ: Màn hình LED, Bảng điện tử...)"
+            className="w-full h-8 px-3 rounded-lg border border-slate-200 bg-slate-50/70 focus:bg-white text-xs text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
+          />
+          {productSearch && (
+            <button
+              type="button"
+              onClick={() => setProductSearch('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 text-xs font-bold"
+            >
+              ×
+            </button>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
@@ -120,14 +173,14 @@ const ProductCheckboxGrid = memo(function ProductCheckboxGrid({
             .map((sel) => (
               <span
                 key={sel.id}
-                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-[#1E3A8A] text-white text-xs font-medium"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-[#1E3A8A] text-xs font-semibold"
               >
                 <span>{cleanProductLabel(sel.productName)}</span>
                 {selectedIds.length > 1 && (
                   <button
                     type="button"
                     onClick={() => onToggleProduct(sel.id)}
-                    className="hover:text-rose-200 ml-0.5"
+                    className="hover:text-rose-600 ml-0.5 font-bold"
                     title="Bỏ chọn"
                   >
                     ×
@@ -138,13 +191,13 @@ const ProductCheckboxGrid = memo(function ProductCheckboxGrid({
           {customItems.map((item) => (
             <span
               key={item}
-              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-amber-600 text-white text-xs font-medium"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-300 text-amber-900 text-xs font-semibold"
             >
               <span>{item}</span>
               <button
                 type="button"
                 onClick={() => onRemoveCustomItem(item)}
-                className="hover:text-rose-200 ml-0.5"
+                className="hover:text-rose-600 ml-0.5 font-bold"
                 title="Xóa mục này"
               >
                 ×
@@ -154,122 +207,86 @@ const ProductCheckboxGrid = memo(function ProductCheckboxGrid({
         </div>
       </div>
 
-      {/* 3-Column Synchronized Product & Custom Service Selector */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-        {(
-          [
-            {
-              category: 'MAN_HINH_LED' as const,
-              title: 'Màn hình LED Indoor & Outdoor',
-              dot: 'bg-blue-600',
-              activeCls:
-                'bg-blue-50 text-[#1E3A8A] border-blue-300 font-semibold shadow-2xs',
-            },
-            {
-              category: 'BANG_DIEN_TU' as const,
-              title: 'Bảng điện tử & Hiển thị số',
-              dot: 'bg-emerald-600',
-              activeCls:
-                'bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold shadow-2xs',
-            },
-            {
-              category: 'KHAC' as const,
-              title: 'Dịch vụ / Nhu cầu khác',
-              dot: 'bg-amber-500',
-              activeCls:
-                'bg-amber-50 text-amber-900 border-amber-300 font-semibold shadow-2xs',
-            },
-          ]
-        ).map((grp) => {
-          const grpProducts = products.filter((p) => p.category === grp.category);
-          return (
-            <div
-              key={grp.category}
-              className="p-3 rounded-xl bg-slate-50/70 border border-slate-200/80 flex flex-col justify-between space-y-2.5"
-            >
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                    <span className={`w-2 h-2 rounded-full ${grp.dot}`} />
-                    <span>{grp.title}</span>
-                  </span>
-                  <span className="text-[11px] text-slate-400">
-                    {grpProducts.length} mục
-                  </span>
-                </div>
+      {/* Bố cục 2 cột: Cột trái chọn nhóm (Bấm mục nào sổ mục đó ra bên phải) */}
+      <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start pt-1">
+        {/* Cột trái: Danh mục nhóm */}
+        <div className="sm:col-span-4 flex flex-col gap-1">
+          {categoryDefs.map((cat) => {
+            const isActive = !productSearch.trim() && activeCategory === cat.category;
+            return (
+              <button
+                key={cat.category}
+                type="button"
+                onClick={() => {
+                  setProductSearch('');
+                  setActiveCategory(cat.category);
+                }}
+                className={`w-full text-left px-3 py-2 rounded-lg text-xs transition flex items-center justify-between ${
+                  isActive
+                    ? 'bg-blue-50/90 text-[#1E3A8A] font-bold border-l-4 border-l-[#2563EB]'
+                    : 'text-slate-700 hover:bg-slate-50 font-medium'
+                }`}
+              >
+                <span>{cat.title}</span>
+                <span className="text-[11px] text-slate-400">({cat.count})</span>
+              </button>
+            );
+          })}
+        </div>
 
-                <div className="flex flex-wrap gap-1.5">
-                  {grpProducts.map((p) => {
-                    const checked = selectedSet.has(p.id);
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => onToggleProduct(p.id)}
-                        className={`px-2.5 py-1 rounded-lg border text-xs transition text-left ${
-                          checked
-                            ? grp.activeCls
-                            : 'bg-white text-slate-600 border-slate-200/90 hover:border-slate-300 hover:text-slate-900'
-                        }`}
-                      >
-                        {checked ? '✓ ' : '+ '}
-                        {cleanProductLabel(p.productName)}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+        {/* Cột phải: Chỉ hiển thị các sản phẩm của mục đang chọn */}
+        <div className="sm:col-span-8 p-3 rounded-xl border border-slate-200/90 bg-slate-50/40 space-y-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {visibleProducts.map((p) => {
+              const checked = selectedSet.has(p.id);
+              return (
+                <label
+                  key={p.id}
+                  onClick={() => onToggleProduct(p.id)}
+                  className={`flex items-center gap-2.5 p-2 rounded-lg border text-xs cursor-pointer select-none transition ${
+                    checked
+                      ? 'bg-blue-50/80 border-blue-300 text-[#1E3A8A] font-semibold'
+                      : 'bg-white border-slate-200/80 text-slate-700 hover:border-slate-300'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => {}}
+                    className="w-4 h-4 accent-[#2563EB] rounded pointer-events-none"
+                  />
+                  <span className="truncate">{cleanProductLabel(p.productName)}</span>
+                </label>
+              );
+            })}
+          </div>
 
-              {grp.category === 'KHAC' && (
-                <div className="pt-2 border-t border-slate-200/80 space-y-2">
-                  <div className="flex gap-1.5">
-                    <input
-                      type="text"
-                      value={customDraft}
-                      onChange={(e) => setCustomDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleCommitCustom();
-                        }
-                      }}
-                      placeholder="Nhập dịch vụ / nhu cầu khác..."
-                      className="flex-1 min-w-0 h-8 px-2.5 rounded-lg border border-amber-300 bg-white text-xs text-slate-800 focus:border-[#1E3A8A] outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleCommitCustom}
-                      className="h-8 px-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold inline-flex items-center gap-1 shrink-0 transition"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Thêm</span>
-                    </button>
-                  </div>
-
-                  {customItems.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {customItems.map((item) => (
-                        <span
-                          key={item}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-xs font-semibold"
-                        >
-                          <span>✓ {item}</span>
-                          <button
-                            type="button"
-                            onClick={() => onRemoveCustomItem(item)}
-                            className="text-amber-700 hover:text-red-600 ml-0.5"
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+          {(activeCategory === 'KHAC' || productSearch.trim() !== '') && (
+            <div className="pt-2 border-t border-slate-200/80 flex gap-1.5">
+              <input
+                type="text"
+                value={customDraft}
+                onChange={(e) => setCustomDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleCommitCustom();
+                  }
+                }}
+                placeholder="Nhập thêm dịch vụ / nhu cầu khác..."
+                className="flex-1 min-w-0 h-8 px-2.5 rounded-lg border border-amber-300 bg-white text-xs text-slate-800 focus:border-[#1E3A8A] outline-none"
+              />
+              <button
+                type="button"
+                onClick={handleCommitCustom}
+                className="h-8 px-3 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold inline-flex items-center gap-1 shrink-0 transition"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Thêm</span>
+              </button>
             </div>
-          );
-        })}
+          )}
+        </div>
       </div>
     </div>
   );

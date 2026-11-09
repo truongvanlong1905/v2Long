@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@toantrung/database';
 import { hasBaPermission } from '@toantrung/contracts';
-import { jsonError } from '../../../../../../core/http';
+import { jsonError, jsonSuccess } from '../../../../../../core/http';
 import { requirePermissionSession } from '../../../../../../core/permissions';
 import { readPrivateBusinessFile } from '../../../../../../core/storage/private-files.service';
-import { shouldAnonymizeLeadForRole } from '../../../../../../modules/01-leads/service';
+import {
+  deleteLeadAttachment,
+  shouldAnonymizeLeadForRole,
+  updateLeadAttachment,
+} from '../../../../../../modules/01-leads/service';
 
 export async function GET(
   req: Request,
@@ -65,14 +69,115 @@ export async function GET(
     return jsonError('FILE_MISSING', 'Tệp vật lý không tồn tại trong kho lưu trữ riêng tư.', 404);
   }
 
+  const url = new URL(req.url);
+  const forceDownload = url.searchParams.get('download') === '1';
+  const isInlinePreviewable =
+    !forceDownload &&
+    (fileData.mimeType.startsWith('image/') ||
+      fileData.mimeType === 'application/pdf' ||
+      fileData.mimeType.startsWith('text/') ||
+      fileData.mimeType.startsWith('video/'));
+  const dispositionType = isInlinePreviewable ? 'inline' : 'attachment';
+  const asciiFallback = attachment.fileName.replace(/[^\x20-\x7E]/g, '_') || 'attachment';
+
   return new NextResponse(new Uint8Array(fileData.buffer), {
     status: 200,
     headers: {
       'Content-Type': fileData.mimeType,
-      'Content-Disposition': `inline; filename="${encodeURIComponent(attachment.fileName)}"`,
+      'Content-Disposition': `${dispositionType}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(attachment.fileName)}`,
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'private, no-store',
     },
   });
+}
+
+export async function PATCH(
+  req: Request,
+  context: { params: { attachmentId: string } },
+) {
+  const auth = await requirePermissionSession(req, 'ATTACHMENT_UPLOAD_VIEW');
+  if (!auth.ok) return auth.response;
+
+  if (shouldAnonymizeLeadForRole(auth.user.roleCode)) {
+    return jsonError(
+      'FORBIDDEN_ANONYMIZED_ROLE',
+      'Vai trò xem ẩn danh không có quyền chỉnh sửa tệp đính kèm.',
+      403,
+    );
+  }
+
+  const attachmentId = Number(context.params.attachmentId);
+  if (!Number.isInteger(attachmentId) || attachmentId <= 0) {
+    return jsonError('INVALID_ATTACHMENT_ID', 'Mã tệp đính kèm không hợp lệ.', 400);
+  }
+
+  try {
+    const body = (await req.json()) as {
+      fileName?: string;
+      attachmentType?: 'site_photo' | 'customer_drawing_doc' | 'other';
+      base64Data?: string;
+      mimeType?: string;
+    };
+
+    let fileBuffer: Buffer | null = null;
+    if (body.base64Data) {
+      const cleanB64 = body.base64Data.includes(',')
+        ? body.base64Data.split(',')[1] || ''
+        : body.base64Data;
+      fileBuffer = Buffer.from(cleanB64, 'base64');
+    }
+
+    const updated = await updateLeadAttachment({
+      actor: auth.user,
+      attachmentId,
+      fileName: body.fileName,
+      attachmentType: body.attachmentType,
+      fileBuffer,
+      declaredMimeType: body.mimeType || null,
+    });
+
+    return jsonSuccess({ id: updated.id, fileName: updated.fileName });
+  } catch (err) {
+    return jsonError(
+      'ATTACHMENT_UPDATE_FAILED',
+      err instanceof Error ? err.message : 'Không thể cập nhật tệp đính kèm.',
+      400,
+    );
+  }
+}
+
+export async function DELETE(
+  req: Request,
+  context: { params: { attachmentId: string } },
+) {
+  const auth = await requirePermissionSession(req, 'ATTACHMENT_UPLOAD_VIEW');
+  if (!auth.ok) return auth.response;
+
+  if (shouldAnonymizeLeadForRole(auth.user.roleCode)) {
+    return jsonError(
+      'FORBIDDEN_ANONYMIZED_ROLE',
+      'Vai trò xem ẩn danh không có quyền xóa tệp đính kèm.',
+      403,
+    );
+  }
+
+  const attachmentId = Number(context.params.attachmentId);
+  if (!Number.isInteger(attachmentId) || attachmentId <= 0) {
+    return jsonError('INVALID_ATTACHMENT_ID', 'Mã tệp đính kèm không hợp lệ.', 400);
+  }
+
+  try {
+    const deleted = await deleteLeadAttachment({
+      actor: auth.user,
+      attachmentId,
+    });
+    return jsonSuccess(deleted);
+  } catch (err) {
+    return jsonError(
+      'ATTACHMENT_DELETE_FAILED',
+      err instanceof Error ? err.message : 'Không thể xóa tệp đính kèm.',
+      400,
+    );
+  }
 }
 

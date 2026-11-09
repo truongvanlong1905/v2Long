@@ -135,6 +135,80 @@ export async function PATCH(
       return jsonSuccess({ id: leadId });
     }
 
+    if (action === 'send_reminder_nudge') {
+      const existing = await prisma.lead.findUnique({ where: { id: leadId } });
+      if (!existing) {
+        return jsonError('NOT_FOUND', 'Không tìm thấy hồ sơ Lead.', 404);
+      }
+      const reminderLabel = String(raw.reminderLabel || 'Nhắc xử lý hồ sơ Lead').trim();
+      const customMessage = String(raw.message || '').trim();
+      const noteText = customMessage
+        ? `[Nhắc việc tự động · ${reminderLabel}] ${customMessage}`
+        : `[Nhắc việc tự động · ${reminderLabel}] ${auth.user.fullName} đã gửi thông báo nhắc xử lý nhanh hồ sơ ${existing.leadCode}.`;
+
+      await prisma.leadActivity.create({
+        data: {
+          leadId,
+          actionType: 'add_note',
+          actionById: auth.user.id,
+          actorType: 'user',
+          note: noteText,
+        },
+      });
+
+      const targetUserId = existing.assignedSalesId || existing.createdByUserId || auth.user.id;
+      if (targetUserId) {
+        await prisma.notification.create({
+          data: {
+            userId: targetUserId,
+            title: `🔔 Nhắc việc: ${existing.companyName || existing.contactName || existing.leadCode}`,
+            summary: `${reminderLabel} (${existing.leadCode}) — Người gửi: ${auth.user.fullName}${customMessage ? ` · "${customMessage}"` : ''}`,
+            category: 'Nhắc việc Lead',
+            actionLabel: 'Mở xử lý ngay',
+            actionUrl: `/leads?highlight=${existing.id}`,
+            requiredPermission: 'LEAD_VIEW_OWN',
+          },
+        });
+      }
+
+      return jsonSuccess({ id: leadId, notifiedUserId: targetUserId });
+    }
+
+    if (action === 'quick_ack_reminder') {
+      const existing = await prisma.lead.findUnique({ where: { id: leadId } });
+      if (!existing) {
+        return jsonError('NOT_FOUND', 'Không tìm thấy hồ sơ Lead.', 404);
+      }
+      assertLeadMutationScope(auth.user, existing);
+      const ackType = String(raw.ackType || 'followed_up');
+      const noteContent = String(
+        raw.noteContent || 'Đã liên hệ chăm sóc & cập nhật tiến độ theo nhắc việc tự động.',
+      ).trim();
+
+      await prisma.$transaction(async (tx) => {
+        if (ackType === 'quote_responded') {
+          await tx.lead.update({
+            where: { id: leadId },
+            data: {
+              quoteRespondedAt: new Date(),
+              version: { increment: 1 },
+            },
+          });
+        }
+        await tx.leadActivity.create({
+          data: {
+            leadId,
+            actionType: 'add_note',
+            actionById: auth.user.id,
+            actorType: 'user',
+            note: `[Xử lý nhắc việc] ${noteContent}`,
+          },
+        });
+      });
+
+      return jsonSuccess({ id: leadId });
+    }
+
     const parsed = TransitionPipelineSchema.safeParse(raw);
     if (!parsed.success) {
       return jsonError(

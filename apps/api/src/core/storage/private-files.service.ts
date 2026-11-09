@@ -53,10 +53,26 @@ function detectMimeType(buffer: Buffer, declared: string, ext: string): string {
   if (normalizedExt === '.png') return 'image/png';
   if (normalizedExt === '.jpg' || normalizedExt === '.jpeg') return 'image/jpeg';
   if (normalizedExt === '.webp') return 'image/webp';
+  if (normalizedExt === '.gif') return 'image/gif';
+  if (normalizedExt === '.svg') return 'image/svg+xml';
+  if (normalizedExt === '.bmp') return 'image/bmp';
+  if (normalizedExt === '.heic' || normalizedExt === '.heif') return 'image/heic';
   if (normalizedExt === '.doc') return 'application/msword';
   if (normalizedExt === '.docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (normalizedExt === '.xls') return 'application/vnd.ms-excel';
   if (normalizedExt === '.xlsx') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (normalizedExt === '.csv') return 'text/csv; charset=utf-8';
+  if (normalizedExt === '.ppt') return 'application/vnd.ms-powerpoint';
+  if (normalizedExt === '.pptx') return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  if (normalizedExt === '.txt') return 'text/plain; charset=utf-8';
+  if (normalizedExt === '.zip') return 'application/zip';
+  if (normalizedExt === '.rar') return 'application/vnd.rar';
+  if (normalizedExt === '.7z') return 'application/x-7z-compressed';
+  if (normalizedExt === '.dwg') return 'image/vnd.dwg';
+  if (normalizedExt === '.dxf') return 'image/vnd.dxf';
+  if (normalizedExt === '.mp4') return 'video/mp4';
+  if (normalizedExt === '.mov') return 'video/quicktime';
+  if (normalizedExt === '.webm') return 'video/webm';
 
   return declared || 'application/octet-stream';
 }
@@ -139,6 +155,20 @@ export function readPrivateBusinessFile(storageObjectKeyOrPath: string): ReadPri
     };
   } catch {
     return null;
+  }
+}
+
+export function deletePrivateBusinessFile(storageObjectKeyOrPath: string): void {
+  if (!storageObjectKeyOrPath) return;
+  const normalizedKey = storageObjectKeyOrPath.replace(/\\/g, '/');
+  if (normalizedKey.includes('../') || normalizedKey.includes('/..')) return;
+  try {
+    const fullPath = path.resolve(APP_CONFIG.getStorageRoot(), normalizedKey);
+    if (fs.existsSync(fullPath)) {
+      fs.unlinkSync(fullPath);
+    }
+  } catch {
+    // Ignore file deletion errors
   }
 }
 

@@ -259,6 +259,107 @@ export async function ingestLeadWithTrackingIdempotent(
           }
         }
 
+        // Quy tắc 1 SĐT = 1 Hồ sơ Khách hàng duy nhất:
+        // Nếu SĐT đã tồn tại trong hệ thống (không phải Spam), tự động gộp / mở lại hồ sơ của SĐT đó thay vì tạo thêm nhiều dòng Lead trùng SĐT.
+        const existingPhoneLead = await tx.lead.findFirst({
+          where: {
+            phone: input.phone.trim(),
+            isSpam: false,
+          },
+          include: { tracking: true },
+          orderBy: { id: 'asc' },
+        });
+
+        if (existingPhoneLead) {
+          const prevStatus = existingPhoneLead.pipelineStatus;
+          const isWonBefore = prevStatus === 'won';
+          const isLostBefore = prevStatus === 'lost';
+          const nextDuplicateStatus = isWonBefore
+            ? 'won_returning'
+            : isLostBefore
+              ? 'lost_returning'
+              : 'duplicate_red';
+          const nextPipelineStatus = isWonBefore || isLostBefore ? 'new_lead' : prevStatus;
+          const sourceLabel =
+            input.selfReportedSource?.trim() ||
+            input.marketingSource ||
+            input.contactChannel;
+
+          const updatedLead = await tx.lead.update({
+            where: { id: existingPhoneLead.id },
+            data: {
+              pipelineStatus: nextPipelineStatus,
+              isDuplicateAlert: true,
+              duplicateStatus: nextDuplicateStatus,
+              contactName:
+                input.contactName?.trim() || existingPhoneLead.contactName || null,
+              companyName:
+                input.companyName?.trim() || existingPhoneLead.companyName || null,
+              projectName:
+                input.projectName?.trim() || existingPhoneLead.projectName || null,
+              email: input.email?.trim() || existingPhoneLead.email || null,
+              installationAddress:
+                input.installationAddress?.trim() ||
+                existingPhoneLead.installationAddress ||
+                null,
+              areaType: input.areaType || existingPhoneLead.areaType || null,
+              province:
+                input.province?.trim() || existingPhoneLead.province || null,
+              district:
+                input.district?.trim() || existingPhoneLead.district || null,
+              contactedAt: new Date(),
+              ...(isWonBefore || isLostBefore
+                ? { reopenCount: { increment: 1 } }
+                : {}),
+              version: { increment: 1 },
+            },
+          });
+
+          const mergedTracking = existingPhoneLead.tracking
+            ? await tx.marketingTracking.update({
+                where: { id: existingPhoneLead.tracking.id },
+                data: { isRepeatLead: true },
+              })
+            : await tx.marketingTracking.create({
+                data: {
+                  leadId: existingPhoneLead.id,
+                  intakeChannel: input.contactChannel,
+                  intakeSourceProvider: provider,
+                  intakeSourceAccountKey: accountKey,
+                  externalSubmissionId: submissionId,
+                  marketingSource: sourceLabel,
+                  sourceResolutionMethod: input.sourceResolutionMethod || 'manual',
+                  isRepeatLead: true,
+                },
+              });
+
+          const mergeNote = isWonBefore
+            ? `💎 [KHÁCH CŨ QUAY LẠI] Khách hàng SĐT ${input.phone.trim()} (đã từng Chốt thành công hợp đồng trước đây) liên hệ lại qua ${sourceLabel}${input.projectName ? ` · Dự án mới: ${input.projectName}` : ''}. Hệ thống tự động mở lại trên cùng hồ sơ SĐT để không tạo Lead trùng.`
+            : isLostBefore
+              ? `🔄 [KHÁCH QUAY LẠI HỎI MUA] Khách hàng SĐT ${input.phone.trim()} (từng hỏi trước đây nhưng chưa chốt · Lý do lần trước: ${existingPhoneLead.lostReason || 'Hoãn dự án / Chưa chốt'}) nay liên hệ lại tiếp tục muốn mua qua ${sourceLabel}. Hệ thống tự động mở lại hồ sơ gốc của SĐT này.`
+              : `⚠️ [TRÙNG SĐT - ĐÃ GỘP TỰ ĐỘNG] Khách hàng SĐT ${input.phone.trim()} gửi lại thông tin qua ${sourceLabel} khi hồ sơ đang mở (${prevStatus}). Đã gộp vào hồ sơ hiện tại của SĐT này.`;
+
+          await tx.leadActivity.create({
+            data: {
+              leadId: existingPhoneLead.id,
+              actionType: isWonBefore || isLostBefore ? 'reopen_lead' : 'add_note',
+              oldStatus: prevStatus,
+              newStatus: nextPipelineStatus,
+              transferReason: existingPhoneLead.lostReason || null,
+              actionById: input.createdByUserId ?? null,
+              actorType,
+              actorRef,
+              note: mergeNote,
+            },
+          });
+
+          return {
+            lead: updatedLead,
+            tracking: mergedTracking,
+            deduplicated: true,
+          };
+        }
+
         const lead = await tx.lead.create({
           data: {
             leadCode: input.leadCode,
