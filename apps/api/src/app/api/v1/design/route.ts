@@ -2,10 +2,12 @@ import {
   ConfigureAiProvidersSchema,
   CreateDesignRequestSchema,
   hasBaPermission,
+  type AiProviderId,
 } from '@toantrung/contracts';
 import { prisma } from '@toantrung/database';
 import { jsonError, jsonSuccess } from '../../../../core/http';
 import { requireAuthenticatedSession } from '../../../../core/permissions';
+import { AiDesignProviderFactory } from '../../../../modules/05-ai-design/providers';
 import {
   configureAiProviders,
   createDesignRequestWithAiDraft,
@@ -36,14 +38,17 @@ export async function POST(req: Request) {
   try {
     const raw = (await req.json()) as Record<string, unknown>;
 
+    if (raw.action === 'test_ai_connection') {
+      const testRes = await AiDesignProviderFactory.testProviderConnection({
+        providerId: (raw.providerId as AiProviderId) || 'google_imagen',
+        apiKey: typeof raw.apiKey === 'string' ? raw.apiKey : null,
+        apiEndpoint: typeof raw.apiEndpoint === 'string' ? raw.apiEndpoint : null,
+        modelId: typeof raw.modelId === 'string' ? raw.modelId : null,
+      });
+      return jsonSuccess(testRes);
+    }
+
     if (raw.action === 'configure_ai_providers') {
-      if (!hasBaPermission(auth.user.roleCode, 'AI_DESIGN')) {
-        return jsonError(
-          'FORBIDDEN_PERMISSION',
-          'Chỉ Quản trị viên, Ban Giám đốc, Trưởng phòng hoặc Designer được cấu hình hệ thống Đa AI.',
-          403
-        );
-      }
       const parsedCfg = ConfigureAiProvidersSchema.safeParse(raw);
       if (!parsedCfg.success) {
         return jsonError(

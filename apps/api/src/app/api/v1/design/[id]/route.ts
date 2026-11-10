@@ -7,7 +7,10 @@ import {
   UpdateDesignProjectSchema,
 } from '@toantrung/contracts';
 import { jsonError, jsonSuccess } from '../../../../../core/http';
-import { requirePermissionSession } from '../../../../../core/permissions';
+import {
+  requireAuthenticatedSession,
+  requirePermissionSession,
+} from '../../../../../core/permissions';
 import {
   addProjectPhoto,
   approveDesignAssetVersion,
@@ -25,7 +28,7 @@ export async function PATCH(
   req: Request,
   context: { params: { id: string } }
 ) {
-  const auth = await requirePermissionSession(req, 'AI_DESIGN');
+  const auth = await requireAuthenticatedSession(req);
   if (!auth.ok) return auth.response;
 
   const requestId = Number(context.params.id);
@@ -103,7 +106,7 @@ export async function POST(
   req: Request,
   context: { params: { id: string } }
 ) {
-  const auth = await requirePermissionSession(req, 'AI_DESIGN');
+  const auth = await requireAuthenticatedSession(req);
   if (!auth.ok) return auth.response;
 
   const requestId = Number(context.params.id);

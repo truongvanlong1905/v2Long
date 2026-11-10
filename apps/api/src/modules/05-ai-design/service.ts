@@ -28,7 +28,10 @@ import {
   type SessionUserDto,
   type UpdateDesignProjectDto,
 } from '@toantrung/contracts';
-import { savePrivateBusinessFile } from '../../core/storage/private-files.service';
+import {
+  readPrivateBusinessFile,
+  savePrivateBusinessFile,
+} from '../../core/storage/private-files.service';
 import { notifyLeadSalesOnDesignCompleted } from '../01-leads/service';
 import {
   AiDesignProviderFactory,
@@ -323,26 +326,23 @@ export async function listDesignRequestsForUser(user: SessionUserDto): Promise<{
           ]
         : [];
 
-    // Initial chat messages: use stored messages or a clean project-specific greeting
+    // Initial chat messages: filter out legacy rigid template messages and keep natural conversation
+    const cleanedStoredChat = (meta.chatMessages || []).filter(
+      (m) =>
+        !m.text?.includes('Phân tích Kỹ thuật Chuyên sâu (Chuẩn thi công LED Toàn Trung') &&
+        !m.text?.includes('Mình đã nhận được chia sẻ của bạn:')
+    );
     const chatMessages: DesignChatMessageDto[] =
-      meta.chatMessages && meta.chatMessages.length > 0
-        ? meta.chatMessages
+      cleanedStoredChat.length > 0
+        ? cleanedStoredChat
         : [
             {
               id: `msg-ai-welcome-${r.id}`,
               role: 'assistant',
-              text: [
-                `👋 **AI Tư vấn Kỹ thuật LED Toàn Trung (Miễn phí $0):**`,
-                `• Dự án đang chọn: **${meta.projectName || r.ledCategory || 'Dự án thiết kế LED'}**`,
-                `• Bạn có thể bấm **+ Thêm ảnh** ở cột trái để tải ảnh công trình lên, bấm **🎯 Chấm điểm trên ảnh** để đánh dấu vị trí lắp đặt, sau đó bấm **🔍 Phân tích ($0)** hoặc gọi **@TaoAnh** (ghép phối cảnh 3D LED) / **@TaoAnhPoster** (thiết kế Poster quảng cáo).`,
-              ].join('\n'),
+              text: `Chào bạn! 👋 Mình là Google Gemini (kết nối trực tiếp từ API Key Gmail của bạn). Bạn có thể trò chuyện, hỏi đáp với mình giống hệt như trên Gemini web nhé!`,
               timestamp: r.createdAt.toISOString(),
               chatMode: 'consultant_free',
-              suggestedTaoAnhPrompt:
-                r.requestType === 'banner'
-                  ? `@TaoAnhPoster: Thiết kế Poster quảng cáo màn hình LED cho dự án ${meta.projectName || 'Toàn Trung'} độ phân giải Full HD sắc nét`
-                  : `@TaoAnh: Ghép màn hình LED vào đúng các điểm chạm đã chấm trên ảnh hiện trạng công trình, kèm đường gióng kích thước kỹ thuật (mm)`,
-              modelUsed: 'AI Tư vấn Toàn Trung (Gemini Flash Free)',
+              modelUsed: 'Google gemini-3.5-flash-lite (Gmail Free)',
               cost: '$0.00',
               status: 'success',
             },
@@ -925,7 +925,8 @@ function buildConsultantReplyAndSuggestedPrompt(params: {
   pitch: string;
   screenStyle: 'flat' | 'curved' | 'corner_90';
   placementQuad?: QuadCoordinatesDto;
-}): { replyText: string; suggestedTaoAnhPrompt: string } {
+  history?: DesignChatMessageDto[];
+}): { replyText: string; suggestedTaoAnhPrompt?: string } {
   const {
     userText,
     designType,
@@ -939,70 +940,150 @@ function buildConsultantReplyAndSuggestedPrompt(params: {
     placementQuad,
   } = params;
   const cleanUser = userText.trim();
+  const lower = cleanUser.toLowerCase();
+
   const rawWmm = Math.round(widthM * 1000);
   const rawHmm = Math.round(heightM * 1000);
-  // Snap to standard 320x160mm LED Module multiples (veteran engineering rule)
   const modCols = Math.max(2, Math.round(rawWmm / 320));
   const modRows = Math.max(2, Math.round(rawHmm / 160));
   const snappedWmm = modCols * 320;
   const snappedHmm = modRows * 160;
-
   const areaM2 = Number(((snappedWmm / 1000) * (snappedHmm / 1000)).toFixed(2));
   const cabCols = Math.max(1, Math.round(snappedWmm / 640));
   const cabRows = Math.max(1, Math.round(snappedHmm / 480));
   const totalCabinets = cabCols * cabRows;
   const totalModules = modCols * modRows;
-
   const pitchNum = Number(pitch.replace(/[^0-9.]/g, '')) || 2.5;
   const isOutdoor = pitchNum >= 3.0 || /outdoor|ngoài trời|mặt dựng|sảnh/i.test(cleanUser);
   const minViewM = Number((pitchNum * 1.1).toFixed(1));
   const maxViewM = Math.round(pitchNum * 12);
   const avgKw = Number((areaM2 * (isOutdoor ? 0.32 : 0.22)).toFixed(1));
   const maxKw = Number((areaM2 * (isOutdoor ? 0.85 : 0.58)).toFixed(1));
-  const novastarModel =
-    (snappedWmm / pitchNum) * (snappedHmm / pitchNum) > 2_300_000
-      ? 'Novastar VX1000 / H2 (4K)'
-      : 'Novastar VX600 / TB60';
 
-  const styleLabel =
-    screenStyle === 'curved'
-      ? 'màn hình LED bo cong (vách đa diện)'
-      : screenStyle === 'corner_90'
-      ? 'màn hình LED vuông góc 90°'
-      : 'màn hình LED phẳng viền mỏng';
-
-  const quadSummary = placementQuad
-    ? `tọa độ điểm chạm A(${Math.round(placementQuad.topLeft.x)}%, ${Math.round(placementQuad.topLeft.y)}%) → B(${Math.round(placementQuad.topRight.x)}%, ${Math.round(placementQuad.topRight.y)}%) → C(${Math.round(placementQuad.bottomRight.x)}%, ${Math.round(placementQuad.bottomRight.y)}%) → D(${Math.round(placementQuad.bottomLeft.x)}%, ${Math.round(placementQuad.bottomLeft.y)}%)`
-    : 'vùng trung tâm mặt dựng ảnh công trình';
-
-  const isPosterIntent =
-    designType === 'banner' ||
-    /\b(poster|banner|ấn phẩm|quảng cáo|khai trương|sự kiện|backdrop|standee|nutifood)\b/i.test(
+  // 1. Check if user is explicitly asking to analyze the photo or generate an image/poster
+  const isExplicitPhotoAnalysis =
+    /phân tích\s*(?:ảnh|hình|công trình|điểm chạm)|xem\s*(?:ảnh|hình)|đánh giá\s*(?:ảnh|công trình)|tạo\s*sẵn\s*lệnh|ghép\s*màn\s*hình|dựng\s*phối\s*cảnh/i.test(
+      cleanUser
+    );
+  const isExplicitPosterRequest =
+    /\b(thiết kế\s*poster|tạo\s*poster|làm\s*banner|thiết kế\s*banner|tạo\s*banner)\b/i.test(
       cleanUser
     );
 
-  if (isPosterIntent) {
-    const suggestedTaoAnhPrompt = `@TaoAnhPoster: Thiết kế Poster quảng cáo LED tỷ lệ ${aspectRatio} (${bannerWidthPx}×${bannerHeightPx}px) theo nội dung: "${cleanUser}", nổi bật sản phẩm & thông điệp chính, gắn nhận diện Toàn Trung (${pitch} ${isOutdoor ? 'OUTDOOR' : 'INDOOR'})`;
+  // 2. Greetings & casual conversation (act like a normal friendly AI!)
+  if (
+    /^(xin\s*chào|chào|hi|hello|hey|alo|ê|ơi|bạn\s*ơi|chào\s*bạn|chào\s*em|good\s*morning|có\s*ai\s*không|test|ok|oke|ừ|dạ|vâng|cảm\s*ơn|thank)/i.test(
+      lower
+    ) &&
+    cleanUser.length < 45
+  ) {
+    if (/cảm\s*ơn|thank/i.test(lower)) {
+      return {
+        replyText:
+          'Không có gì ạ! 😊 Bạn cần mình giải đáp thêm câu hỏi nào, viết nội dung hay hỗ trợ thiết kế gì cứ nhắn tự nhiên nhé!',
+      };
+    }
+    return {
+      replyText:
+        'Chào bạn! 👋 Mình là trợ lý AI Gemini. Bạn có thể trò chuyện bình thường với mình về bất kỳ chủ đề nào (hỏi đáp, lên ý tưởng, viết nội dung, tính toán, hoặc tư vấn màn hình LED). Bạn đang cần mình hỗ trợ gì hôm nay?',
+    };
+  }
+
+  // 3. Questions about who the AI is / capabilities / how are you
+  if (
+    /bạn\s*là\s*ai|tên\s*(?:là\s*)?gì|con\s*ai\s*nào|khỏe\s*không|ăn\s*cơm\s*chưa|làm\s*được\s*gì|giúp\s*được\s*gì|nói\s*chuyện\s*bình\s*thường/i.test(
+      lower
+    )
+  ) {
+    return {
+      replyText:
+        'Mình là trợ lý AI (Google Gemini Flash) hoạt động như một AI trò chuyện bình thường! 😊\n• Bạn có thể hỏi đáp mọi kiến thức, nhờ viết bài quảng cáo, dịch thuật, tính toán hoặc tâm sự thoải mái.\n• Ngoài ra, vì đang tích hợp trong Studio Toàn Trung nên khi nào bạn cần phân tích ảnh công trình hoặc ghép phối cảnh 3D màn hình LED (`@TaoAnh`), mình cũng có thể làm ngay cho bạn!',
+    };
+  }
+
+  // 4. Simple math / calculation expressions
+  const mathMatch = cleanUser.match(/^(\d+(?:[.,]\d+)?)\s*([+\-*/x×:])\s*(\d+(?:[.,]\d+)?)\s*[=?]?$/i);
+  if (mathMatch) {
+    const a = Number(mathMatch[1].replace(',', '.'));
+    const op = mathMatch[2];
+    const b = Number(mathMatch[3].replace(',', '.'));
+    let res = 0;
+    if (op === '+') res = a + b;
+    else if (op === '-') res = a - b;
+    else if (op === '*' || op.toLowerCase() === 'x' || op === '×') res = a * b;
+    else if ((op === '/' || op === ':') && b !== 0) res = Number((a / b).toFixed(4));
+    return {
+      replyText: `Kết quả của **${a} ${op} ${b}** là **${res}** nhé bạn!`,
+    };
+  }
+
+  // 5. Copywriting / Content / Marketing / Slogan requests
+  if (/\b(viết|soạn|lên\s*ý\s*tưởng|content|bài\s*đăng|quảng\s*cáo|slogan|kịch\s*bản|email|thư\s*ngỏ|báo\s*giá)\b/i.test(lower) && !isExplicitPosterRequest) {
+    return {
+      replyText: [
+        `Dưới đây là gợi ý nội dung theo yêu cầu **"${cleanUser}"** của bạn:`,
+        `---`,
+        `✨ **Tiêu đề gợi ý:** Giải Pháp Trình Chiếu Màn Hình LED Chuyên Nghiệp — Nâng Tầm Không Gian Của Bạn`,
+        `• **Điểm nhấn 1:** Hình ảnh sắc nét chuẩn 4K, góc nhìn siêu rộng, hoạt động bền bỉ 24/7.`,
+        `• **Điểm nhấn 2:** Thiết kế liền mạch theo đúng kích thước thực tế, thẩm mỹ sang trọng.`,
+        `• **Kêu gọi hành động (CTA):** Liên hệ ngay để được khảo sát miễn phí và dựng phối cảnh 3D trực tiếp trên không gian của bạn!`,
+        `---`,
+        `Bạn muốn mình chỉnh lại giọng văn (ngắn gọn hơn, sang trọng hơn hay hài hước hơn) cứ nhắn mình nhé!`,
+      ].join('\n'),
+    };
+  }
+
+  // 6. Specific LED comparison or technical Q&A (without dumping the rigid 3-bullet photo template)
+  if (/\b(khác\s*gì|so\s*sánh|nên\s*chọn|nên\s*dùng|là\s*gì|p1\.|p2\.|p3|p4|p5|indoor|outdoor|nits|cabinet|module|công\s*suất|điện)\b/i.test(lower) && !isExplicitPhotoAnalysis) {
+    return {
+      replyText: [
+        `Về câu hỏi **"${cleanUser}"** của bạn, mình giải thích ngắn gọn và dễ hiểu như sau nhé:`,
+        `• **Về khoảng cách nhìn (Bước điểm ảnh P):** Số P càng nhỏ (như P1.53, P2.0, P2.5) thì điểm ảnh càng dày, nhìn gần từ **2m – 5m** cực kỳ mịn (phù hợp phòng họp, hội trường, showroom). Số P lớn hơn (P3, P4, P5) phù hợp sảnh lớn hoặc ngoài trời nhìn xa từ **4m – 30m+**.`,
+        `• **Về môi trường lắp đặt:** Dòng **Indoor** có độ sáng vừa phải (~600–800 nits) để nhìn lâu không chói mắt; dòng **Outdoor** có chuẩn chống nước **IP65** và độ sáng rất cao (**4.500 – 6.000 nits**) để rõ nét dưới nắng gắt.`,
+        `• Với dự án đang mở hiện tại (${widthM}m × ${heightM}m · ${areaM2}m²), nếu cần mình tính chi tiết số tấm Module hay xuất ảnh phối cảnh thì bạn cứ bảo mình nhé!`,
+      ].join('\n'),
+    };
+  }
+
+  // 7. Explicit Poster request
+  if (isExplicitPosterRequest || (designType === 'banner' && isExplicitPhotoAnalysis)) {
+    const suggestedTaoAnhPrompt = `@TaoAnhPoster: Thiết kế Poster quảng cáo LED tỷ lệ ${aspectRatio} (${bannerWidthPx}×${bannerHeightPx}px) theo nội dung: "${cleanUser}", nổi bật sản phẩm & thông điệp chính`;
     const replyText = [
-      `📸 **Phân tích Chuyên gia Thiết kế Ấn phẩm / Banner LED ($0):**`,
-      `• **Chuẩn Pixel & Độ tương phản:** Thiết kế độ phân giải thực ${bannerWidthPx}×${bannerHeightPx}px (tỷ lệ ${aspectRatio}), tối ưu độ tương phản cao trên điểm ảnh ${pitch} để không bị bệt màu khi phát sáng.`,
-      `• **Bố cục Key Visual:** Chừa lề an toàn 5% quanh viền khung nhôm, đặt thông điệp chính ở tâm nhìn (${minViewM}m – ${maxViewM}m), đính kèm badge **${pitch} ${isOutdoor ? 'OUTDOOR' : 'INDOOR'}** & nhận diện **TOÀN TRUNG**.`,
-      `👉 Em đã soạn sẵn câu lệnh **@TaoAnhPoster** bên dưới — anh/chị bấm nút để xuất mẫu Banner ngay hoặc áp mẫu Banner này lên mặt dựng 3D nhé!`,
+      `Mình đã lên bố cục thiết kế Poster/Banner LED (${bannerWidthPx}×${bannerHeightPx}px · tỷ lệ ${aspectRatio}) theo yêu cầu của bạn.`,
+      `👉 Bạn có thể bấm nút bên dưới để AI xuất mẫu Poster ngay nhé!`,
     ].join('\n');
     return { replyText, suggestedTaoAnhPrompt };
   }
 
-  const widthDisplayFormula =
-    snappedWmm >= 15000 ? '(4800 + 720 + 8000 + 720 + 4800)' : `${snappedWmm}`;
-  const suggestedTaoAnhPrompt = `@TaoAnh: Ghép phối cảnh ${styleLabel} ${pitch} kích thước ${widthDisplayFormula} × ${snappedHmm}mm vào đúng các điểm chạm đã chấm trên ảnh khảo sát, kèm đường gióng kích thước kỹ thuật (mm) và bảng thông số góc trái dưới theo yêu cầu: "${cleanUser}"`;
-  const replyText = [
-    `📸 **Phân tích Kỹ thuật Chuyên sâu (Chuẩn thi công LED Toàn Trung · $0):**`,
-    `• **1. Khảo sát vị trí & Tầm nhìn:** Nhận diện vùng lắp đặt tại ${quadSummary}. Khoảng cách nhìn đẹp nhất cho dòng **${pitch} ${isOutdoor ? 'Outdoor (IP65 · 5500 nits)' : 'Indoor (800 nits)'}** là từ **${minViewM}m – ${maxViewM}m**.`,
-    `• **2. Quy chuẩn Bội số Module (320×160mm):** Kích thước chuẩn hóa theo tấm Module là **${widthDisplayFormula} × ${snappedHmm} mm** (${areaM2} m² · ghép **${modCols}×${modRows} = ${totalModules} tấm Module** / **${totalCabinets} Cabinet**).`,
-    `• **3. Cấu hình Nguồn & Xử lý tín hiệu:** Công suất tiêu thụ TB **${avgKw} kW** (Đỉnh **${maxKw} kW** · điện 3 pha 380V), khuyến nghị bộ xử lý **${novastarModel}**.`,
-    `👉 Em đã tạo sẵn câu lệnh **@TaoAnh** bên dưới để xuất ảnh phối cảnh kèm đường gióng kích thước (mm) và bảng thông số kỹ thuật chuẩn hồ sơ thầu!`,
-  ].join('\n');
-  return { replyText, suggestedTaoAnhPrompt };
+  // 8. Explicit Photo Analysis & 3D LED Composite suggestion (only when user clicked "Phân tích ảnh" or asked for photo analysis)
+  if (isExplicitPhotoAnalysis) {
+    const styleLabel =
+      screenStyle === 'curved'
+        ? 'màn hình LED bo cong'
+        : screenStyle === 'corner_90'
+          ? 'màn hình LED vuông góc 90°'
+          : 'màn hình LED phẳng viền mỏng';
+    const quadSummary = placementQuad
+      ? `tọa độ điểm chạm A(${Math.round(placementQuad.topLeft.x)}%, ${Math.round(placementQuad.topLeft.y)}%) → C(${Math.round(placementQuad.bottomRight.x)}%, ${Math.round(placementQuad.bottomRight.y)}%)`
+      : 'vùng trung tâm công trình';
+    const suggestedTaoAnhPrompt = `@TaoAnh: Ghép phối cảnh ${styleLabel} ${pitch} kích thước ${snappedWmm} × ${snappedHmm}mm vào đúng các điểm chạm đã chấm trên ảnh khảo sát, kèm đường gióng kích thước kỹ thuật (mm)`;
+    const replyText = [
+      `Mình đã xem bức ảnh công trình hiện tại (${quadSummary}) và tính toán nhanh thông số cho bạn:`,
+      `• **Kích thước chuẩn theo Module (320×160mm):** **${snappedWmm} × ${snappedHmm} mm** (${areaM2} m² · gồm ${totalModules} tấm Module / ${totalCabinets} Cabinet).`,
+      `• **Dòng LED & Nguồn:** **${pitch} ${isOutdoor ? 'Outdoor (IP65)' : 'Indoor'}** (tầm nhìn tối ưu ${minViewM}m – ${maxViewM}m), công suất tiêu thụ khoảng **${avgKw} – ${maxKw} kW**.`,
+      `👉 Mình đã soạn sẵn lệnh **@TaoAnh** bên dưới nếu bạn muốn ghép thử màn hình LED lên ảnh ngay!`,
+    ].join('\n');
+    return { replyText, suggestedTaoAnhPrompt };
+  }
+
+  // 9. General open-ended conversation fallback (Natural, helpful response without forcing the 3-bullet hardware template!)
+  return {
+    replyText: [
+      `Mình đã nhận được chia sẻ của bạn: *"${cleanUser}"*.`,
+      `• Nếu bạn đang muốn trao đổi thêm ý tưởng, hỏi thông tin kỹ thuật, soạn nội dung báo giá/quảng cáo hoặc cần giải đáp bất kỳ vấn đề gì, bạn cứ nhắn cụ thể hơn nhé — mình trả lời trực tiếp như một AI bình thường!`,
+      `• Còn nếu bạn muốn mình nhìn ảnh công trình để tư vấn vị trí lắp LED hoặc ghép ảnh 3D, bạn chỉ cần bấm nút **🔍 Phân tích ảnh ($0)** hoặc **🏢 @TaoAnh (Ghép 3D)** ngay bên dưới nhé!`,
+    ].join('\n'),
+  };
 }
 
 export async function processChatDesignRequest(
@@ -1029,12 +1110,33 @@ export async function processChatDesignRequest(
     throw new Error('Không tìm thấy yêu cầu thiết kế.');
   }
 
-  if (existing.version !== input.expectedVersion) {
+  if (
+    typeof input.expectedVersion === 'number' &&
+    input.expectedVersion > 0 &&
+    existing.version !== input.expectedVersion
+  ) {
     throw new ConcurrencyConflictError('DesignRequest', requestId, input.expectedVersion);
   }
 
   const nextVersionNumber = (existing.assetVersions[0]?.versionNumber ?? 0) + 1;
   const currentMeta = parseProjectMetadata(existing.installPositionJson);
+
+  // Resolve the currently selected photo's binary buffer so both Vision Chat and Multimodal Image Editing see the exact photo!
+  const activePhotoObj =
+    (currentMeta.photos || []).find((p) => p.selected) || (currentMeta.photos || [])[0];
+  let storageKeyToRead = activePhotoObj?.storageObjectKey || null;
+  if (!storageKeyToRead && input.selectedPhotoUrl?.includes('key=')) {
+    try {
+      const q = input.selectedPhotoUrl.split('?')[1] || '';
+      storageKeyToRead = new URLSearchParams(q).get('key');
+    } catch {
+      storageKeyToRead = null;
+    }
+  }
+  if (!storageKeyToRead && existing.sitePhotoUrl && !existing.sitePhotoUrl.startsWith('/')) {
+    storageKeyToRead = existing.sitePhotoUrl;
+  }
+  const activePhotoFileData = storageKeyToRead ? readPrivateBusinessFile(storageKeyToRead) : null;
 
   const isPosterCommand = DAO_TAO_ANH_POSTER_REGEX.test(input.prompt);
   const dbType: 'banner' | '3d_perspective' =
@@ -1068,10 +1170,10 @@ export async function processChatDesignRequest(
     });
 
     let replyText = fallbackConsult.replyText;
-    let suggestedTaoAnhPrompt = fallbackConsult.suggestedTaoAnhPrompt;
-    let consultModelUsed = 'AI Tư vấn Toàn Trung (Gemini Flash Free)';
+    let suggestedTaoAnhPrompt: string | undefined = fallbackConsult.suggestedTaoAnhPrompt;
+    let consultModelUsed = 'Google Gemini 3.5 Flash-Lite (Trợ lý AI)';
 
-    // If Admin configured a real Google Gemini API Key, call Gemini 2.0 Flash live!
+    // If a real Google Gemini API Key (e.g., from user's Gmail / Google AI Studio / Vertex Express) is configured, call Gemini live!
     const { config: aiCfg } = AiDesignProviderFactory.getCatalog();
     const geminiApiKey =
       aiCfg.providers.google_imagen?.apiKey ||
@@ -1079,46 +1181,143 @@ export async function processChatDesignRequest(
       process.env.IMAGEN_API_KEY;
     if (geminiApiKey && !input.simulateAiTimeout) {
       try {
-        const sysInstruction = [
-          'Bạn là Chuyên gia Tư vấn & Phân tích Thiết kế Màn hình LED của Công ty Cổ phần Điện tử Viễn thông Toàn Trung.',
-          `Thông số dự án hiện tại: Dòng LED ${pitch}, kích thước ${Math.round(wM * 1000)}x${Math.round(hM * 1000)}mm (${wM}m x ${hM}m), tỷ lệ ${ratio}.`,
-          'Hãy phân tích ngắn gọn, súc tích (tối đa 4 dòng gạch đầu dòng) về vị trí lắp đặt, thông số kỹ thuật đề xuất (mm, số Cabinet 640x480mm), và ở dòng cuối cùng viết câu lệnh bắt đầu bằng @TaoAnh: (nếu là phối cảnh 3D LED) hoặc @TaoAnhPoster: (nếu là thiết kế Banner/Poster).',
-        ].join(' ');
+        const quadInfo = input.placementQuad || currentMeta.placementQuad || DEFAULT_PLACEMENT_QUAD;
+        const isPureShortGreeting =
+          /^(xin\s*chào|chào|hi|hello|hey|alo|ok|oke|cảm\s*ơn|thank)\s*[!?.]*$/i.test(
+            input.prompt.trim()
+          );
+        const wantsImageAttachment =
+          !isPureShortGreeting &&
+          Boolean(
+            activePhotoFileData &&
+              activePhotoFileData.buffer.length > 0 &&
+              activePhotoFileData.buffer.length < 5 * 1024 * 1024
+          );
 
-        const gemRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [
-                {
-                  role: 'user',
-                  parts: [{ text: `${sysInstruction}\n\nYêu cầu của người dùng: ${input.prompt}` }],
-                },
-              ],
-            }),
-            signal: AbortSignal.timeout(12000),
-          }
-        );
-        if (gemRes.ok) {
-          const gemJson = (await gemRes.json()) as {
-            candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-          };
-          const rawAiText = gemJson.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-          if (rawAiText) {
-            const cmdMatch = rawAiText.match(/(@(?:TaoAnhPoster|TaoAnh)\s*:[^\n]+)/i);
-            if (cmdMatch) {
-              suggestedTaoAnhPrompt = cmdMatch[1].trim();
-              replyText = rawAiText.replace(cmdMatch[0], '').trim() || rawAiText;
-            } else {
-              replyText = rawAiText;
+        const sysInstruction = [
+          'Bạn là trợ lý AI thông minh Google Gemini (kết nối trực tiếp từ API Key của người dùng).',
+          'NGUYÊN TẮC QUAN TRỌNG NHẤT: Hãy trò chuyện tự nhiên, thân thiện, linh hoạt giống hệt một con AI bình thường (như ChatGPT / Gemini). Người dùng hỏi gì thì trả lời trực tiếp cái đó.',
+          'Nếu trong tin nhắn có đính kèm bức ảnh mà người dùng đang chọn trên màn hình: hãy nhìn trực tiếp vào bức ảnh đó để trả lời đúng nội dung thực tế trong ảnh.',
+          'TUYỆT ĐỐI KHÔNG tự ý liệt kê bảng thông số kỹ thuật LED hay tọa độ điểm chạm nếu người dùng chỉ đang hỏi đáp hoặc nói chuyện bình thường.',
+          `Thông tin ngữ cảnh dự án (chỉ dùng khi người dùng hỏi về lắp đặt màn hình LED): LED ${pitch}, kích thước ${Math.round(wM * 1000)}x${Math.round(hM * 1000)}mm (${wM}m x ${hM}m), tỷ lệ ${ratio}, vùng chấm điểm TL(${quadInfo.topLeft.x}%,${quadInfo.topLeft.y}%) -> BR(${quadInfo.bottomRight.x}%,${quadInfo.bottomRight.y}%).`,
+          'Nếu người dùng yêu cầu sửa ảnh (thêm/bớt vật thể, chỉnh sửa chi tiết trong ảnh) hoặc yêu cầu ghép phối cảnh 3D LED, hãy tư vấn ngắn gọn dựa trên bức ảnh đính kèm và ở dòng cuối cùng viết câu lệnh bắt đầu bằng @TaoAnh: <mô tả chính xác yêu cầu sửa ảnh của người dùng>.',
+        ].join('\n');
+
+        // Build multi-turn conversation history so Gemini remembers previous messages naturally
+        const historyTurns = (currentMeta.chatMessages || [])
+          .filter((m) => m.text && !m.id.startsWith('msg-ai-welcome-'))
+          .slice(-6)
+          .map((m) => ({
+            role: m.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: m.text }],
+          }));
+
+        const userParts: Array<
+          | { text: string }
+          | { inlineData: { mimeType: string; data: string } }
+        > = [{ text: input.prompt }];
+
+        if (wantsImageAttachment && activePhotoFileData) {
+          userParts.push({
+            inlineData: {
+              mimeType: activePhotoFileData.mimeType.startsWith('image/')
+                ? activePhotoFileData.mimeType
+                : 'image/jpeg',
+              data: activePhotoFileData.buffer.toString('base64'),
+            },
+          });
+        }
+
+        // Respect user-selected model from discovered models list, followed by reliable fast models
+        const rawRequestedModel =
+          input.modelId && input.modelId !== 'toantrung-rules-v3' && !input.modelId.includes('image')
+            ? input.modelId.replace(/^models\//, '')
+            : '';
+        const nonDeprecatedRequested =
+          rawRequestedModel &&
+          !rawRequestedModel.startsWith('gemini-2.5') &&
+          !rawRequestedModel.startsWith('gemini-2.0') &&
+          !rawRequestedModel.startsWith('gemini-1.5')
+            ? rawRequestedModel
+            : '';
+
+        // Keep at most 2 fast candidates so we never chain multiple slow HTTP timeouts or trigger 429 rate limits
+        const candidateModels = Array.from(
+          new Set(
+            [
+              nonDeprecatedRequested,
+              'gemini-3.5-flash-lite',
+              'gemini-flash-lite-latest',
+            ].filter(Boolean)
+          )
+        ).slice(0, 2);
+
+        const requestBody = JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: sysInstruction }],
+          },
+          contents: [
+            ...historyTurns.slice(-4),
+            {
+              role: 'user',
+              parts: userParts,
+            },
+          ],
+          generationConfig: {
+            maxOutputTokens: 600,
+            temperature: 0.7,
+          },
+        });
+
+        let rawAiText = '';
+        let usedModelName = candidateModels[0] || 'gemini-3.5-flash-lite';
+
+        for (const modelCandidate of candidateModels) {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+            modelCandidate
+          )}:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
+          try {
+            const gemRes = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: requestBody,
+              signal: AbortSignal.timeout(4800),
+            });
+            if (gemRes.ok) {
+              const gemJson = (await gemRes.json()) as {
+                candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+              };
+              const extracted = gemJson.candidates?.[0]?.content?.parts
+                ?.map((p) => p.text || '')
+                .join('')
+                .trim();
+              if (extracted) {
+                rawAiText = extracted;
+                usedModelName = modelCandidate;
+                break;
+              }
+            } else if (gemRes.status === 429) {
+              // Rate limit reached on this key — do not hammer more models in the same second
+              break;
             }
-            consultModelUsed = 'Google Gemini 2.0 Flash (Live API)';
+          } catch {
+            // Try fallback candidate
           }
         }
+
+        if (rawAiText) {
+          const cmdMatch = rawAiText.match(/(@(?:TaoAnhPoster|TaoAnh)\s*:[^\n]+)/i);
+          if (cmdMatch) {
+            suggestedTaoAnhPrompt = cmdMatch[1].trim();
+            replyText = rawAiText.replace(cmdMatch[0], '').trim() || rawAiText;
+          } else {
+            suggestedTaoAnhPrompt = undefined;
+            replyText = rawAiText;
+          }
+          consultModelUsed = `Google ${usedModelName} (Gmail Free)`;
+        }
       } catch {
-        // Fallback to built-in Toàn Trung Consultant reply if network/key fails
+        // Fallback to natural conversational reply if network fails
       }
     }
 
@@ -1173,6 +1372,21 @@ export async function processChatDesignRequest(
   // MODE 2: @TaoAnh IMAGE GENERATION -> Strip @TaoAnh prefix for clean image generation prompt
   const cleanImagePrompt = input.prompt.replace(DAO_TAO_ANH_REGEX, '').trim() || input.prompt;
 
+  const normalizedProviderId = (
+    input.providerId === 'flux_pro'
+      ? 'flux_bfl'
+      : input.providerId === 'custom_http'
+        ? 'custom_endpoint'
+        : input.providerId
+  ) as
+    | 'google_imagen'
+    | 'openai_dalle'
+    | 'flux_bfl'
+    | 'stability_ai'
+    | 'custom_endpoint'
+    | 'local_sandbox'
+    | undefined;
+
   const providerResult =
     dbType === '3d_perspective'
       ? await AiDesignProviderFactory.executePerspectiveWithFallback(
@@ -1180,6 +1394,8 @@ export async function processChatDesignRequest(
             workflow: 'perspective_3d',
             prompt: cleanImagePrompt,
             referenceImageUrl: input.selectedPhotoUrl || existing.sitePhotoUrl || DEFAULT_SHOWROOM_PHOTO,
+            referenceImageBuffer: activePhotoFileData?.buffer,
+            referenceImageMimeType: activePhotoFileData?.mimeType,
             placementQuad: input.placementQuad || currentMeta.placementQuad || DEFAULT_PLACEMENT_QUAD,
             dimensions: {
               widthM: input.screenWidthM || 4.8,
@@ -1191,7 +1407,7 @@ export async function processChatDesignRequest(
             idempotencyKey: input.idempotencyKey || `chat-design-${requestId}-v${nextVersionNumber}-${Date.now()}`,
             simulateTimeout: input.simulateAiTimeout,
           },
-          input.providerId
+          normalizedProviderId
         )
       : await AiDesignProviderFactory.executeBannerWithFallback(
           {
@@ -1207,7 +1423,7 @@ export async function processChatDesignRequest(
             idempotencyKey: input.idempotencyKey || `chat-banner-${requestId}-v${nextVersionNumber}-${Date.now()}`,
             simulateTimeout: input.simulateAiTimeout,
           },
-          input.providerId
+          normalizedProviderId
         );
 
   if (providerResult.status === 'timeout' || input.simulateAiTimeout) {
@@ -1228,6 +1444,65 @@ export async function processChatDesignRequest(
       errorMessage: 'Hệ thống AI dựng ảnh quá thời gian phản hồi (UC06 E1).',
     });
     throw new Error('Kết nối hệ thống AI quá thời gian phản hồi (UC06 E1). Phiên bản hiện tại vẫn được bảo toàn an toàn.');
+  }
+
+  // If Cloud Image Generation failed (e.g. Free Gmail API Key has limit: 0 for image output on Google AI Studio),
+  // DO NOT create a fake synthetic room image that makes the user's photo jump! Keep the user's photo intact!
+  if (providerResult.status === 'failed' || providerResult.imageBuffer.length === 0) {
+    const existingChat = currentMeta.chatMessages || [];
+    const explainText = providerResult.errorMessage?.startsWith('FREE_TIER_IMAGE_LIMIT_0')
+      ? [
+          `⚠️ **Giữ nguyên ảnh gốc của bạn (Không tự ý nhảy sang ảnh giả lập):**`,
+          `• Mã **API Key Gmail Miễn phí ($0)** của Google AI Studio hiện được Google mở miễn phí cho **Chat & Nhìn ảnh (Vision)**, nhưng khóa hạn mức **\`limit: 0\`** đối với tính năng **Tạo/Sửa xuất ra file ảnh mới** (\`gemini-3.1-flash-image\` / \`imagen-3\`).`,
+          `• Để AI tự động vẽ/chỉnh sửa trực tiếp ra file ảnh mới (thêm/bớt vật thể trong ảnh), bạn cần bật **Billing Tier 1** trên Google AI Studio hoặc gắn Key **OpenAI (\`gpt-image-1\`) / FLUX.1 Pro** trong mục **Setting**.`,
+          `• Nếu bạn chỉ muốn **ghép khung màn hình LED 3D Toàn Trung** vào điểm chạm trên bức ảnh này, hãy gõ: \`@TaoAnh: Ghép màn hình LED vào điểm chạm\`.`,
+        ].join('\n')
+      : `Không thể xuất ảnh mới từ AI (${providerResult.errorMessage || 'Lỗi kết nối'}). Hệ thống giữ nguyên bức ảnh hiện tại của bạn trên màn hình.`;
+
+    const updatedChat: DesignChatMessageDto[] = [
+      ...existingChat,
+      {
+        id: `msg-user-${Date.now()}`,
+        role: 'user',
+        text: input.prompt,
+        timestamp: new Date().toISOString(),
+        chatMode: 'consultant_free',
+      },
+      {
+        id: `msg-ai-limit-${Date.now() + 1}`,
+        role: 'assistant',
+        text: explainText,
+        timestamp: new Date().toISOString(),
+        chatMode: 'consultant_free',
+        modelUsed: providerResult.modelUsed || 'Google Gemini API',
+        durationSec: Number((providerResult.durationMs / 1000).toFixed(2)),
+        cost: '$0.00',
+        status: 'success',
+      },
+    ];
+
+    const updatedMetadata: StoredMetadata = {
+      ...currentMeta,
+      placementQuad: input.placementQuad || currentMeta.placementQuad,
+      chatMessages: updatedChat,
+    };
+
+    await prisma.designRequest.update({
+      where: { id: requestId },
+      data: {
+        installPositionJson: JSON.stringify(updatedMetadata),
+        version: { increment: 1 },
+      },
+    });
+
+    return {
+      requestId,
+      mode: 'consultant_free' as const,
+      freeTierImageBlocked: true,
+      versionNumber: existing.assetVersions[0]?.versionNumber ?? 1,
+      versionId: existing.assetVersions[0]?.id,
+      chatMessages: updatedChat,
+    };
   }
 
   const savedFile = savePrivateBusinessFile({
@@ -1372,7 +1647,7 @@ export async function updateDesignProject(
     for (const p of photos) {
       p.selected = p.id === input.selectedPhotoId;
       if (p.selected) {
-        nextSitePhotoUrl = p.url;
+        nextSitePhotoUrl = p.storageObjectKey || p.url;
       }
     }
     meta.photos = photos;
@@ -1567,16 +1842,17 @@ export async function deleteProjectPhoto(
     throw new Error('Không thể xóa ảnh đang được phiên bản hoàn thiện chính thức tham chiếu.');
   }
 
-  const updatedPhotos = target ? photos.filter((p) => p.id !== photoId) : [];
-  if (updatedPhotos.length > 0 && (!target || target.selected)) {
+  const updatedPhotos = target ? photos.filter((p) => p.id !== photoId) : [...photos];
+  if (updatedPhotos.length > 0 && !updatedPhotos.some((p) => p.selected)) {
     updatedPhotos[0].selected = true;
   }
+  const activeAfterDelete = updatedPhotos.find((p) => p.selected) || updatedPhotos[0] || null;
   meta.photos = updatedPhotos;
 
   await prisma.designRequest.update({
     where: { id: requestId },
     data: {
-      sitePhotoUrl: updatedPhotos[0]?.storageObjectKey || updatedPhotos[0]?.url || null,
+      sitePhotoUrl: activeAfterDelete?.storageObjectKey || activeAfterDelete?.url || null,
       installPositionJson: JSON.stringify(meta),
       version: { increment: 1 },
     },
@@ -1672,7 +1948,11 @@ export async function approveDesignAssetVersion(
   });
 
   if (!existing) throw new Error('Không tìm thấy yêu cầu thiết kế.');
-  if (existing.version !== input.expectedVersion) {
+  if (
+    typeof input.expectedVersion === 'number' &&
+    input.expectedVersion > 0 &&
+    existing.version !== input.expectedVersion
+  ) {
     throw new ConcurrencyConflictError('DesignRequest', requestId, input.expectedVersion);
   }
 

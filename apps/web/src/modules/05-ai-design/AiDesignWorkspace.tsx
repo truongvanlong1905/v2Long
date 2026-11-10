@@ -79,9 +79,22 @@ interface ProviderStatusInfo {
   availableProviders?: AiProviderCatalogItemDto[];
 }
 
+type UniversalUseCaseCategory =
+  | 'general_photo'
+  | 'marketing_poster'
+  | 'space_architecture'
+  | 'led_screen'
+  | 'custom_other';
+
 interface ProjectParameterFormState {
   projectName: string;
   designType: DesignType;
+  useCaseCategory: UniversalUseCaseCategory;
+  customSubjectName: string;
+  editActionMode: 'inpaint_keep_bg' | 'enhance_retouch' | 'region_composite' | 'creative_redesign';
+  visualStylePreset: 'photorealistic' | 'modern_clean' | 'vivid_marketing' | 'luxury_arch' | 'custom';
+  dimensionUnit: 'auto_photo' | 'm' | 'cm' | 'mm' | 'px';
+  targetScopeMode: 'full_image' | 'touch_points';
   leadId: string;
   contactName: string;
   installationInfo: string;
@@ -98,6 +111,7 @@ interface ProjectParameterFormState {
 }
 
 const STORAGE_SELECTED_PROJECT_KEY = 'tt_studio_selected_project_id';
+const STORAGE_UNIVERSAL_PARAMS_KEY = 'tt_studio_universal_params_v1';
 
 function parseAspectRatioValue(ratioStr: string): number | null {
   const m = ratioStr.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
@@ -156,21 +170,126 @@ export function AiDesignWorkspace() {
   const [exportingBlueprint, setExportingBlueprint] = useState<boolean>(false);
   const [savingComposite, setSavingComposite] = useState(false);
 
+  // Environment Lighting & Brightness Simulator (Max-level 3D Studio controls)
+  const [ambientLightingMode, setAmbientLightingMode] = useState<
+    'daylight' | 'night_glow' | 'stage_concert'
+  >('daylight');
+  const [ledBrightnessNits, setLedBrightnessNits] = useState<number>(4500);
+
   // Dual-AI Chat Consultant Model State
-  const [consultantModelName, setConsultantModelName] = useState<string>('Gemini 2.5 Flash (Free $0)');
+  const [consultantModelName, setConsultantModelName] = useState<string>('Google Gemini 3.5 Flash (Gmail Free)');
+  const [consultantModelId, setConsultantModelId] = useState<string>('gemini-3.5-flash-lite');
+  const [pendingUserPrompt, setPendingUserPrompt] = useState<string | null>(null);
+  const chatThreadRef = useRef<HTMLDivElement>(null);
   const uploadFinalInputRef = useRef<HTMLInputElement>(null);
   const uploadPhotoInputRef = useRef<HTMLInputElement>(null);
 
-  // Multi-AI Provider & Model Switcher States
+  // Multi-AI Provider & 2-Tab Hub States ('select_ai' vs 'setting_ai')
   const [selectedProviderId, setSelectedProviderId] = useState<AiProviderId>('google_imagen');
-  const [selectedModelId, setSelectedModelId] = useState<string>('imagen-3.0-generate-002');
+  const [selectedModelId, setSelectedModelId] = useState<string>('gemini-2.0-flash-exp-image-generation');
+  const [taoAnhExecStrategy, setTaoAnhExecStrategy] = useState<'smart_hybrid' | 'cloud_direct'>('smart_hybrid');
   const [showAiConfigModal, setShowAiConfigModal] = useState(false);
+  const [aiModalTab, setAiModalTab] = useState<'select_ai' | 'setting_ai'>('select_ai');
   const [configModalProviderId, setConfigModalProviderId] = useState<AiProviderId>('google_imagen');
   const [configApiKeyInput, setConfigApiKeyInput] = useState('');
   const [configEndpointInput, setConfigEndpointInput] = useState('');
   const [configCustomModelInput, setConfigCustomModelInput] = useState('');
   const [autoFallbackToLocal, setAutoFallbackToLocal] = useState(true);
   const [savingAiConfig, setSavingAiConfig] = useState(false);
+
+  // Quick Gmail Gemini Free Connection & Live Test States
+  const [gmailGeminiKeyInput, setGmailGeminiKeyInput] = useState('');
+  const [gmailGeminiModelId, setGmailGeminiModelId] = useState('gemini-3.5-flash-lite');
+  const [showGmailKeyPlain, setShowGmailKeyPlain] = useState(false);
+  const [testingAiConnection, setTestingAiConnection] = useState(false);
+  const [testAiResult, setTestAiResult] = useState<{
+    ok: boolean;
+    connected: boolean;
+    providerId: AiProviderId;
+    modelTested: string;
+    latencyMs: number;
+    replyText: string;
+    maskedKey: string | null;
+    discoveredModels?: Array<{ id: string; name: string; badge: string; description: string }>;
+  } | null>(null);
+
+  // Custom Employee-Added AI Models Registry (for future AI models)
+  const [customAiModels, setCustomAiModels] = useState<
+    Array<{
+      id: string;
+      name: string;
+      role: 'consultant' | 'image_gen' | 'both';
+      providerId: AiProviderId;
+      modelId: string;
+      apiKey?: string;
+      apiEndpoint?: string;
+      badge: string;
+      createdAt: string;
+    }>
+  >([]);
+
+  // Automatically aggregate all models discovered from the connected AI account(s) so the user can see & select any model
+  const autoDiscoveredModels = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; badge: string }>();
+    const addModel = (id: string, name: string, badge: string) => {
+      if (!id || map.has(id)) return;
+      map.set(id, { id, name, badge });
+    };
+
+    // 1. Live models returned from recent auto-scan
+    for (const m of testAiResult?.discoveredModels || []) {
+      addModel(m.id, m.name, m.badge || 'AI Model');
+    }
+
+    // 2. Models read from connected AI providers in backend catalog
+    for (const prov of providerStatus?.availableProviders || []) {
+      if (prov.providerId === 'google_imagen' || prov.hasApiKey) {
+        for (const m of prov.models || []) {
+          addModel(m.id, m.name, m.badge || prov.shortName);
+        }
+      }
+    }
+
+    // 3. Fallback defaults only if no live models have been probed yet
+    if (map.size === 0) {
+      addModel('gemini-3.5-flash-lite', 'Gemini 3.5 Flash-Lite (gemini-3.5-flash-lite)', '✅ Dùng được');
+      addModel('gemini-flash-lite-latest', 'Gemini Flash-Lite Latest (gemini-flash-lite-latest)', '✅ Dùng được');
+      addModel('gemini-3.1-flash-lite', 'Gemini 3.1 Flash-Lite (gemini-3.1-flash-lite)', '✅ Dùng được');
+    }
+
+    // 4. Custom staff-added AI models
+    for (const cm of customAiModels) {
+      addModel(cm.modelId, `${cm.name} (${cm.modelId})`, cm.badge);
+    }
+
+    // 5. Offline built-in engine
+    addModel('toantrung-rules-v3', 'Toàn Trung AI Nội bộ (Không cần Key · $0)', 'Nội bộ');
+
+    return Array.from(map.values());
+  }, [testAiResult?.discoveredModels, providerStatus?.availableProviders, customAiModels]);
+  const [newCustomAiName, setNewCustomAiName] = useState('');
+  const [newCustomAiRole, setNewCustomAiRole] = useState<'consultant' | 'image_gen' | 'both'>('both');
+  const [newCustomAiProvider, setNewCustomAiProvider] = useState<AiProviderId>('google_imagen');
+  const [newCustomAiModelId, setNewCustomAiModelId] = useState('');
+  const [newCustomAiKey, setNewCustomAiKey] = useState('');
+  const [newCustomAiEndpoint, setNewCustomAiEndpoint] = useState('');
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const savedCustom = window.localStorage.getItem('toantrung_custom_ai_models_v1');
+      if (savedCustom) {
+        const parsed = JSON.parse(savedCustom);
+        if (Array.isArray(parsed)) setCustomAiModels(parsed);
+      }
+      const savedStrat = window.localStorage.getItem('toantrung_taoanh_strategy_v1');
+      if (savedStrat === 'smart_hybrid' || savedStrat === 'cloud_direct') {
+        setTaoAnhExecStrategy(savedStrat);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
 
   // Left Sidebar: Project Search, Archive toggle, Secondary menu (`...`), and Kho ảnh dự án folder
   const [searchProject, setSearchProject] = useState('');
@@ -221,13 +340,19 @@ export function AiDesignWorkspace() {
   const [draggingCompare, setDraggingCompare] = useState(false);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
 
-  // Controlled Form State for "Thông số" (isolated per project so switching/reloading never mixes state)
+  // Controlled Form State for "Thông số" (isolated per project & supports ALL use cases)
   const [paramForm, setParamForm] = useState<ProjectParameterFormState>({
-    projectName: 'Showroom LED',
+    projectName: 'Dự án Thiết kế AI',
     designType: 'perspective_3d',
+    useCaseCategory: 'general_photo',
+    customSubjectName: '',
+    editActionMode: 'inpaint_keep_bg',
+    visualStylePreset: 'photorealistic',
+    dimensionUnit: 'auto_photo',
+    targetScopeMode: 'full_image',
     leadId: '',
     contactName: '',
-    installationInfo: 'Tường bên phải showroom, cách sàn 1.2m',
+    installationInfo: 'Chỉnh sửa & hoàn thiện theo yêu cầu thực tế',
     notes: '',
     productId: 1,
     pixelPitch: 'P2.5',
@@ -423,12 +548,40 @@ export function AiDesignWorkspace() {
     setShowHandles(false);
     setTouchPoints([]);
     setParamValidationError(null);
+
+    let savedUniversal: Partial<ProjectParameterFormState> = {};
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = window.localStorage.getItem(STORAGE_UNIVERSAL_PARAMS_KEY);
+        if (raw) {
+          const map = JSON.parse(raw) as Record<string, Partial<ProjectParameterFormState>>;
+          savedUniversal = map[String(project.id)] || {};
+        }
+      } catch {
+        // ignore storage parse error
+      }
+    }
+
+    const inferredCategory: UniversalUseCaseCategory =
+      savedUniversal.useCaseCategory ||
+      (project.designType === 'banner'
+        ? 'marketing_poster'
+        : /\b(bdu|showroom|màn hình led|indoor|outdoor)\b/i.test(project.projectName || '')
+          ? 'led_screen'
+          : 'general_photo');
+
     setParamForm({
-      projectName: project.projectName || 'Dự án LED',
+      projectName: project.projectName || 'Dự án Thiết kế AI',
       designType: project.designType || 'perspective_3d',
+      useCaseCategory: inferredCategory,
+      customSubjectName: savedUniversal.customSubjectName ?? '',
+      editActionMode: savedUniversal.editActionMode || 'inpaint_keep_bg',
+      visualStylePreset: savedUniversal.visualStylePreset || 'photorealistic',
+      dimensionUnit: savedUniversal.dimensionUnit || 'auto_photo',
+      targetScopeMode: savedUniversal.targetScopeMode || 'full_image',
       leadId: project.leadId ? String(project.leadId) : '',
       contactName: project.contactName && project.contactName !== 'Chưa cập nhật' ? project.contactName : '',
-      installationInfo: project.installationInfo || 'Tường bên phải showroom, cách sàn 1.2m',
+      installationInfo: project.installationInfo || 'Chỉnh sửa & hoàn thiện theo yêu cầu thực tế',
       notes: project.notes || '',
       productId: project.productId || project.productSpec?.productId || 1,
       pixelPitch: project.productSpec?.pixelPitch || 'P2.5',
@@ -444,8 +597,10 @@ export function AiDesignWorkspace() {
 
   // Load Data from API
   const loadData = useCallback(
-    async (preferredProjectId?: number) => {
-      setLoading(true);
+    async (preferredProjectId?: number, silent?: boolean) => {
+      if (!silent) {
+        setLoading(true);
+      }
       setError(null);
       try {
         const data = await apiRequest<{
@@ -459,11 +614,16 @@ export function AiDesignWorkspace() {
         setLeadOptions(data.leadOptions || []);
         setProductOptions(data.productOptions || []);
         setProviderStatus(data.providerStatus || null);
-        if (data.providerStatus) {
+        if (data.providerStatus && !silent) {
           const defPid = data.providerStatus.defaultProviderId || data.providerStatus.provider || 'google_imagen';
           setSelectedProviderId(defPid);
           setConfigModalProviderId(defPid);
-          setSelectedModelId(data.providerStatus.defaultModelId || data.providerStatus.activeModel || 'imagen-3.0-generate-002');
+          const defModel = data.providerStatus.defaultModelId || data.providerStatus.activeModel || 'imagen-3.0-generate-002';
+          setSelectedModelId(defModel);
+          if (defModel.startsWith('gemini-')) {
+            setConsultantModelId(defModel);
+            setConsultantModelName(`Google ${defModel} (Gmail Free)`);
+          }
           setAutoFallbackToLocal(data.providerStatus.autoFallbackToLocal ?? true);
           const activeCat = data.providerStatus.availableProviders?.find((p) => p.providerId === defPid);
           if (activeCat) {
@@ -485,12 +645,16 @@ export function AiDesignWorkspace() {
             }
           }
           const currentReq = (targetId ? list.find((r) => r.id === targetId) : null) || list[0];
-          syncProjectSelection(currentReq);
+          if (!silent || currentReq.id !== selectedId) {
+            syncProjectSelection(currentReq);
+          }
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Không thể tải dữ liệu Studio thiết kế.');
       } finally {
-        setLoading(false);
+        if (!silent) {
+          setLoading(false);
+        }
       }
     },
     [selectedId, syncProjectSelection]
@@ -816,7 +980,7 @@ export function AiDesignWorkspace() {
     }
   };
 
-  // Save Parameters ("Thông số") to Backend
+  // Save Parameters ("Thông số") to Backend (Universal across all use cases)
   const handleSaveParameters = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!currentProject || savingParams) return;
@@ -827,7 +991,7 @@ export function AiDesignWorkspace() {
     }
     if (paramForm.designType === 'perspective_3d') {
       if (paramForm.screenWidthM <= 0 || paramForm.screenHeightM <= 0) {
-        setParamValidationError('Chiều ngang và chiều cao màn hình LED (m) phải lớn hơn 0.');
+        setParamValidationError('Chiều ngang và chiều cao phải lớn hơn 0.');
         return;
       }
     } else {
@@ -841,10 +1005,36 @@ export function AiDesignWorkspace() {
     setSavingParams(true);
     setError(null);
     try {
+      if (typeof window !== 'undefined') {
+        try {
+          const raw = window.localStorage.getItem(STORAGE_UNIVERSAL_PARAMS_KEY);
+          const map = raw ? (JSON.parse(raw) as Record<string, Partial<ProjectParameterFormState>>) : {};
+          map[String(currentProject.id)] = {
+            useCaseCategory: paramForm.useCaseCategory,
+            customSubjectName: paramForm.customSubjectName,
+            editActionMode: paramForm.editActionMode,
+            visualStylePreset: paramForm.visualStylePreset,
+            dimensionUnit: paramForm.dimensionUnit,
+            targetScopeMode: paramForm.targetScopeMode,
+          };
+          window.localStorage.setItem(STORAGE_UNIVERSAL_PARAMS_KEY, JSON.stringify(map));
+        } catch {
+          // ignore storage write error
+        }
+      }
+
       const selectedProduct = productOptions.find((p) => p.id === paramForm.productId);
-      const ledModuleSpec = selectedProduct
-        ? `${selectedProduct.name} (${paramForm.pixelPitch})`
-        : `Màn hình LED ${paramForm.pixelPitch}`;
+      const categoryLabelMap: Record<UniversalUseCaseCategory, string> = {
+        general_photo: 'Chỉnh sửa ảnh & Thiết kế tự do',
+        marketing_poster: 'Thiết kế Poster / Banner Marketing',
+        space_architecture: 'Phối cảnh 3D Không gian / Kiến trúc',
+        led_screen: selectedProduct
+          ? `${selectedProduct.name} (${paramForm.pixelPitch})`
+          : `Màn hình LED ${paramForm.pixelPitch}`,
+        custom_other: 'Dự án Tùy chỉnh Đa năng',
+      };
+      const ledModuleSpec =
+        paramForm.customSubjectName.trim() || categoryLabelMap[paramForm.useCaseCategory];
 
       await apiRequest(`/api/v1/design/${currentProject.id}`, {
         method: 'PATCH',
@@ -871,8 +1061,8 @@ export function AiDesignWorkspace() {
         },
       });
 
-      setSuccessToast(`Đã lưu thông số dự án "${paramForm.projectName.trim()}" vào cơ sở dữ liệu.`);
-      await loadData(currentProject.id);
+      setSuccessToast(`Đã lưu thông số dự án "${paramForm.projectName.trim()}" (áp dụng cho mọi trường hợp).`);
+      await loadData(currentProject.id, true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không thể lưu thông số dự án.');
     } finally {
@@ -958,6 +1148,18 @@ export function AiDesignWorkspace() {
       });
       ctx.drawImage(baseImg, 0, 0, W, H);
 
+      // Apply ambient environment lighting mode (Night Glow or Stage Concert dimming on background photo so LED wall pops realistically)
+      if (ambientLightingMode === 'night_glow') {
+        ctx.fillStyle = 'rgba(6, 12, 28, 0.38)';
+        ctx.fillRect(0, 0, W, H);
+      } else if (ambientLightingMode === 'stage_concert') {
+        const stageGrad = ctx.createRadialGradient(W * 0.5, H * 0.45, 120, W * 0.5, H * 0.5, W * 0.75);
+        stageGrad.addColorStop(0, 'rgba(15, 23, 42, 0.08)');
+        stageGrad.addColorStop(1, 'rgba(9, 13, 28, 0.48)');
+        ctx.fillStyle = stageGrad;
+        ctx.fillRect(0, 0, W, H);
+      }
+
       // Determine polygon points from touchPoints (if >= 3) or quad
       const pts =
         touchPoints.length >= 3
@@ -989,18 +1191,20 @@ export function AiDesignWorkspace() {
                 ? 'vivid_commercial'
                 : ledScreenVisualTheme;
 
+      const nitsFactor = Math.max(0.4, Math.min(1.4, ledBrightnessNits / 4500));
+      const glowAlpha = Number((0.48 * nitsFactor + (ambientLightingMode !== 'daylight' ? 0.2 : 0)).toFixed(2));
       const glowColor =
         effectiveTheme === 'corp_navy'
-          ? 'rgba(37, 99, 235, 0.52)'
+          ? `rgba(37, 99, 235, ${glowAlpha})`
           : effectiveTheme === 'vivid_commercial'
-            ? 'rgba(6, 182, 212, 0.52)'
+            ? `rgba(6, 182, 212, ${glowAlpha})`
             : effectiveTheme === 'factory_andon'
-              ? 'rgba(16, 185, 129, 0.48)'
-              : 'rgba(220, 38, 38, 0.48)';
+              ? `rgba(16, 185, 129, ${glowAlpha})`
+              : `rgba(220, 38, 38, ${glowAlpha})`;
 
       ctx.save();
       ctx.shadowColor = glowColor;
-      ctx.shadowBlur = 34;
+      ctx.shadowBlur = Math.round(34 * nitsFactor + (ambientLightingMode !== 'daylight' ? 18 : 0));
       ctx.shadowOffsetY = 4;
       ctx.beginPath();
       pts.forEach((p, idx) => (idx === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
@@ -1560,11 +1764,21 @@ export function AiDesignWorkspace() {
     }
   };
 
+  // Auto-scroll Chat Thread whenever messages or submitting state changes
+  useEffect(() => {
+    if (!chatThreadRef.current) return;
+    const el = chatThreadRef.current;
+    const timer = window.setTimeout(() => {
+      el.scrollTop = el.scrollHeight;
+    }, 40);
+    return () => window.clearTimeout(timer);
+  }, [currentProject?.id, currentProject?.chatMessages.length, pendingUserPrompt, submitting]);
+
   // Chat Submit: Normal chat -> Free AI Consultant ($0) | @TaoAnh / @TaoAnhPoster -> Calls Image AI Provider
   const executeChatSubmit = async (rawText: string, forceImageMode?: boolean) => {
-    if (!currentProject || !rawText.trim() || submitting || piiAlert) return;
-
     const trimmed = rawText.trim();
+    if (!trimmed || submitting || piiAlert) return;
+
     const hasTaoAnhTag =
       /^\s*@(?:taoanhposter|taoposter|tao_anh_poster|taobanner|taoanhbanner|taoanh|tạoảnh|tao_anh|tao-anh|taojanh|draw|render)\s*:?\s*/i.test(
         trimmed
@@ -1574,13 +1788,41 @@ export function AiDesignWorkspace() {
         trimmed
       );
     const effectiveMode = forceImageMode || hasTaoAnhTag ? 'image_generator' : 'consultant_free';
+    const finalPrompt = forceImageMode && !hasTaoAnhTag ? `@TaoAnh: ${trimmed}` : trimmed;
 
     setSubmitting(true);
+    setPendingUserPrompt(finalPrompt);
+    setChatPrompt('');
     setError(null);
     try {
-      const finalPrompt = forceImageMode && !hasTaoAnhTag ? `@TaoAnh: ${trimmed}` : trimmed;
+      let activeProj = currentProject;
+      if (!activeProj) {
+        const created = await apiRequest<{ id: number }>('/api/v1/design', {
+          method: 'POST',
+          csrfToken: user?.csrfToken,
+          body: {
+            designType: 'perspective_3d',
+            projectName: 'Dự án Phối cảnh LED AI',
+            productId: 1,
+            ledModuleSpec: 'P2.5 Indoor',
+            screenWidthM: 4.8,
+            screenHeightM: 2.7,
+            placementQuad: quad,
+            aiPrompt: '[INIT_PROJECT] Khởi tạo dự án từ Ô Chat AI',
+            quality: 'draft',
+            providerId: 'google_imagen',
+            modelId: selectedModelId,
+          },
+        });
+        await loadData(created.id, true);
+        activeProj = {
+          id: created.id,
+          version: 1,
+          assetVersions: [],
+        } as unknown as DesignRequestItemDto;
+      }
 
-      // Check if Admin has configured a real external Cloud AI API Key for the selected provider
+      // Check if user/admin has configured an external Cloud AI API Key for the selected provider
       const activeProvCat = providerStatus?.availableProviders?.find(
         (p) => p.providerId === selectedProviderId
       );
@@ -1588,25 +1830,34 @@ export function AiDesignWorkspace() {
         selectedProviderId !== 'local_sandbox' && activeProvCat?.hasApiKey
       );
 
-      // When @TaoAnh or @TaoAnhPoster is triggered in local/test mode (before external paid API key is added),
-      // composite directly onto the user's real photo with Toàn Trung CAD dimensions & spec box!
-      // Once an external Cloud API Key is entered in Admin, it proceeds to `action: 'chat_edit'` below to call the live Cloud AI!
-      if (effectiveMode === 'image_generator' && !hasExternalCloudApiKey) {
+      // Only run Toàn Trung 3D LED CAD frame overlay when user explicitly asks to graft an LED screen or poster,
+      // NEVER hijack general photo editing requests ("sửa ảnh", "thêm/bớt chi tiết trong ảnh")!
+      const isExplicitLedComposite =
+        isPosterTag ||
+        /\b(ghép\s*(?:phối\s*cảnh|màn\s*hình|led)|lắp\s*màn\s*hình\s*led|đường\s*gióng\s*kích\s*thước)\b/i.test(
+          finalPrompt
+        );
+
+      if (
+        effectiveMode === 'image_generator' &&
+        isExplicitLedComposite &&
+        (taoAnhExecStrategy === 'smart_hybrid' || !hasExternalCloudApiKey)
+      ) {
         const compositedB64 = await renderRealPhotoAiCompositeBase64(
           isPosterTag ? 'poster' : '3d_led',
           finalPrompt
         );
         if (compositedB64) {
           const saved = await apiRequest<{ versionId: number; versionNumber: number }>(
-            `/api/v1/design/${currentProject.id}`,
+            `/api/v1/design/${activeProj.id}`,
             {
               method: 'POST',
               csrfToken: user?.csrfToken,
               body: {
                 action: 'save_composited_version',
                 fileName: isPosterTag
-                  ? `poster-led-req-${currentProject.id}.jpg`
-                  : `phoi-canh-3d-led-req-${currentProject.id}.jpg`,
+                  ? `poster-led-req-${activeProj.id}.jpg`
+                  : `phoi-canh-3d-led-req-${activeProj.id}.jpg`,
                 mimeType: 'image/jpeg',
                 base64Data: compositedB64,
                 note: finalPrompt,
@@ -1615,7 +1866,6 @@ export function AiDesignWorkspace() {
             }
           );
 
-          setChatPrompt('');
           setViewMode('result');
           setShowHandles(false);
           setSuccessToast(
@@ -1623,7 +1873,7 @@ export function AiDesignWorkspace() {
               ? `Đã tạo Poster quảng cáo LED mới (Phiên bản AI v${saved.versionNumber}) và hiển thị lên màn hình!`
               : `Đã sửa ảnh & ghép màn hình LED vào các điểm chạm (Phiên bản AI v${saved.versionNumber})!`
           );
-          await loadData(currentProject.id);
+          await loadData(activeProj.id, true);
           if (saved.versionId) {
             setSelectedVersionId(saved.versionId);
           }
@@ -1633,55 +1883,64 @@ export function AiDesignWorkspace() {
 
       const payload = {
         action: 'chat_edit',
-        expectedVersion: currentProject.version,
         prompt: finalPrompt,
         chatMode: effectiveMode,
         quality: chatQuality,
         providerId: selectedProviderId,
-        modelId: selectedModelId,
+        modelId: effectiveMode === 'consultant_free' ? consultantModelId : selectedModelId,
         placementQuad: quad,
-        productId: paramForm.productId,
-        screenWidthM: paramForm.screenWidthM,
-        screenHeightM: paramForm.screenHeightM,
-        bannerWidthPx: paramForm.bannerWidthPx,
-        bannerHeightPx: paramForm.bannerHeightPx,
-        aspectRatio: paramForm.aspectRatio,
+        productId: Number(paramForm.productId) || 1,
+        screenWidthM: Number(paramForm.screenWidthM) || 4.8,
+        screenHeightM: Number(paramForm.screenHeightM) || 2.7,
+        bannerWidthPx: Math.round(Number(paramForm.bannerWidthPx) || 1920),
+        bannerHeightPx: Math.round(Number(paramForm.bannerHeightPx) || 1080),
+        aspectRatio: paramForm.aspectRatio || '16:9',
         selectedPhotoUrl: sitePhotoUrl,
-        idempotencyKey: `chat-design-${currentProject.id}-v${currentProject.assetVersions.length + 1}-${Date.now()}`,
+        idempotencyKey: `chat-design-${activeProj.id}-${Date.now()}`,
       };
 
       const data = await apiRequest<{
         mode?: 'consultant_free' | 'image_generator';
+        freeTierImageBlocked?: boolean;
         versionNumber: number;
         versionId?: number;
         suggestedTaoAnhPrompt?: string;
-      }>(`/api/v1/design/${currentProject.id}`, {
+        chatMessages?: DesignRequestItemDto['chatMessages'];
+      }>(`/api/v1/design/${activeProj.id}`, {
         method: 'PATCH',
         csrfToken: user?.csrfToken,
         body: payload,
       });
 
-      setChatPrompt('');
-      if (effectiveMode === 'image_generator') {
+      if (data.chatMessages && data.chatMessages.length > 0) {
+        const updatedMsgs = data.chatMessages;
+        setRequests((prev) =>
+          prev.map((r) => (r.id === activeProj!.id ? { ...r, chatMessages: updatedMsgs } : r))
+        );
+      }
+
+      if (
+        effectiveMode === 'image_generator' &&
+        !data.freeTierImageBlocked &&
+        data.mode !== 'consultant_free'
+      ) {
         setViewMode('result');
         setShowHandles(false);
         setSuccessToast(
           isPosterTag
             ? `Đã gọi @TaoAnhPoster thiết kế Poster/Banner mới (V${data.versionNumber}) và hiển thị lên màn hình chính!`
-            : `Đã gọi @TaoAnh kết xuất phối cảnh 3D mới (V${data.versionNumber}) và hiển thị lên màn hình chính!`
+            : `Đã gọi @TaoAnh kết xuất ảnh mới (V${data.versionNumber}) và hiển thị lên màn hình chính!`
         );
-      } else {
-        setSuccessToast(
-          'AI Tư vấn ($0) đã phân tích ảnh & điểm chạm và soạn sẵn câu lệnh @TaoAnh / @TaoAnhPoster cho bạn!'
-        );
-      }
-      await loadData(currentProject.id);
-      if (data.versionId && effectiveMode === 'image_generator') {
-        setSelectedVersionId(data.versionId);
+        await loadData(activeProj.id, true);
+        if (data.versionId) {
+          setSelectedVersionId(data.versionId);
+        }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Lỗi gửi yêu cầu dựng thiết kế AI.');
+      setChatPrompt(rawText);
+      setError(err instanceof Error ? err.message : 'Lỗi gửi yêu cầu chat AI.');
     } finally {
+      setPendingUserPrompt(null);
       setSubmitting(false);
     }
   };
@@ -1720,7 +1979,8 @@ export function AiDesignWorkspace() {
         }
         setSelectedAssetIds([]);
         setSuccessToast(`Đã xoá ${photoIdsToDelete.length} ảnh khỏi Kho ảnh dự án.`);
-        await loadData(targetPid);
+        await loadData(targetPid, true);
+        setViewMode('original');
       },
     });
   };
@@ -1745,7 +2005,7 @@ export function AiDesignWorkspace() {
       setSuccessToast(
         `Đã chốt duyệt phiên bản v${currentVersion.versionNumber} và đồng bộ sang hồ sơ Lead / NVKD.`
       );
-      await loadData(currentProject.id);
+      await loadData(currentProject.id, true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Lỗi phê duyệt bản hoàn thiện.');
     } finally {
@@ -1782,7 +2042,7 @@ export function AiDesignWorkspace() {
         });
       }
       setSuccessToast(`Đã tải ${files.length} ảnh công trình vào dự án và hiển thị lên màn hình.`);
-      await loadData(currentProject.id);
+      await loadData(currentProject.id, true);
       setViewMode('original');
       setShowHandles(false);
     } catch (err) {
@@ -2002,6 +2262,338 @@ export function AiDesignWorkspace() {
     } finally {
       setSavingAiConfig(false);
     }
+  };
+
+  // Auto-discover models & test connection for Google Gemini or any active AI provider
+  const handleQuickConnectGmailGemini = async () => {
+    const trimmedKey = gmailGeminiKeyInput.trim();
+    const googleCat = providerStatus?.availableProviders?.find(
+      (p) => p.providerId === 'google_imagen'
+    );
+    if (!trimmedKey && !googleCat?.hasApiKey) {
+      setError(
+        'Vui lòng dán mã Google Gemini API Key lấy từ tài khoản Gmail vào ô bên dưới trước khi bấm kết nối!'
+      );
+      return;
+    }
+
+    setTestingAiConnection(true);
+    setTestAiResult(null);
+    setError(null);
+    try {
+      // 1. Test real connection & auto-discover all models on the user's AI account
+      const testRes = await apiRequest<{
+        ok: boolean;
+        connected: boolean;
+        providerId: AiProviderId;
+        modelTested: string;
+        latencyMs: number;
+        replyText: string;
+        maskedKey: string | null;
+        discoveredModels?: Array<{ id: string; name: string; badge: string; description: string }>;
+        providerStatus?: ProviderStatusInfo;
+      }>('/api/v1/design', {
+        method: 'POST',
+        csrfToken: user?.csrfToken,
+        body: {
+          action: 'test_ai_connection',
+          providerId: 'google_imagen',
+          apiKey: trimmedKey || undefined,
+          modelId: consultantModelId || gmailGeminiModelId,
+        },
+      });
+
+      setTestAiResult(testRes);
+
+      if (testRes.connected) {
+        const verifiedModel =
+          testRes.modelTested || consultantModelId || 'gemini-3.5-flash-lite';
+        if (testRes.providerStatus) {
+          setProviderStatus(testRes.providerStatus);
+        } else {
+          const saveRes = await apiRequest<{ ok: boolean; providerStatus: ProviderStatusInfo }>(
+            '/api/v1/design',
+            {
+              method: 'POST',
+              csrfToken: user?.csrfToken,
+              body: {
+                action: 'configure_ai_providers',
+                defaultProviderId: 'google_imagen',
+                defaultModelId: verifiedModel,
+                autoFallbackToLocal: true,
+                providerConfig: {
+                  providerId: 'google_imagen',
+                  apiKey: trimmedKey || undefined,
+                  activeModel: verifiedModel,
+                },
+              },
+            }
+          );
+          if (saveRes.providerStatus) {
+            setProviderStatus(saveRes.providerStatus);
+          }
+        }
+        const discoveredCount = testRes.discoveredModels?.length || 0;
+        const foundModelObj = testRes.discoveredModels?.find((m) => m.id === verifiedModel);
+        setSelectedProviderId('google_imagen');
+        setSelectedModelId(verifiedModel);
+        setConsultantModelId(verifiedModel);
+        setConsultantModelName(foundModelObj?.name || `Google ${verifiedModel}`);
+        setGmailGeminiKeyInput('');
+        setSuccessToast(
+          discoveredCount > 0
+            ? `Đã tự động đọc ${discoveredCount} Model từ con AI của bạn! Đang dùng: ${verifiedModel}.`
+            : `Đã kết nối thành công AI (${verifiedModel} · ${testRes.latencyMs}ms)!`
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lỗi kiểm tra kết nối & đọc danh sách Model AI.');
+    } finally {
+      setTestingAiConnection(false);
+    }
+  };
+
+  // Test connection & auto-read models for any selected provider
+  const handleTestProviderKey = async (
+    targetPid: AiProviderId,
+    rawKey: string,
+    rawEndpoint: string,
+    rawModel: string
+  ) => {
+    setTestingAiConnection(true);
+    setTestAiResult(null);
+    setError(null);
+    try {
+      const testRes = await apiRequest<{
+        ok: boolean;
+        connected: boolean;
+        providerId: AiProviderId;
+        modelTested: string;
+        latencyMs: number;
+        replyText: string;
+        maskedKey: string | null;
+        discoveredModels?: Array<{ id: string; name: string; badge: string; description: string }>;
+        providerStatus?: ProviderStatusInfo;
+      }>('/api/v1/design', {
+        method: 'POST',
+        csrfToken: user?.csrfToken,
+        body: {
+          action: 'test_ai_connection',
+          providerId: targetPid,
+          apiKey: rawKey.trim() || undefined,
+          apiEndpoint: rawEndpoint.trim() || undefined,
+          modelId: rawModel.trim() || undefined,
+        },
+      });
+      setTestAiResult(testRes);
+      if (testRes.providerStatus) {
+        setProviderStatus(testRes.providerStatus);
+      }
+      if (testRes.discoveredModels && testRes.discoveredModels.length > 0) {
+        const firstId = testRes.modelTested || testRes.discoveredModels[0].id;
+        setNewCustomAiModelId(firstId);
+        if (!newCustomAiName.trim()) {
+          setNewCustomAiName(testRes.discoveredModels[0].name);
+        }
+        setSuccessToast(
+          `Đã tự động đọc ${testRes.discoveredModels.length} Model từ con AI (${targetPid})!`
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không thể đọc danh sách Model từ AI.');
+    } finally {
+      setTestingAiConnection(false);
+    }
+  };
+
+  // Save a new Custom AI Model added by staff for future extensibility
+  const handleAddCustomAiModel = async () => {
+    if (!newCustomAiName.trim() || !newCustomAiModelId.trim()) {
+      setError('Vui lòng nhập Tên hiển thị Con AI và Mã Model ID (VD: gemini-2.5-pro-exp).');
+      return;
+    }
+    const newItem = {
+      id: `staff-ai-${Date.now()}`,
+      name: newCustomAiName.trim(),
+      role: newCustomAiRole,
+      providerId: newCustomAiProvider,
+      modelId: newCustomAiModelId.trim(),
+      apiKey: newCustomAiKey.trim() || undefined,
+      apiEndpoint: newCustomAiEndpoint.trim() || undefined,
+      badge:
+        newCustomAiRole === 'consultant'
+          ? 'Tư vấn $0'
+          : newCustomAiRole === 'image_gen'
+            ? '@TaoAnh'
+            : 'Đa năng 2-in-1',
+      createdAt: new Date().toLocaleDateString('vi-VN'),
+    };
+    const nextList = [newItem, ...customAiModels];
+    setCustomAiModels(nextList);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('toantrung_custom_ai_models_v1', JSON.stringify(nextList));
+    }
+
+    // If user also provided an API Key or Endpoint for this provider, sync to backend
+    if (newItem.apiKey || newItem.apiEndpoint) {
+      try {
+        const res = await apiRequest<{ ok: boolean; providerStatus: ProviderStatusInfo }>(
+          '/api/v1/design',
+          {
+            method: 'POST',
+            csrfToken: user?.csrfToken,
+            body: {
+              action: 'configure_ai_providers',
+              defaultProviderId: newItem.providerId,
+              defaultModelId: newItem.modelId,
+              autoFallbackToLocal: true,
+              providerConfig: {
+                providerId: newItem.providerId,
+                apiKey: newItem.apiKey,
+                apiEndpoint: newItem.apiEndpoint,
+                activeModel: newItem.modelId,
+              },
+            },
+          }
+        );
+        if (res.providerStatus) setProviderStatus(res.providerStatus);
+      } catch {
+        // non-fatal
+      }
+    }
+
+    // Auto-select the newly added AI
+    if (newItem.role === 'consultant' || newItem.role === 'both') {
+      setConsultantModelName(`${newItem.name} (${newItem.modelId})`);
+      setConsultantModelId(newItem.modelId);
+    }
+    if (newItem.role === 'image_gen' || newItem.role === 'both') {
+      setSelectedProviderId(newItem.providerId);
+      setSelectedModelId(newItem.modelId);
+    }
+
+    setNewCustomAiName('');
+    setNewCustomAiModelId('');
+    setNewCustomAiKey('');
+    setNewCustomAiEndpoint('');
+    setSuccessToast(
+      `Đã thêm Con AI mới "${newItem.name}" (${newItem.modelId}) và kích hoạt vào danh sách chọn AI của nhân viên!`
+    );
+  };
+
+  const handleDeleteCustomAiModel = (id: string) => {
+    const nextList = customAiModels.filter((m) => m.id !== id);
+    setCustomAiModels(nextList);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('toantrung_custom_ai_models_v1', JSON.stringify(nextList));
+    }
+    setSuccessToast('Đã xoá Model AI tùy chỉnh khỏi danh sách.');
+  };
+
+  // Export & Print A4 Technical Proposal Dossier (Hồ sơ Phương án Kỹ thuật & Phối cảnh 3D LED Toàn Trung)
+  const handlePrintTechnicalDossier = () => {
+    if (!currentProject) return;
+    const win = window.open('', '_blank', 'width=1100,height=850');
+    if (!win) {
+      setError('Trình duyệt đang chặn cửa sổ bật lên (Pop-up). Vui lòng cho phép mở cửa sổ để in Hồ sơ PDF.');
+      return;
+    }
+    const spareModules = Math.max(4, Math.ceil(computedLiveSpecs.moduleCount * 0.03));
+    const powerSupplies = Math.max(2, computedLiveSpecs.cabinetCount * 2);
+    const origin = window.location.origin;
+    const beforeSrc = selectedPhoto
+      ? sitePhotoUrl.startsWith('http')
+        ? sitePhotoUrl
+        : `${origin}${sitePhotoUrl}`
+      : '';
+    const afterSrc = currentVersion
+      ? versionImageUrl.startsWith('http')
+        ? versionImageUrl
+        : `${origin}${versionImageUrl}`
+      : beforeSrc;
+
+    const html = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <title>Ho-So-Phuong-An-LED-${currentProject.projectName}</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Segoe UI', Roboto, Arial, sans-serif; }
+    body { margin: 0; padding: 24px; color: #0f172a; background: #fff; }
+    .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #1553A2; padding-bottom: 12px; margin-bottom: 16px; }
+    .brand { font-size: 18px; font-weight: 800; color: #1553A2; text-transform: uppercase; }
+    .sub { font-size: 12px; color: #475569; margin-top: 2px; }
+    .badge { background: #1553A2; color: #fff; font-weight: 700; font-size: 12px; padding: 6px 12px; border-radius: 6px; }
+    .meta-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 12px; }
+    .meta-item strong { display: block; color: #64748b; font-size: 10px; text-transform: uppercase; }
+    .meta-item span { font-weight: 700; color: #0f172a; font-size: 13px; }
+    .photos { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+    .photo-box { border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; background: #0f172a; }
+    .photo-title { background: #1e293b; color: #fff; font-size: 11px; font-weight: 700; padding: 6px 10px; text-transform: uppercase; }
+    .photo-box img { width: 100%; height: 240px; object-fit: cover; display: block; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 16px; }
+    th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; }
+    th { background: #eff6ff; color: #1e3a8a; font-weight: 800; text-transform: uppercase; font-size: 11px; }
+    .sign-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 24px; text-align: center; font-size: 12px; }
+    @media print { body { padding: 10px; } .no-print { display: none; } }
+  </style>
+</head>
+<body>
+  <div class="no-print" style="margin-bottom:14px;text-align:right;">
+    <button onclick="window.print()" style="background:#1553A2;color:#fff;border:none;padding:8px 18px;border-radius:6px;font-weight:700;cursor:pointer;">🖨️ In Hồ Sơ / Lưu thành PDF (A4)</button>
+  </div>
+  <div class="header">
+    <div>
+      <div class="brand">CÔNG TY CỔ PHẦN ĐIỆN TỬ VIỄN THÔNG TOÀN TRUNG</div>
+      <div class="sub">Hồ sơ Phương án Phối cảnh 3D &amp; Bóc tách Khối lượng Vật tư Màn hình LED (BOM)</div>
+    </div>
+    <div class="badge">MÃ HỒ SƠ: DA-${String(currentProject.id).padStart(4, '0')}${currentProject.leadCode ? ` · ${currentProject.leadCode}` : ''}</div>
+  </div>
+  <div class="meta-grid">
+    <div class="meta-item"><strong>Tên Dự án / Công trình</strong><span>${currentProject.projectName}</span></div>
+    <div class="meta-item"><strong>Khách hàng / Liên hệ</strong><span>${paramForm.contactName || currentProject.leadProjectLabel || 'Khách hàng dự án'}</span></div>
+    <div class="meta-item"><strong>Chủng loại &amp; Kích thước LED</strong><span>${paramForm.pixelPitch} · ${Math.round(computedLiveSpecs.w * 1000)}×${Math.round(computedLiveSpecs.h * 1000)} mm (${computedLiveSpecs.areaM2} m²)</span></div>
+    <div class="meta-item"><strong>Vị trí lắp đặt</strong><span>${paramForm.installationInfo || 'Theo khảo sát thực tế'}</span></div>
+  </div>
+  <div class="photos">
+    <div class="photo-box">
+      <div class="photo-title">1. Ảnh hiện trạng khảo sát trước khi lắp đặt</div>
+      ${beforeSrc ? `<img src="${beforeSrc}" alt="Hiện trạng" />` : '<div style="height:240px;color:#fff;display:flex;align-items:center;justify-content:center;">Chưa có ảnh hiện trạng</div>'}
+    </div>
+    <div class="photo-box">
+      <div class="photo-title">2. Phối cảnh 3D LED sau khi lắp đặt (Phiên bản v${currentVersion?.versionNumber || 1})</div>
+      ${afterSrc ? `<img src="${afterSrc}" alt="Phối cảnh AI" />` : '<div style="height:240px;color:#fff;display:flex;align-items:center;justify-content:center;">Chưa có ảnh phối cảnh</div>'}
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:45px;">STT</th>
+        <th>Hạng mục Vật tư &amp; Thông số Kỹ thuật</th>
+        <th>Quy cách / Đơn vị</th>
+        <th>Khối lượng đề xuất</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>01</td><td>Tấm Module LED ${paramForm.pixelPitch} chính hãng Toàn Trung</td><td>320 × 160 mm</td><td><strong>${computedLiveSpecs.moduleCount} tấm</strong> (+ ${spareModules} tấm dự phòng bảo hành)</td></tr>
+      <tr><td>02</td><td>Khung Cabinet nhôm đúc định hình CNC</td><td>640 × 480 mm</td><td><strong>${computedLiveSpecs.cabinetCount} Cabin</strong> (${computedLiveSpecs.cabinetCols} cột ngang × ${computedLiveSpecs.cabinetRows} hàng cao)</td></tr>
+      <tr><td>03</td><td>Độ phân giải hiển thị thực tế</td><td>Pixel (Điểm ảnh)</td><td><strong>${computedLiveSpecs.resW} × ${computedLiveSpecs.resH} px</strong> (Tỷ lệ ${paramForm.aspectRatio})</td></tr>
+      <tr><td>04</td><td>Card thu tín hiệu &amp; Bộ nguồn công nghiệp</td><td>Novastar MRV328 + 5V-40A</td><td><strong>${computedLiveSpecs.cabinetCount} Card thu · ${powerSupplies} Nguồn Meanwell/CL</strong></td></tr>
+      <tr><td>05</td><td>Bộ xử lý hình ảnh trung tâm (Video Processor)</td><td>Chuẩn HDMI / LAN</td><td><strong>01 Bộ ${computedLiveSpecs.resW * computedLiveSpecs.resH > 2300000 ? 'Novastar VX1000 (4K)' : 'Novastar VX600'}</strong></td></tr>
+      <tr><td>06</td><td>Công suất tiêu thụ điện (Trung bình / Cực đại)</td><td>Nguồn 3 Pha 380V</td><td><strong>${computedLiveSpecs.avgKw} kW / ${computedLiveSpecs.maxKw} kW</strong> (Độ sáng ~${ledBrightnessNits} nits)</td></tr>
+      <tr><td>07</td><td>Khung thép mạ kẽm 40×40mm &amp; Ốp viền Alu đen</td><td>Hoàn thiện trọn gói</td><td><strong>${computedLiveSpecs.areaM2} m²</strong> (Tiếp địa an toàn &lt; 4Ω)</td></tr>
+    </tbody>
+  </table>
+  <div class="sign-grid">
+    <div><strong>ĐẠI DIỆN KHÁCH HÀNG</strong><br/><span style="color:#64748b;font-size:11px;">(Ký duyệt phương án phối cảnh)</span><br/><br/><br/>........................................</div>
+    <div><strong>PHÒNG KỸ THUẬT &amp; THIẾT KẾ 3D</strong><br/><span style="color:#64748b;font-size:11px;">(${currentProject.assignedDesignerName || 'Designer Toàn Trung'})</span><br/><br/><br/>........................................</div>
+    <div><strong>PHÒNG KINH DOANH TOÀN TRUNG</strong><br/><span style="color:#64748b;font-size:11px;">(Ngày lập: ${new Date().toLocaleDateString('vi-VN')})</span><br/><br/><br/>........................................</div>
+  </div>
+</body>
+</html>`;
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
   };
 
   // Render & Save Real-Photo 4-Corner Perspective Composite as a New Version vN
@@ -2376,357 +2968,473 @@ export function AiDesignWorkspace() {
     });
   };
 
-  const renderParametersFormContent = (compact = false) => (
-    <form
-      onSubmit={handleSaveParameters}
-      className={compact ? 'space-y-4 text-sm' : 'grid grid-cols-1 lg:grid-cols-3 gap-5 text-sm'}
-    >
-      {/* SECTION 1: THÔNG TIN DỰ ÁN */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs space-y-3.5">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-          <div>
-            <h3 className="text-base font-bold text-slate-900">1. Thông tin dự án</h3>
-            <p className="text-xs text-slate-500">Định danh dự án, loại thiết kế & liên kết hồ sơ Lead</p>
-          </div>
-          <span className="rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-bold text-[#1E3A8A] border border-blue-200">
-            DA-{String(currentProject?.id || 1).padStart(4, '0')}
-          </span>
-        </div>
+  const renderParametersFormContent = (compact = false) => {
+    const isLedCase = paramForm.useCaseCategory === 'led_screen';
+    const unitLabelMap: Record<ProjectParameterFormState['dimensionUnit'], string> = {
+      auto_photo: 'tỷ lệ tự động',
+      m: 'm',
+      cm: 'cm',
+      mm: 'mm',
+      px: 'px',
+    };
+    const activeUnitLabel = unitLabelMap[paramForm.dimensionUnit] || 'm';
 
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-1">
-            Tên dự án <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            required
-            data-testid="param-project-name"
-            value={paramForm.projectName}
-            onChange={(e) => setParamForm((p) => ({ ...p, projectName: e.target.value }))}
-            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
-          />
-        </div>
+    const useCaseMeta: Record<
+      UniversalUseCaseCategory,
+      {
+        badge: string;
+        sec2Title: string;
+        sec2Sub: string;
+        subjectLabel: string;
+        subjectPlaceholder: string;
+        contextLabel: string;
+        contextPlaceholder: string;
+      }
+    > = {
+      general_photo: {
+        badge: '🪄 Sửa ảnh tự do',
+        sec2Title: '2. Thông số Chỉnh sửa Ảnh & Bố cục AI',
+        sec2Sub: 'Tùy chỉnh chế độ can thiệp ảnh (thêm/bớt/xóa vật thể), phong cách & kích thước linh hoạt',
+        subjectLabel: 'Nội dung / Chi tiết cần Thêm, Bớt hoặc Sửa trên ảnh',
+        subjectPlaceholder: 'VD: Thêm cây xanh bên trái, xóa vật thể thừa, làm sáng ảnh...',
+        contextLabel: 'Mục tiêu & bối cảnh bức ảnh',
+        contextPlaceholder: 'VD: Giữ nguyên nền ảnh gốc, chỉ chỉnh sửa vùng yêu cầu tự nhiên nhất',
+      },
+      marketing_poster: {
+        badge: '🎨 Poster / Marketing',
+        sec2Title: '2. Thông số Ấn phẩm Marketing & Đồ họa',
+        sec2Sub: 'Loại ấn phẩm truyền thông, phong cách mỹ thuật, thông điệp & kích thước xuất file',
+        subjectLabel: 'Chủ đề chiến dịch / Thông điệp chính trên ấn phẩm',
+        subjectPlaceholder: 'VD: Khuyến mãi ra mắt sản phẩm mới, Banner sự kiện, Bài đăng Fanpage...',
+        contextLabel: 'Kênh đăng tải / Vị trí sử dụng ấn phẩm',
+        contextPlaceholder: 'VD: Facebook/Zalo Post, Standee sảnh, Backdrop sự kiện, Website Banner',
+      },
+      space_architecture: {
+        badge: '🏛️ Phối cảnh Không gian',
+        sec2Title: '2. Thông số Phối cảnh 3D Không gian & Nội-Ngoại thất',
+        sec2Sub: 'Hạng mục công trình, biển bảng, nội thất, đơn vị đo lường & ánh sáng môi trường',
+        subjectLabel: 'Hạng mục công trình / Vật thể cần dựng phối cảnh',
+        subjectPlaceholder: 'VD: Mặt tiền showroom, Bảng hiệu chữ nổi, Nội thất phòng khách, Sân khấu...',
+        contextLabel: 'Vị trí & hiện trạng không gian thực tế',
+        contextPlaceholder: 'VD: Mặt tiền tầng trệt, sảnh lễ tân, phòng họp hoặc khuôn viên ngoài trời',
+      },
+      led_screen: {
+        badge: '📺 Màn hình LED',
+        sec2Title: '2. Thông số Kỹ thuật Màn hình LED & Trình chiếu',
+        sec2Sub: 'Sản phẩm phê duyệt, bước điểm ảnh (mm), kiểu màn hình & kích thước lắp đặt',
+        subjectLabel: 'Ghi chú cấu hình hiển thị / Nội dung trình chiếu (Tùy chọn)',
+        subjectPlaceholder: 'VD: Trình chiếu hội nghị 4K, biển quảng cáo ngoài trời...',
+        contextLabel: 'Vị trí & bối cảnh lắp đặt',
+        contextPlaceholder: 'VD: Vách sảnh chính tầng trệt, cách sàn 1.2m',
+      },
+      custom_other: {
+        badge: '⚙️ Tùy chỉnh đa năng',
+        sec2Title: '2. Thông số Tùy chỉnh Tự do (Mọi lĩnh vực)',
+        sec2Sub: 'Tự định nghĩa đối tượng, đơn vị đo và quy chuẩn riêng cho bất kỳ nhu cầu nào',
+        subjectLabel: 'Tên hạng mục / Yêu cầu tùy chỉnh của bạn',
+        subjectPlaceholder: 'Nhập bất kỳ loại thiết kế, sản phẩm hoặc yêu cầu xử lý ảnh nào...',
+        contextLabel: 'Bối cảnh / Mục đích sử dụng',
+        contextPlaceholder: 'Nhập mục đích sử dụng hoặc yêu cầu đầu ra của bạn...',
+      },
+    };
 
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-1">Loại dự án thiết kế</label>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => setParamForm((p) => ({ ...p, designType: 'perspective_3d' }))}
-              className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
-                paramForm.designType === 'perspective_3d'
-                  ? 'border-[#1E3A8A] bg-blue-50 text-[#1E3A8A]'
-                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              Phối cảnh 3D LED
-            </button>
-            <button
-              type="button"
-              onClick={() => setParamForm((p) => ({ ...p, designType: 'banner' }))}
-              className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
-                paramForm.designType === 'banner'
-                  ? 'border-[#1E3A8A] bg-blue-50 text-[#1E3A8A]'
-                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              Banner khung LED
-            </button>
-          </div>
-        </div>
+    const currentMeta = useCaseMeta[paramForm.useCaseCategory];
 
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-1">
-            Hồ sơ Lead / Khách hàng liên kết
-          </label>
-          <select
-            data-testid="param-lead-select"
-            value={paramForm.leadId}
-            onChange={(e) => setParamForm((p) => ({ ...p, leadId: e.target.value }))}
-            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
-          >
-            <option value="">-- Thiết kế độc lập (Không gắn Lead) --</option>
-            {leadOptions.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-1">Người liên hệ / Đại diện</label>
-          <input
-            type="text"
-            value={paramForm.contactName}
-            onChange={(e) => setParamForm((p) => ({ ...p, contactName: e.target.value }))}
-            placeholder="VD: Anh Minh — Ban Quản lý Tòa nhà"
-            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-1">
-            Vị trí & bối cảnh lắp đặt
-          </label>
-          <input
-            type="text"
-            data-testid="param-installation-info"
-            value={paramForm.installationInfo}
-            onChange={(e) => setParamForm((p) => ({ ...p, installationInfo: e.target.value }))}
-            placeholder="VD: Vách sảnh chính tầng trệt, cách sàn 1.2m"
-            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-1">Ghi chú kỹ thuật</label>
-          <textarea
-            rows={2}
-            value={paramForm.notes}
-            onChange={(e) => setParamForm((p) => ({ ...p, notes: e.target.value }))}
-            placeholder="Ghi chú kết cấu khung, nguồn điện, yêu cầu thẩm mỹ..."
-            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
-          />
-        </div>
-      </div>
-
-      {/* SECTION 2: THÔNG SỐ KỸ THUẬT LED */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs space-y-3.5">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-          <div>
-            <h3 className="text-base font-bold text-slate-900">2. Thông số kỹ thuật LED</h3>
-            <p className="text-xs text-slate-500">Sản phẩm phê duyệt, bước điểm ảnh (mm) & kích thước (m)</p>
-          </div>
-          <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-mono font-bold text-slate-700">
-            {paramForm.pixelPitch} · {computedLiveSpecs.areaM2} m²
-          </span>
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-1">
-            Dòng sản phẩm Toàn Trung phê duyệt
-          </label>
-          <select
-            data-testid="param-product-select"
-            value={paramForm.productId}
-            onChange={(e) => setParamForm((p) => ({ ...p, productId: Number(e.target.value) || 1 }))}
-            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
-          >
-            {productOptions.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.code} — {p.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1">
-              Bước điểm ảnh (mm)
-            </label>
-            <select
-              data-testid="param-pixel-pitch"
-              value={paramForm.pixelPitch}
-              onChange={(e) => setParamForm((p) => ({ ...p, pixelPitch: e.target.value }))}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
-            >
-              <option value="P1.25">P1.25 (1.25 mm)</option>
-              <option value="P1.53">P1.53 (1.53 mm)</option>
-              <option value="P1.86">P1.86 (1.86 mm)</option>
-              <option value="P2.0">P2.0 (2.00 mm)</option>
-              <option value="P2.5">P2.5 (2.50 mm)</option>
-              <option value="P3.0">P3.0 (3.00 mm)</option>
-              <option value="P4.0">P4.0 (4.00 mm)</option>
-              <option value="P5.0">P5.0 (5.00 mm)</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1">Kiểu màn hình</label>
-            <select
-              value={paramForm.screenStyle}
-              onChange={(e) =>
-                setParamForm((p) => ({
-                  ...p,
-                  screenStyle: e.target.value as 'flat' | 'curved' | 'corner_90',
-                }))
-              }
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
-            >
-              <option value="flat">Màn hình phẳng</option>
-              <option value="curved">Màn hình cong</option>
-              <option value="corner_90">Vuông góc 90° (3D)</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Toggle for Unmeasured Projects (Chưa có số liệu đo đạc thực tế -> Ước tính theo 4 điểm chấm) */}
-        <div className="rounded-xl border border-blue-200/80 bg-blue-50/50 p-3 text-xs">
-          <div className="flex items-center justify-between gap-2">
-            <label className="flex cursor-pointer items-center gap-2 font-bold text-[#1E3A8A]">
-              <input
-                type="checkbox"
-                checked={unmeasuredMode}
-                onChange={(e) => {
-                  const next = e.target.checked;
-                  setUnmeasuredMode(next);
-                  if (next) {
-                    setParamForm((prev) => ({
-                      ...prev,
-                      screenWidthM: quadEstimatedSpecs.estWidthM,
-                      screenHeightM: quadEstimatedSpecs.estHeightM,
-                    }));
-                  }
-                }}
-                className="h-4 w-4 rounded border-slate-300 text-[#1E3A8A]"
-              />
-              <span>Chưa có số liệu đo đạc (Tự tính theo 4 điểm chấm)</span>
-            </label>
-            <span className="rounded-md bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 border border-blue-200">
-              {quadEstimatedSpecs.cabinetCols}×{quadEstimatedSpecs.cabinetRows} Cabin
-            </span>
-          </div>
-          <p className="mt-1 text-[11px] text-slate-600 leading-relaxed">
-            Khi khách chưa đo kích thước tường thực tế, bạn chỉ cần kéo 4 điểm chấm xanh trên ảnh. Hệ thống tự động quy đổi vùng kéo sang bội số chuẩn Cabin LED Toàn Trung (640×480mm):{' '}
-            <strong className="text-slate-900">
-              ~{quadEstimatedSpecs.estWidthM}m × {quadEstimatedSpecs.estHeightM}m
-            </strong>
-            .
-          </p>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1">
-              {unmeasuredMode ? 'Ngang ước tính (m)' : 'Chiều ngang LED (m)'}
-            </label>
-            <input
-              type="number"
-              step="0.1"
-              min="0.3"
-              max="200"
-              data-testid="param-screen-width-m"
-              value={unmeasuredMode ? quadEstimatedSpecs.estWidthM : paramForm.screenWidthM}
-              onChange={(e) => {
-                setUnmeasuredMode(false);
-                const nextW = Number(e.target.value) || 0.5;
-                const ratioNum = parseAspectRatioValue(paramForm.aspectRatio);
-                setParamForm((prev) => ({
-                  ...prev,
-                  screenWidthM: nextW,
-                  screenHeightM:
-                    prev.aspectLocked && ratioNum
-                      ? Number((nextW / ratioNum).toFixed(2))
-                      : prev.screenHeightM,
-                }));
-              }}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1">
-              {unmeasuredMode ? 'Cao ước tính (m)' : 'Chiều cao LED (m)'}
-            </label>
-            <input
-              type="number"
-              step="0.1"
-              min="0.3"
-              max="100"
-              data-testid="param-screen-height-m"
-              value={unmeasuredMode ? quadEstimatedSpecs.estHeightM : paramForm.screenHeightM}
-              onChange={(e) => {
-                setUnmeasuredMode(false);
-                const nextH = Number(e.target.value) || 0.5;
-                const ratioNum = parseAspectRatioValue(paramForm.aspectRatio);
-                setParamForm((prev) => ({
-                  ...prev,
-                  screenHeightM: nextH,
-                  screenWidthM:
-                    prev.aspectLocked && ratioNum
-                      ? Number((nextH * ratioNum).toFixed(2))
-                      : prev.screenWidthM,
-                }));
-              }}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
-            />
-          </div>
-        </div>
-
-        {/* Computed LED Engineering Summary */}
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2 text-xs">
-          <div className="flex justify-between">
-            <span className="text-slate-500">Diện tích hiển thị thực tế:</span>
-            <span className="font-bold text-slate-900">{computedLiveSpecs.areaM2} m²</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-500">Độ phân giải điểm ảnh thực:</span>
-            <span className="font-mono font-bold text-[#1E3A8A]">
-              {computedLiveSpecs.resW} × {computedLiveSpecs.resH} px
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-500">Cấu hình Cabinet (640×480mm):</span>
-            <span className="font-semibold text-slate-800">
-              {computedLiveSpecs.cabinetCount} Cabinet ({computedLiveSpecs.moduleCount} Module 320×160mm)
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-500">Bộ xử lý & Nguồn cấp:</span>
-            <span className="font-semibold text-slate-800">Novastar VX600 · Meanwell 5V-40A</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-500">Công suất tiêu thụ (TB / Cực đại):</span>
-            <span className="font-semibold text-slate-800">
-              {computedLiveSpecs.avgKw} kW / {computedLiveSpecs.maxKw} kW
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* SECTION 3: CÀI ĐẶT ĐẦU RA */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs flex flex-col justify-between space-y-3.5">
-        <div className="space-y-3.5">
+    return (
+      <form
+        onSubmit={handleSaveParameters}
+        className={compact ? 'space-y-4 text-sm' : 'grid grid-cols-1 lg:grid-cols-3 gap-5 text-sm'}
+      >
+        {/* SECTION 1: THÔNG TIN DỰ ÁN & CHỌN TRƯỜNG HỢP ÁP DỤNG */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs space-y-3.5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
             <div>
-              <h3 className="text-base font-bold text-slate-900">3. Cài đặt đầu ra</h3>
+              <h3 className="text-base font-bold text-slate-900">1. Thông tin & Trường hợp áp dụng</h3>
               <p className="text-xs text-slate-500">
-                Tỷ lệ khung hình, khóa tỷ lệ & độ phân giải xuất file (px)
+                Chọn mục đích sử dụng để bộ thông số tự động thích ứng cho mọi trường hợp
               </p>
             </div>
-            <button
-              type="button"
-              data-testid="param-aspect-lock-btn"
-              onClick={() => setParamForm((p) => ({ ...p, aspectLocked: !p.aspectLocked }))}
-              className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
-                paramForm.aspectLocked
-                  ? 'border-blue-200 bg-blue-50 text-[#1E3A8A]'
-                  : 'border-slate-200 bg-white text-slate-600'
-              }`}
-              title="Khóa hoặc mở khóa tỷ lệ khung hình khi nhập kích thước"
-            >
-              {paramForm.aspectLocked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
-              <span>{paramForm.aspectLocked ? 'Đã khóa tỷ lệ' : 'Tỷ lệ tự do'}</span>
-            </button>
+            <span className="rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-bold text-[#1E3A8A] border border-blue-200">
+              DA-{String(currentProject?.id || 1).padStart(4, '0')}
+            </span>
           </div>
 
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-1">
-              Tỷ lệ khung hình chuẩn
+              Tên dự án / Yêu cầu <span className="text-red-500">*</span>
             </label>
-            <div className="grid grid-cols-3 gap-2">
-              {['16:9', '9:16', '4:3', '21:9', '1:1', '32:9'].map((r) => (
+            <input
+              type="text"
+              required
+              data-testid="param-project-name"
+              value={paramForm.projectName}
+              onChange={(e) => setParamForm((p) => ({ ...p, projectName: e.target.value }))}
+              placeholder="Nhập tên dự án hoặc tên yêu cầu chỉnh sửa ảnh..."
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
+            />
+          </div>
+
+          {/* 5 UNIVERSAL USE-CASE SELECTOR CARDS */}
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+              Trường hợp sử dụng (Dùng cho mọi nhu cầu)
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {(
+                [
+                  {
+                    id: 'general_photo' as const,
+                    label: '🪄 Sửa ảnh & Thiết kế tự do',
+                    desc: 'Thêm/bớt vật thể, sửa mọi loại ảnh',
+                    defaultType: 'perspective_3d' as const,
+                  },
+                  {
+                    id: 'marketing_poster' as const,
+                    label: '🎨 Poster / Banner / Marketing',
+                    desc: 'Ấn phẩm quảng cáo, Social, Standee',
+                    defaultType: 'banner' as const,
+                  },
+                  {
+                    id: 'space_architecture' as const,
+                    label: '🏛️ Phối cảnh 3D Không gian',
+                    desc: 'Nội-ngoại thất, mặt tiền, biển bảng',
+                    defaultType: 'perspective_3d' as const,
+                  },
+                  {
+                    id: 'led_screen' as const,
+                    label: '📺 Màn hình LED / Thiết bị',
+                    desc: 'Tính bước điểm ảnh, Cabin & nguồn',
+                    defaultType: 'perspective_3d' as const,
+                  },
+                  {
+                    id: 'custom_other' as const,
+                    label: '⚙️ Tùy chỉnh tự do (Mọi loại)',
+                    desc: 'Tự nhập thông số cho bất kỳ ngành nào',
+                    defaultType: 'perspective_3d' as const,
+                  },
+                ]
+              ).map((item) => {
+                const active = paramForm.useCaseCategory === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() =>
+                      setParamForm((p) => ({
+                        ...p,
+                        useCaseCategory: item.id,
+                        designType: item.defaultType,
+                        dimensionUnit:
+                          item.id === 'general_photo'
+                            ? 'auto_photo'
+                            : item.id === 'marketing_poster'
+                              ? 'px'
+                              : 'm',
+                      }))
+                    }
+                    className={`flex flex-col items-start rounded-xl border p-2 text-left transition ${
+                      item.id === 'custom_other' ? 'sm:col-span-2' : ''
+                    } ${
+                      active
+                        ? 'border-[#1E3A8A] bg-blue-50/90 text-[#1E3A8A] ring-1 ring-blue-500/20'
+                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="text-xs font-extrabold">{item.label}</span>
+                    <span className="text-[11px] text-slate-500 line-clamp-1">{item.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">
+              Chế độ khung làm việc gốc
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setParamForm((p) => ({ ...p, designType: 'perspective_3d' }))}
+                className={`rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${
+                  paramForm.designType === 'perspective_3d'
+                    ? 'border-[#1E3A8A] bg-blue-50 text-[#1E3A8A]'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                📷 Xử lý trên Ảnh / Phối cảnh
+              </button>
+              <button
+                type="button"
+                onClick={() => setParamForm((p) => ({ ...p, designType: 'banner' }))}
+                className={`rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${
+                  paramForm.designType === 'banner'
+                    ? 'border-[#1E3A8A] bg-blue-50 text-[#1E3A8A]'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                🖼️ Ấn phẩm Đồ họa / Banner
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1">
+              Hồ sơ Khách hàng / Lead liên kết (Tùy chọn)
+            </label>
+            <select
+              data-testid="param-lead-select"
+              value={paramForm.leadId}
+              onChange={(e) => setParamForm((p) => ({ ...p, leadId: e.target.value }))}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
+            >
+              <option value="">-- Độc lập / Dùng tự do cho mọi trường hợp (Không gắn Lead) --</option>
+              {leadOptions.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Người phụ trách / Liên hệ
+              </label>
+              <input
+                type="text"
+                value={paramForm.contactName}
+                onChange={(e) => setParamForm((p) => ({ ...p, contactName: e.target.value }))}
+                placeholder="Tùy chọn (VD: Chị Lan)"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                {currentMeta.contextLabel}
+              </label>
+              <input
+                type="text"
+                data-testid="param-installation-info"
+                value={paramForm.installationInfo}
+                onChange={(e) => setParamForm((p) => ({ ...p, installationInfo: e.target.value }))}
+                placeholder={currentMeta.contextPlaceholder}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1">
+              Ghi chú / Yêu cầu chi tiết cho AI
+            </label>
+            <textarea
+              rows={2}
+              value={paramForm.notes}
+              onChange={(e) => setParamForm((p) => ({ ...p, notes: e.target.value }))}
+              placeholder="Ghi chú thêm bất kỳ yêu cầu nào về bố cục, màu sắc, nội dung muốn thêm/bớt..."
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
+            />
+          </div>
+        </div>
+
+        {/* SECTION 2: ADAPTIVE UNIVERSAL PARAMETERS (WORKS FOR PHOTO EDITING, POSTER, 3D SPACE, LED, OR CUSTOM) */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs space-y-3.5">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+            <div>
+              <h3 className="text-base font-bold text-slate-900">{currentMeta.sec2Title}</h3>
+              <p className="text-xs text-slate-500">{currentMeta.sec2Sub}</p>
+            </div>
+            <span className="shrink-0 rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-800 border border-indigo-200">
+              {currentMeta.badge}
+            </span>
+          </div>
+
+          {/* Universal Free-Text Subject / Item Input (Works for ANY case!) */}
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1">
+              {currentMeta.subjectLabel}
+            </label>
+            <input
+              type="text"
+              value={paramForm.customSubjectName}
+              onChange={(e) => setParamForm((p) => ({ ...p, customSubjectName: e.target.value }))}
+              placeholder={currentMeta.subjectPlaceholder}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#2563EB] focus:outline-none"
+            />
+          </div>
+
+          {/* Universal AI Action Mode & Visual Style Presets */}
+          {!isLedCase && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Cách AI can thiệp lên ảnh
+                </label>
+                <select
+                  value={paramForm.editActionMode}
+                  onChange={(e) =>
+                    setParamForm((p) => ({
+                      ...p,
+                      editActionMode: e.target.value as ProjectParameterFormState['editActionMode'],
+                    }))
+                  }
+                  className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
+                >
+                  <option value="inpaint_keep_bg">
+                    Giữ nguyên ảnh gốc — Chỉ thêm/bớt/sửa chi tiết yêu cầu
+                  </option>
+                  <option value="region_composite">
+                    Ghép vật thể / thiết kế vào vùng chấm điểm (A, B, C, D)
+                  </option>
+                  <option value="enhance_retouch">
+                    Làm đẹp, chỉnh ánh sáng, màu sắc & độ nét ảnh
+                  </option>
+                  <option value="creative_redesign">
+                    Sáng tạo / Dựng mới toàn bộ bố cục theo mô tả
+                  </option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Phong cách hình ảnh / Thẩm mỹ
+                </label>
+                <select
+                  value={paramForm.visualStylePreset}
+                  onChange={(e) =>
+                    setParamForm((p) => ({
+                      ...p,
+                      visualStylePreset: e.target
+                        .value as ProjectParameterFormState['visualStylePreset'],
+                    }))
+                  }
+                  className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
+                >
+                  <option value="photorealistic">Chân thực như ảnh chụp (Photorealistic)</option>
+                  <option value="modern_clean">Hiện đại, Sáng rõ & Tự nhiên</option>
+                  <option value="vivid_marketing">Quảng cáo nổi bật & Rực rỡ (Marketing)</option>
+                  <option value="luxury_arch">Kiến trúc & Nội thất 3D sang trọng</option>
+                  <option value="custom">Tự do theo câu lệnh Chat</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* Product Catalog Selector (Always mounted for test compatibility; primary in LED mode, optional catalog in universal modes) */}
+          <div className={isLedCase ? 'space-y-3.5' : 'space-y-2'}>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                {isLedCase
+                  ? 'Dòng sản phẩm Toàn Trung phê duyệt'
+                  : 'Danh mục sản phẩm / Thiết bị mẫu (Tùy chọn khi cần ghép thiết bị)'}
+              </label>
+              <select
+                data-testid="param-product-select"
+                value={paramForm.productId}
+                onChange={(e) =>
+                  setParamForm((p) => ({ ...p, productId: Number(e.target.value) || 1 }))
+                }
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#2563EB] focus:outline-none"
+              >
+                {productOptions.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.code} — {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className={isLedCase ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-2 gap-3'}>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  {isLedCase ? 'Bước điểm ảnh (mm)' : 'Độ chi tiết / Chuẩn hiển thị'}
+                </label>
+                <select
+                  data-testid="param-pixel-pitch"
+                  value={paramForm.pixelPitch}
+                  onChange={(e) => setParamForm((p) => ({ ...p, pixelPitch: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
+                >
+                  <option value="P1.25">Siêu nét / P1.25 (1.25 mm)</option>
+                  <option value="P1.53">Độ nét cao / P1.53 (1.53 mm)</option>
+                  <option value="P1.86">Chuẩn Studio / P1.86 (1.86 mm)</option>
+                  <option value="P2.0">Chuẩn HD / P2.0 (2.00 mm)</option>
+                  <option value="P2.5">Phổ thông / P2.5 (2.50 mm)</option>
+                  <option value="P3.0">Không gian rộng / P3.0 (3.00 mm)</option>
+                  <option value="P4.0">Ngoài trời / P4.0 (4.00 mm)</option>
+                  <option value="P5.0">Tầm nhìn xa / P5.0 (5.00 mm)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  {isLedCase ? 'Kiểu màn hình' : 'Hình khối / Bề mặt áp dụng'}
+                </label>
+                <select
+                  value={paramForm.screenStyle}
+                  onChange={(e) =>
+                    setParamForm((p) => ({
+                      ...p,
+                      screenStyle: e.target.value as 'flat' | 'curved' | 'corner_90',
+                    }))
+                  }
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#2563EB] focus:outline-none"
+                >
+                  <option value="flat">Phẳng / Tự nhiên theo ảnh (2D/3D)</option>
+                  <option value="curved">Bo cong mềm mại (Curved)</option>
+                  <option value="corner_90">Góc vuông 90° / Không gian 3 chiều</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Universal Measurement Unit Selector */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-slate-700">
+                Đơn vị đo kích thước (Tùy chọn cho mọi trường hợp)
+              </label>
+              <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-bold text-[#1E3A8A]">
+                <input
+                  type="checkbox"
+                  checked={unmeasuredMode}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    setUnmeasuredMode(next);
+                    if (next) {
+                      setParamForm((prev) => ({
+                        ...prev,
+                        screenWidthM: quadEstimatedSpecs.estWidthM,
+                        screenHeightM: quadEstimatedSpecs.estHeightM,
+                      }));
+                    }
+                  }}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-[#1E3A8A]"
+                />
+                <span>Tự ước tính từ vùng chấm điểm</span>
+              </label>
+            </div>
+            <div className="grid grid-cols-5 gap-1.5">
+              {(
+                [
+                  { id: 'auto_photo' as const, label: 'Tự động' },
+                  { id: 'm' as const, label: 'Mét (m)' },
+                  { id: 'cm' as const, label: 'cm' },
+                  { id: 'mm' as const, label: 'mm' },
+                  { id: 'px' as const, label: 'Pixel' },
+                ]
+              ).map((u) => (
                 <button
-                  key={r}
+                  key={u.id}
                   type="button"
-                  onClick={() => handleAspectRatioChange(r)}
-                  className={`rounded-xl border py-1.5 text-xs font-bold transition ${
-                    paramForm.aspectRatio === r
+                  onClick={() => setParamForm((p) => ({ ...p, dimensionUnit: u.id }))}
+                  className={`rounded-lg border py-1 text-[11px] font-bold transition ${
+                    paramForm.dimensionUnit === u.id
                       ? 'border-[#1E3A8A] bg-[#1E3A8A] text-white'
                       : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
                   }`}
                 >
-                  {r}
+                  {u.label}
                 </button>
               ))}
             </div>
@@ -2734,50 +3442,58 @@ export function AiDesignWorkspace() {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1">
-                Chiều rộng ảnh xuất (px)
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                {unmeasuredMode
+                  ? `Ngang ước tính (${activeUnitLabel})`
+                  : `Chiều ngang (${activeUnitLabel})`}
               </label>
               <input
                 type="number"
-                min="128"
-                max="15360"
-                data-testid="param-banner-width-px"
-                value={paramForm.bannerWidthPx}
+                step="0.1"
+                min="0.1"
+                max="10000"
+                data-testid="param-screen-width-m"
+                value={unmeasuredMode ? quadEstimatedSpecs.estWidthM : paramForm.screenWidthM}
                 onChange={(e) => {
-                  const nextPxW = Number(e.target.value) || 1920;
+                  setUnmeasuredMode(false);
+                  const nextW = Number(e.target.value) || 0.5;
                   const ratioNum = parseAspectRatioValue(paramForm.aspectRatio);
                   setParamForm((prev) => ({
                     ...prev,
-                    bannerWidthPx: nextPxW,
-                    bannerHeightPx:
+                    screenWidthM: nextW,
+                    screenHeightM:
                       prev.aspectLocked && ratioNum
-                        ? Math.max(64, Math.round(nextPxW / ratioNum))
-                        : prev.bannerHeightPx,
+                        ? Number((nextW / ratioNum).toFixed(2))
+                        : prev.screenHeightM,
                   }));
                 }}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
               />
             </div>
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1">
-                Chiều cao ảnh xuất (px)
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                {unmeasuredMode
+                  ? `Cao ước tính (${activeUnitLabel})`
+                  : `Chiều cao (${activeUnitLabel})`}
               </label>
               <input
                 type="number"
-                min="64"
-                max="8640"
-                data-testid="param-banner-height-px"
-                value={paramForm.bannerHeightPx}
+                step="0.1"
+                min="0.1"
+                max="10000"
+                data-testid="param-screen-height-m"
+                value={unmeasuredMode ? quadEstimatedSpecs.estHeightM : paramForm.screenHeightM}
                 onChange={(e) => {
-                  const nextPxH = Number(e.target.value) || 1080;
+                  setUnmeasuredMode(false);
+                  const nextH = Number(e.target.value) || 0.5;
                   const ratioNum = parseAspectRatioValue(paramForm.aspectRatio);
                   setParamForm((prev) => ({
                     ...prev,
-                    bannerHeightPx: nextPxH,
-                    bannerWidthPx:
+                    screenHeightM: nextH,
+                    screenWidthM:
                       prev.aspectLocked && ratioNum
-                        ? Math.max(128, Math.round(nextPxH * ratioNum))
-                        : prev.bannerWidthPx,
+                        ? Number((nextH * ratioNum).toFixed(2))
+                        : prev.screenWidthM,
                   }));
                 }}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
@@ -2785,57 +3501,267 @@ export function AiDesignWorkspace() {
             </div>
           </div>
 
-          {paramForm.designType === 'perspective_3d' ? (
-            <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3 text-xs text-slate-700 space-y-1">
-              <div className="font-bold text-[#1E3A8A]">Tọa độ khung neo phối cảnh 4 góc (%)</div>
-              <div className="font-mono text-[11px] text-slate-600">
-                TL({quad.topLeft.x}%, {quad.topLeft.y}%) · TR({quad.topRight.x}%, {quad.topRight.y}%) · BR(
-                {quad.bottomRight.x}%, {quad.bottomRight.y}%) · BL({quad.bottomLeft.x}%, {quad.bottomLeft.y}%)
+          {/* Summary Box: Shows Universal Summary for non-LED cases, or LED Engineering Summary when in LED mode */}
+          {isLedCase ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-1.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Diện tích hiển thị thực tế:</span>
+                <span className="font-bold text-slate-900">{computedLiveSpecs.areaM2} m²</span>
               </div>
-              <button
-                type="button"
-                onClick={() =>
-                  setQuad({
-                    topLeft: { x: 64.2, y: 44.5 },
-                    topRight: { x: 93.8, y: 45.2 },
-                    bottomRight: { x: 94.5, y: 72.8 },
-                    bottomLeft: { x: 64.5, y: 70.1 },
-                  })
-                }
-                className="text-xs font-semibold text-[#2563EB] hover:underline pt-0.5"
-              >
-                Đặt lại vị trí neo mặc định
-              </button>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Độ phân giải điểm ảnh thực:</span>
+                <span className="font-mono font-bold text-[#1E3A8A]">
+                  {computedLiveSpecs.resW} × {computedLiveSpecs.resH} px
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Cấu hình Cabinet (640×480mm):</span>
+                <span className="font-semibold text-slate-800">
+                  {computedLiveSpecs.cabinetCount} Cabinet ({computedLiveSpecs.moduleCount} Module)
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Công suất tiêu thụ (TB / Cực đại):</span>
+                <span className="font-semibold text-slate-800">
+                  {computedLiveSpecs.avgKw} kW / {computedLiveSpecs.maxKw} kW
+                </span>
+              </div>
             </div>
           ) : (
-            <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3 text-xs text-slate-700">
-              <div className="font-bold text-[#1E3A8A]">Chế độ thiết kế Banner truyền thông LED</div>
-              <p className="mt-0.5 text-slate-600">
-                Xuất file đồ họa chuẩn pixel theo đúng tỷ lệ module cabin LED để nạp trực tiếp vào bộ xử lý Novastar.
+            <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/50 p-3 space-y-1.5 text-xs">
+              <div className="font-bold text-emerald-900">
+                ✅ Đang bật Chế độ Đa năng ({currentMeta.badge})
+              </div>
+              <p className="text-[11px] text-emerald-800 leading-relaxed">
+                AI sẽ xử lý bức ảnh &amp; câu lệnh của bạn theo đúng mục tiêu{' '}
+                <strong>
+                  {paramForm.customSubjectName.trim() ||
+                    paramForm.installationInfo.trim() ||
+                    currentMeta.badge}
+                </strong>{' '}
+                mà không bị bó buộc vào khung màn hình LED.
               </p>
             </div>
           )}
+        </div>
 
-          {paramValidationError && (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-2.5 text-xs font-semibold text-red-700">
-              {paramValidationError}
+        {/* SECTION 3: CÀI ĐẶT ĐẦU RA & KHUNG HÌNH (DÙNG CHO MỌI TRƯỜNG HỢP) */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs flex flex-col justify-between space-y-3.5">
+          <div className="space-y-3.5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">3. Cài đặt đầu ra &amp; Khung hình</h3>
+                <p className="text-xs text-slate-500">
+                  Tỷ lệ khung hình, độ phân giải (px) &amp; vùng tác động cho mọi loại ảnh
+                </p>
+              </div>
+              <button
+                type="button"
+                data-testid="param-aspect-lock-btn"
+                onClick={() => setParamForm((p) => ({ ...p, aspectLocked: !p.aspectLocked }))}
+                className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
+                  paramForm.aspectLocked
+                    ? 'border-blue-200 bg-blue-50 text-[#1E3A8A]'
+                    : 'border-slate-200 bg-white text-slate-600'
+                }`}
+                title="Khóa hoặc mở khóa tỷ lệ khung hình khi nhập kích thước"
+              >
+                {paramForm.aspectLocked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
+                <span>{paramForm.aspectLocked ? 'Đã khóa tỷ lệ' : 'Tỷ lệ tự do'}</span>
+              </button>
             </div>
-          )}
-        </div>
 
-        <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2">
-          <button
-            type="submit"
-            data-testid="save-project-params-btn"
-            disabled={savingParams || !canUseAiDesign}
-            className="w-full rounded-xl bg-[#1E3A8A] px-4 py-2.5 text-sm font-bold text-white shadow-xs transition hover:bg-[#2563EB] disabled:opacity-50"
-          >
-            {savingParams ? 'Đang lưu thông số...' : 'Lưu thông số dự án'}
-          </button>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">
+                Tỷ lệ khung hình (Đa chuẩn)
+              </label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {['16:9', '9:16', '4:3', '1:1', '3:2', '4:5', '21:9', '32:9'].map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => handleAspectRatioChange(r)}
+                    className={`rounded-xl border py-1.5 text-xs font-bold transition ${
+                      paramForm.aspectRatio === r
+                        ? 'border-[#1E3A8A] bg-[#1E3A8A] text-white'
+                        : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Quick Resolution Presets */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Chọn nhanh độ phân giải chuẩn (px)
+              </label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[
+                  { label: 'HD 720p', w: 1280, h: 720, r: '16:9' },
+                  { label: 'Full HD', w: 1920, h: 1080, r: '16:9' },
+                  { label: 'Vuông 1:1', w: 1080, h: 1080, r: '1:1' },
+                  { label: '4K UHD', w: 3840, h: 2160, r: '16:9' },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() =>
+                      setParamForm((prev) => ({
+                        ...prev,
+                        bannerWidthPx: preset.w,
+                        bannerHeightPx: preset.h,
+                        aspectRatio: preset.r,
+                      }))
+                    }
+                    className="rounded-lg border border-slate-200 bg-slate-50 py-1 text-[11px] font-semibold text-slate-700 hover:border-blue-300 hover:bg-blue-50 hover:text-[#1E3A8A]"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">
+                  Chiều rộng ảnh xuất (px)
+                </label>
+                <input
+                  type="number"
+                  min="128"
+                  max="15360"
+                  data-testid="param-banner-width-px"
+                  value={paramForm.bannerWidthPx}
+                  onChange={(e) => {
+                    const nextPxW = Number(e.target.value) || 1920;
+                    const ratioNum = parseAspectRatioValue(paramForm.aspectRatio);
+                    setParamForm((prev) => ({
+                      ...prev,
+                      bannerWidthPx: nextPxW,
+                      bannerHeightPx:
+                        prev.aspectLocked && ratioNum
+                          ? Math.max(64, Math.round(nextPxW / ratioNum))
+                          : prev.bannerHeightPx,
+                    }));
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">
+                  Chiều cao ảnh xuất (px)
+                </label>
+                <input
+                  type="number"
+                  min="64"
+                  max="8640"
+                  data-testid="param-banner-height-px"
+                  value={paramForm.bannerHeightPx}
+                  onChange={(e) => {
+                    const nextPxH = Number(e.target.value) || 1080;
+                    const ratioNum = parseAspectRatioValue(paramForm.aspectRatio);
+                    setParamForm((prev) => ({
+                      ...prev,
+                      bannerHeightPx: nextPxH,
+                      bannerWidthPx:
+                        prev.aspectLocked && ratioNum
+                          ? Math.max(128, Math.round(nextPxH * ratioNum))
+                          : prev.bannerWidthPx,
+                    }));
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono font-semibold text-slate-900 focus:border-[#2563EB] focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Universal Scope Selector: Full Image vs Touch-Points Region */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Phạm vi vùng AI tác động trên ảnh
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setParamForm((p) => ({ ...p, targetScopeMode: 'full_image' }))}
+                  className={`rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition ${
+                    paramForm.targetScopeMode === 'full_image'
+                      ? 'border-[#1E3A8A] bg-blue-50 text-[#1E3A8A]'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  🖼️ Toàn bộ bức ảnh
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setParamForm((p) => ({ ...p, targetScopeMode: 'touch_points' }))}
+                  className={`rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition ${
+                    paramForm.targetScopeMode === 'touch_points'
+                      ? 'border-[#1E3A8A] bg-blue-50 text-[#1E3A8A]'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  🎯 Vùng chấm điểm (A,B,C,D)
+                </button>
+              </div>
+            </div>
+
+            {paramForm.targetScopeMode === 'touch_points' ? (
+              <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3 text-xs text-slate-700 space-y-1">
+                <div className="font-bold text-[#1E3A8A]">Tọa độ vùng chấm điểm 4 góc (%)</div>
+                <div className="font-mono text-[11px] text-slate-600">
+                  TL({quad.topLeft.x}%, {quad.topLeft.y}%) · TR({quad.topRight.x}%, {quad.topRight.y}%) · BR(
+                  {quad.bottomRight.x}%, {quad.bottomRight.y}%) · BL({quad.bottomLeft.x}%, {quad.bottomLeft.y}%)
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setQuad({
+                      topLeft: { x: 64.2, y: 44.5 },
+                      topRight: { x: 93.8, y: 45.2 },
+                      bottomRight: { x: 94.5, y: 72.8 },
+                      bottomLeft: { x: 64.5, y: 70.1 },
+                    })
+                  }
+                  className="text-xs font-semibold text-[#2563EB] hover:underline pt-0.5"
+                >
+                  Đặt lại vị trí neo mặc định
+                </button>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3 text-xs text-slate-700">
+                <div className="font-bold text-[#1E3A8A]">
+                  Chế độ xử lý tự nhiên trên toàn bộ khung hình
+                </div>
+                <p className="mt-0.5 text-slate-600">
+                  Phù hợp khi bạn đưa bất kỳ bức ảnh nào vào để yêu cầu AI thêm/bớt chi tiết, chỉnh màu, xóa vật thể hoặc thiết kế ấn phẩm tự do.
+                </p>
+              </div>
+            )}
+
+            {paramValidationError && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-2.5 text-xs font-semibold text-red-700">
+                {paramValidationError}
+              </div>
+            )}
+          </div>
+
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2">
+            <button
+              type="submit"
+              data-testid="save-project-params-btn"
+              disabled={savingParams || !canUseAiDesign}
+              className="w-full rounded-xl bg-[#1E3A8A] px-4 py-2.5 text-sm font-bold text-white shadow-xs transition hover:bg-[#2563EB] disabled:opacity-50"
+            >
+              {savingParams ? 'Đang lưu thông số...' : 'Lưu thông số dự án (Áp dụng mọi trường hợp)'}
+            </button>
+          </div>
         </div>
-      </div>
-    </form>
-  );
+      </form>
+    );
+  };
 
   const canvasRatio = (() => {
     const [w, h] = String(currentProject?.aspectRatio || '16:9').split(':').map(Number);
@@ -2960,7 +3886,7 @@ export function AiDesignWorkspace() {
 
         <div className="hidden xl:block h-5 w-px bg-slate-200" />
 
-        {/* Right: Admin 2-AI Manager, Upload Final, Export ZIP, Approve & Handoff Sales */}
+        {/* Right: Staff AI Selector & Setting Hub, Print A4 Dossier, Upload Final, Export ZIP, Approve & Handoff Sales */}
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -2973,13 +3899,26 @@ export function AiDesignWorkspace() {
                 setConfigEndpointInput(cat.apiEndpoint || '');
                 setConfigCustomModelInput(cat.activeModel || selectedModelId || '');
               }
+              setTestAiResult(null);
+              setAiModalTab('select_ai');
               setShowAiConfigModal(true);
             }}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-[#17253F] shadow-2xs transition hover:bg-slate-50"
-            title="Cấu hình 2 con AI: Con AI Tư vấn Free ($0) và Con AI Tạo Ảnh khi gọi @TaoAnh"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50/70 px-3 py-1.5 text-xs font-bold text-[#6D28D9] shadow-2xs transition hover:bg-purple-100"
+            title="Chọn AI sử dụng hoặc gắn Key Gemini Free"
           >
-            <Settings2 className="h-3.5 w-3.5 text-[#17253F]" />
-            <span>Quản trị 2 Con AI (Admin)</span>
+            <Cpu className="h-3.5 w-3.5 text-[#7846FF]" />
+            <span>Chọn AI &amp; Setting</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handlePrintTechnicalDossier}
+            disabled={!currentProject}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-1.5 text-xs font-bold text-[#1553A2] shadow-2xs transition hover:bg-blue-100 disabled:opacity-50"
+            title="Xuất Hồ sơ Phương án Phối cảnh 3D & Bóc tách vật tư BOM chuẩn trang A4 / PDF để trình ký khách hàng"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5 text-[#1553A2]" />
+            <span>📄 Hồ sơ A4 / PDF</span>
           </button>
 
           {canUseAiDesign && (
@@ -3332,9 +4271,25 @@ export function AiDesignWorkspace() {
                         key={photo.id}
                         onClick={async () => {
                           if (!currentProject) return;
+                          const targetPid = currentProject.id;
                           setViewMode('original');
                           setShowHandles(false);
-                          await apiRequest(`/api/v1/design/${currentProject.id}`, {
+                          // Optimistically select the clicked photo immediately so there is zero lag or jump
+                          setRequests((prev) =>
+                            prev.map((r) =>
+                              r.id === targetPid
+                                ? {
+                                    ...r,
+                                    sitePhotoDownloadUrl: photo.url,
+                                    photos: r.photos.map((p) => ({
+                                      ...p,
+                                      selected: p.id === photo.id,
+                                    })),
+                                  }
+                                : r
+                            )
+                          );
+                          await apiRequest(`/api/v1/design/${targetPid}`, {
                             method: 'PATCH',
                             csrfToken: user?.csrfToken,
                             body: {
@@ -3342,8 +4297,6 @@ export function AiDesignWorkspace() {
                               selectedPhotoId: photo.id,
                             },
                           });
-                          await loadData(currentProject.id);
-                          setViewMode('original');
                         }}
                         className={`group relative cursor-pointer overflow-hidden rounded-xl border-2 bg-slate-900 transition ${
                           photo.selected
@@ -3393,7 +4346,8 @@ export function AiDesignWorkspace() {
                                     }
                                   );
                                   setSuccessToast(`Đã xoá ảnh "${photo.name}".`);
-                                  await loadData(targetPid);
+                                  await loadData(targetPid, true);
+                                  setViewMode('original');
                                 },
                               });
                             }}
@@ -3427,16 +4381,21 @@ export function AiDesignWorkspace() {
 
         {/* ================= MAIN WORKSPACE AREA ================= */}
         {activeWorkspaceArea === 'specs' ? (
-          /* FULL-WIDTH "THÔNG SỐ" WORKSPACE AREA */
+          /* FULL-WIDTH "THÔNG SỐ" WORKSPACE AREA — ĐA NĂNG CHO MỌI TRƯỜNG HỢP */
           <div className="flex-1 overflow-y-auto p-5 bg-slate-100">
             <div className="mx-auto max-w-6xl space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-3.5 shadow-2xs">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900">
-                    Thông số dự án & Cấu hình kỹ thuật LED
-                  </h2>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-lg font-bold text-slate-900">
+                      Cài đặt Thông số Dự án &amp; Tuỳ chỉnh Thiết kế Đa năng
+                    </h2>
+                    <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-[11px] font-extrabold text-[#1E3A8A] border border-indigo-200">
+                      Dùng cho mọi trường hợp
+                    </span>
+                  </div>
                   <p className="text-sm text-slate-500">
-                    Mọi thay đổi được lưu trực tiếp vào hồ sơ dự án và giữ nguyên khi chuyển dự án hoặc tải lại trang.
+                    Hỗ trợ chỉnh sửa ảnh tự do, thêm/xoá vật thể, thiết kế Poster/Banner, Nội-Ngoại thất 3D, Màn hình LED &amp; mọi yêu cầu tuỳ chỉnh khác.
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -3445,7 +4404,7 @@ export function AiDesignWorkspace() {
                     onClick={() => setActiveWorkspaceArea('perspective')}
                     className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                   >
-                    Quay lại Phối cảnh
+                    Quay lại màn hình ảnh
                   </button>
                   <button
                     type="button"
@@ -3862,10 +4821,18 @@ export function AiDesignWorkspace() {
                         width: `min(100cqw, calc(100cqh * ${canvasRatio}))`,
                         transform: `scale(${zoomLevel / 100})`,
                         transformOrigin: 'center center',
+                        filter:
+                          ambientLightingMode === 'night_glow'
+                            ? `brightness(${(0.82 + (ledBrightnessNits - 800) / 14000).toFixed(2)}) contrast(1.16) saturate(1.18)`
+                            : ambientLightingMode === 'stage_concert'
+                              ? `brightness(${(0.88 + (ledBrightnessNits - 800) / 14000).toFixed(2)}) contrast(1.22) saturate(1.25)`
+                              : ledBrightnessNits !== 1200
+                                ? `brightness(${(0.95 + (ledBrightnessNits - 800) / 18000).toFixed(2)})`
+                                : undefined,
                         transition:
                           draggingPointIdx !== null || draggingHandle || draggingCompare
                             ? 'none'
-                            : 'transform 0.15s ease-out',
+                            : 'transform 0.15s ease-out, filter 0.2s ease-out',
                       }}
                       className={`relative select-none overflow-hidden rounded-xl bg-slate-900 shadow-lg ${
                         showHandles ? 'cursor-crosshair' : viewMode === 'compare' ? 'cursor-ew-resize' : ''
@@ -4261,32 +5228,63 @@ export function AiDesignWorkspace() {
                   </div>
                 </div>
 
-                <div className="mt-2 grid grid-cols-1 gap-1.5">
-                  {/* Badge 1: Free Consultant AI ($0) */}
-                  <div className="flex items-center gap-1.5 rounded-xl bg-[#0BAF7C] px-3 py-1.5 text-xs font-bold text-white shadow-2xs">
-                    <MessageSquare className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">
-                      Chat thường &amp; Phân tích ảnh: AI Tư vấn Toàn Trung (MIỄN PHÍ $0)
-                    </span>
+                <div className="mt-2 flex items-center justify-between gap-1.5 rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs">
+                  <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                    <span className="shrink-0 font-bold text-slate-600">Model:</span>
+                    <select
+                      data-testid="chat-header-model-select"
+                      value={consultantModelId}
+                      onChange={(e) => {
+                        const nextId = e.target.value;
+                        setConsultantModelId(nextId);
+                        const found = autoDiscoveredModels.find((m) => m.id === nextId);
+                        setConsultantModelName(found ? found.name : nextId);
+                      }}
+                      className="min-w-0 flex-1 truncate rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] font-extrabold text-[#1553A2] focus:border-[#1553A2] focus:outline-none"
+                      title="Danh sách Model được hệ thống tự động đọc trực tiếp từ con AI của bạn"
+                    >
+                      {autoDiscoveredModels.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name} · {m.badge}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-
-                  {/* Badge 2: @TaoAnh (3D Perspective) & @TaoAnhPoster (Poster/Banner Quảng cáo) */}
                   <button
                     type="button"
-                    onClick={() => setShowAiConfigModal(true)}
-                    className="flex w-full items-center justify-between gap-1.5 rounded-xl bg-[#7846FF] px-3 py-1.5 text-left text-xs font-bold text-white shadow-2xs hover:bg-[#6D28D9] transition"
-                    title="Bấm để cấu hình con AI Tạo Ảnh (@TaoAnh & @TaoAnhPoster)"
+                    disabled={testingAiConnection}
+                    onClick={handleQuickConnectGmailGemini}
+                    title="Tự động quét API và kiểm tra thực tế xem những Model nào sử dụng được ngay (HTTP 200 OK)"
+                    className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-800 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50"
                   >
-                    <span className="truncate">
-                      🎨 Gõ @TaoAnh (Ghép LED vào ảnh) · @TaoAnhPoster (Làm Poster)
-                    </span>
-                    <Settings2 className="h-3.5 w-3.5 shrink-0 opacity-85" />
+                    <RefreshCw className={`h-3 w-3 ${testingAiConnection ? 'animate-spin' : ''}`} />
+                    <span>{testingAiConnection ? 'Đang dò...' : 'Tự dò Model'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiModalTab('select_ai');
+                      setShowAiConfigModal(true);
+                    }}
+                    className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1 text-[11px] font-bold text-[#6D28D9] shadow-2xs border border-purple-200 hover:bg-purple-50"
+                  >
+                    <Settings2 className="h-3 w-3" />
+                    <span>Setting</span>
                   </button>
                 </div>
               </div>
 
-              {/* Chat Thread (Larger text-[13px] for comfortable reading) */}
-              <div className="flex-1 min-h-0 space-y-3.5 overflow-y-auto p-4 text-[13px]">
+              {/* Chat Thread (Larger text-[13px] for comfortable reading + Auto-scroll) */}
+              <div
+                ref={chatThreadRef}
+                className="flex-1 min-h-0 space-y-3.5 overflow-y-auto p-4 text-[13px]"
+              >
+                {(currentProject?.chatMessages.length || 0) === 0 && !pendingUserPrompt && (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3.5 text-xs text-slate-600 leading-relaxed">
+                    👋 Chào bạn! Hãy gõ nội dung vào ô chat bên dưới và nhấn <strong>Enter</strong> (hoặc bấm <strong>Gửi</strong>) để AI phân tích ảnh khảo sát miễn phí ($0), hoặc bấm <strong>@TaoAnh</strong> để ghép phối cảnh 3D LED.
+                  </div>
+                )}
+
                 {currentProject?.chatMessages.map((msg) => {
                   const isUser = msg.role === 'user';
                   const isTaoAnhPosterCmd =
@@ -4387,12 +5385,9 @@ export function AiDesignWorkspace() {
                     );
                   }
 
-                  // Free Consultant AI Reply ($0) - Formats multi-line structured Image & Point Analysis clearly
-                  const fallbackSuggestedPrompt =
-                    msg.suggestedTaoAnhPrompt ||
-                    `@TaoAnh: Ghép màn hình LED ${paramForm.pixelPitch} kích thước ${Math.round(paramForm.screenWidthM * 1000)}×${Math.round(paramForm.screenHeightM * 1000)}mm vào đúng các điểm chạm đã chấm trên ảnh hiện trạng, kèm đường gióng kích thước kỹ thuật`;
-                  const isSuggestedPoster =
-                    /^\s*@taoanhposter/i.test(fallbackSuggestedPrompt);
+                  // Conversational AI Reply ($0) — only show @TaoAnh box when a command was specifically suggested
+                  const suggestedCmd = msg.suggestedTaoAnhPrompt?.trim() || '';
+                  const isSuggestedPoster = /^\s*@taoanhposter/i.test(suggestedCmd);
 
                   return (
                     <div key={msg.id} className="space-y-1.5">
@@ -4401,7 +5396,7 @@ export function AiDesignWorkspace() {
                           <Cpu className="h-3.5 w-3.5" />
                         </span>
                         <span className="rounded-md bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-800 border border-emerald-200">
-                          AI Tư vấn &amp; Phân tích ảnh · Miễn phí $0
+                          {msg.modelUsed || 'Google Gemini 2.5 Flash'}
                         </span>
                       </div>
 
@@ -4410,37 +5405,55 @@ export function AiDesignWorkspace() {
                           {msg.text}
                         </div>
 
-                        <div className="rounded-xl border border-purple-200 bg-purple-50/80 p-3 text-xs text-slate-800">
-                          <div className="mb-1 text-[11px] font-bold uppercase text-purple-900">
-                            Câu lệnh tạo ảnh AI đã soạn sẵn cho bạn:
-                          </div>
-                          <span className="font-extrabold text-[#7846FF]">
-                            {isSuggestedPoster ? '@TaoAnhPoster: ' : '@TaoAnh: '}
-                          </span>
-                          <span>
-                            {fallbackSuggestedPrompt.replace(
-                              /^\s*@(?:taoanhposter|tao[j]?anh)\s*:?\s*/i,
-                              ''
-                            )}
-                          </span>
-                        </div>
+                        {suggestedCmd && (
+                          <>
+                            <div className="rounded-xl border border-purple-200 bg-purple-50/80 p-3 text-xs text-slate-800">
+                              <div className="mb-1 text-[11px] font-bold uppercase text-purple-900">
+                                Câu lệnh tạo ảnh AI đề xuất:
+                              </div>
+                              <span className="font-extrabold text-[#7846FF]">
+                                {isSuggestedPoster ? '@TaoAnhPoster: ' : '@TaoAnh: '}
+                              </span>
+                              <span>
+                                {suggestedCmd.replace(
+                                  /^\s*@(?:taoanhposter|tao[j]?anh)\s*:?\s*/i,
+                                  ''
+                                )}
+                              </span>
+                            </div>
 
-                        <button
-                          type="button"
-                          disabled={submitting}
-                          onClick={() => executeChatSubmit(fallbackSuggestedPrompt, true)}
-                          className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#7846FF] px-3.5 py-2.5 text-xs font-extrabold text-white shadow-xs transition hover:bg-[#6D28D9] disabled:opacity-50"
-                        >
-                          <Sparkles className="h-4 w-4" />
-                          <span>
-                            Chốt phương án này -&gt; Bấm gọi{' '}
-                            {isSuggestedPoster ? '@TaoAnhPoster' : '@TaoAnh'} sửa ảnh ngay
-                          </span>
-                        </button>
+                            <button
+                              type="button"
+                              disabled={submitting}
+                              onClick={() => executeChatSubmit(suggestedCmd, true)}
+                              className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#7846FF] px-3.5 py-2.5 text-xs font-extrabold text-white shadow-xs transition hover:bg-[#6D28D9] disabled:opacity-50"
+                            >
+                              <Sparkles className="h-4 w-4" />
+                              <span>
+                                Bấm gọi {isSuggestedPoster ? '@TaoAnhPoster' : '@TaoAnh'} sửa ảnh ngay
+                              </span>
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
                 })}
+
+                {/* Optimistic User Message & Live AI Thinking Indicator */}
+                {pendingUserPrompt && (
+                  <>
+                    <div className="flex justify-end">
+                      <div className="max-w-[92%] rounded-2xl rounded-tr-xs border border-indigo-200 bg-[#EEF2FF] px-3.5 py-2.5 text-[13px] leading-relaxed text-[#17253F] shadow-2xs">
+                        <span>{pendingUserPrompt}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-3.5 py-2.5 text-xs font-bold text-emerald-900">
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin text-[#0BAF7C]" />
+                      <span>AI ({consultantModelName}) đang phân tích &amp; trả lời...</span>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* PII Security Alert */}
@@ -4451,196 +5464,66 @@ export function AiDesignWorkspace() {
                 </div>
               )}
 
-              {/* Bottom Composer with Attached Photo + Touchpoints Preview & Clean 2x2 Action Grid */}
-              <div className="shrink-0 border-t border-slate-100 p-3.5 pt-2.5 space-y-2">
-                {/* ATTACHED PHOTO & TOUCHPOINT CONTEXT BAR */}
-                <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 p-2 text-xs">
-                  <div className="flex items-center gap-2 min-w-0">
-                    {selectedPhoto ? (
-                      <img
-                        src={sitePhotoUrl}
-                        alt="Ảnh đang chọn"
-                        className="h-9 w-12 shrink-0 rounded-lg object-cover border border-emerald-300"
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => uploadPhotoInputRef.current?.click()}
-                        className="flex h-9 w-12 shrink-0 items-center justify-center rounded-lg border border-dashed border-emerald-400 bg-white text-emerald-700 hover:bg-emerald-100"
-                        title="Tải ảnh công trình khảo sát lên"
-                      >
-                        <Upload className="h-4 w-4" />
-                      </button>
-                    )}
-                    <div className="min-w-0">
-                      <div className="truncate font-bold text-slate-800">
-                        {selectedPhoto ? selectedPhoto.name : 'Chưa tải ảnh công trình'}
-                      </div>
-                      <div className="truncate text-[11px] font-semibold text-emerald-800">
-                        {touchPoints.length > 0
-                          ? `📍 Đã chấm ${touchPoints.length} điểm (${touchPoints.map((p) => p.label).join('→')}) · ${Math.round(paramForm.screenWidthM * 1000)}×${Math.round(paramForm.screenHeightM * 1000)}mm`
-                          : `Kích thước: ${Math.round(paramForm.screenWidthM * 1000)}×${Math.round(paramForm.screenHeightM * 1000)}mm (${paramForm.pixelPitch})`}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const modCols = Math.max(1, Math.round((paramForm.screenWidthM * 1000) / 320));
-                        const modRows = Math.max(1, Math.round((paramForm.screenHeightM * 1000) / 160));
-                        const snappedW = Number(((modCols * 320) / 1000).toFixed(2));
-                        const snappedH = Number(((modRows * 160) / 1000).toFixed(2));
-                        setParamForm((pf) => ({
-                          ...pf,
-                          screenWidthM: snappedW,
-                          screenHeightM: snappedH,
-                        }));
-                        setSuccessToast(
-                          `Đã chuẩn hóa theo bội số Module LED 320×160mm: ${modCols * 320}×${modRows * 160}mm (${modCols} cột × ${modRows} hàng = ${modCols * modRows} Module).`
-                        );
-                      }}
-                      className="rounded-lg border border-emerald-300 bg-white px-2 py-1.5 text-[11px] font-bold text-emerald-900 hover:bg-emerald-100 transition"
-                      title="Chuẩn hóa kích thước theo bội số Module LED tiêu chuẩn Toàn Trung (320×160mm)"
-                    >
-                      📐 Chuẩn 320×160
-                    </button>
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={() =>
-                        executeChatSubmit(
-                          `Phân tích ảnh công trình hiện tại${
-                            touchPoints.length > 0
-                              ? ` và ${touchPoints.length} điểm chạm (${touchPoints.map((p) => p.label).join(' → ')}) đã chấm trên ảnh`
-                              : ''
-                          }, tư vấn kích thước LED ${paramForm.pixelPitch} (${paramForm.screenWidthM}m × ${paramForm.screenHeightM}m) và tạo sẵn lệnh @TaoAnh giúp mình`
-                        )
-                      }
-                      className="rounded-lg bg-[#0BAF7C] px-2.5 py-1.5 text-[11px] font-extrabold text-white shadow-2xs hover:bg-emerald-700 disabled:opacity-50 transition"
-                      title="Gửi ảnh đang chọn và các điểm chạm để AI phân tích miễn phí ($0) và đề xuất câu lệnh @TaoAnh"
-                    >
-                      🔍 Phân tích ($0)
-                    </button>
-                  </div>
-                </div>
-
-                {/* 1-Click LED Screen Visual Theme & CAD Dimension Overlay Bar */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-2 space-y-1.5">
-                  <div className="flex items-center justify-between gap-2 text-[11px]">
-                    <span className="font-extrabold text-slate-700">
-                      🎨 Chủ đề hiển thị trên màn hình LED:
-                    </span>
-                    <label className="inline-flex cursor-pointer items-center gap-1 font-bold text-[#1553A2]">
-                      <input
-                        type="checkbox"
-                        checked={includeCadOverlay}
-                        onChange={(e) => setIncludeCadOverlay(e.target.checked)}
-                        className="h-3.5 w-3.5 rounded accent-[#1553A2]"
-                      />
-                      <span>📏 Kèm đường gióng CAD (mm)</span>
-                    </label>
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {(
-                      [
-                        { id: 'gala_red', label: '🔴 Đỏ Sự kiện' },
-                        { id: 'corp_navy', label: '🔵 Hội nghị 4K' },
-                        { id: 'vivid_commercial', label: '🟡 Showroom' },
-                        { id: 'factory_andon', label: '🟢 Andon Nhà máy' },
-                        { id: 'mapped_poster', label: '🖼️ Áp Poster' },
-                      ] as const
-                    ).map((th) => (
-                      <button
-                        key={th.id}
-                        type="button"
-                        onClick={() => setLedScreenVisualTheme(th.id)}
-                        className={`rounded-lg px-2 py-1 text-[10px] font-extrabold transition ${
-                          ledScreenVisualTheme === th.id
-                            ? 'bg-[#1553A2] text-white shadow-2xs'
-                            : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
-                        }`}
-                      >
-                        {th.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Clean 2x2 Action Buttons Grid (Never clips or overflows) */}
-                <div className="grid grid-cols-2 gap-1.5">
+              {/* Slim, Clean Bottom Composer (Maximizes Chat Thread height) */}
+              <div className="shrink-0 border-t border-slate-100 p-3 space-y-2 bg-white">
+                {/* 1-Row Quick Action Pills — Tự động thích ứng theo Mục đích sử dụng trong Cài đặt thông số */}
+                <div className="flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
+                    disabled={submitting}
                     onClick={() => {
-                      const clean = chatPrompt
-                        .replace(
-                          /^\s*@(?:taoanhposter|taoposter|tao[j]?anh)\s*:?\s*/i,
-                          ''
-                        )
-                        .trim();
-                      handlePromptChange(
-                        `@TaoAnh: ${
-                          clean ||
-                          `Ghép màn hình LED ${paramForm.pixelPitch} kích thước ${Math.round(paramForm.screenWidthM * 1000)}×${Math.round(paramForm.screenHeightM * 1000)}mm vào các điểm chạm đã chấm trên ảnh${includeCadOverlay ? ', kèm đường gióng kích thước kỹ thuật (mm)' : ''}`
-                        }`
-                      );
+                      const pointsNote =
+                        touchPoints.length > 0
+                          ? ` tại ${touchPoints.length} điểm chạm (${touchPoints.map((p) => p.label).join(' → ')}) đã chấm trên ảnh`
+                          : '';
+                      const defaultAnalyzePrompt =
+                        paramForm.useCaseCategory === 'led_screen'
+                          ? `Phân tích ảnh công trình hiện tại${pointsNote}, tư vấn kích thước LED ${paramForm.pixelPitch} (${paramForm.screenWidthM}m × ${paramForm.screenHeightM}m) và tạo sẵn lệnh @TaoAnh giúp mình`
+                          : paramForm.useCaseCategory === 'marketing_poster'
+                            ? `Phân tích bố cục, màu sắc và nội dung ảnh hiện tại${pointsNote}, gợi ý ý tưởng thiết kế Poster/Banner (${paramForm.customSubjectName || 'Ấn phẩm truyền thông'}) tỷ lệ ${paramForm.aspectRatio} và tạo sẵn lệnh @TaoAnhPoster giúp mình`
+                            : paramForm.useCaseCategory === 'space_architecture'
+                              ? `Phân tích không gian kiến trúc / nội ngoại thất trong ảnh hiện tại${pointsNote}, tư vấn phương án phối cảnh (${paramForm.customSubjectName || 'Không gian 3D'}) và tạo sẵn lệnh @TaoAnh giúp mình`
+                              : `Phân tích chi tiết bức ảnh hiện tại${pointsNote}, gợi ý cách chỉnh sửa ảnh (${paramForm.customSubjectName || 'chủ thể & bối cảnh trong ảnh'}) đẹp tự nhiên và tạo sẵn lệnh @TaoAnh giúp mình`;
+                      executeChatSubmit(defaultAnalyzePrompt);
                     }}
-                    className="flex items-center justify-center gap-1 rounded-xl bg-[#7846FF] px-2.5 py-1.5 text-[11px] font-bold text-white shadow-2xs hover:bg-[#6D28D9] transition truncate"
-                    title="Gọi lệnh @TaoAnh để AI sửa ảnh và ghép màn hình LED vào vị trí đã chấm điểm"
+                    className="rounded-lg bg-[#0BAF7C] px-2.5 py-1.5 text-[11px] font-extrabold text-white shadow-2xs hover:bg-emerald-700 disabled:opacity-50 transition"
                   >
-                    <span>🏢 @TaoAnh (Phối cảnh 3D)</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIncludeCadOverlay(true);
-                      handlePromptChange(
-                        `@TaoAnh: Cận cảnh chi tiết đường gióng kỹ thuật màn hình LED ${paramForm.pixelPitch} kích thước ${Math.round(paramForm.screenWidthM * 1000)}×${Math.round(paramForm.screenHeightM * 1000)}mm theo đơn vị mm`
-                      );
-                    }}
-                    className="flex items-center justify-center gap-1 rounded-xl bg-sky-600 px-2.5 py-1.5 text-[11px] font-bold text-white shadow-2xs hover:bg-sky-700 transition truncate"
-                    title="Tạo ảnh cận cảnh zoom chi tiết các đường gióng kích thước mm"
-                  >
-                    <span>📏 Cận cảnh đường gióng (mm)</span>
+                    🔍 Phân tích ảnh ($0)
                   </button>
                   <button
                     type="button"
                     onClick={() => {
                       const clean = chatPrompt
-                        .replace(
-                          /^\s*@(?:taoanhposter|taoposter|tao[j]?anh)\s*:?\s*/i,
-                          ''
-                        )
+                        .replace(/^\s*@(?:taoanhposter|taoposter|tao[j]?anh)\s*:?\s*/i, '')
                         .trim();
-                      handlePromptChange(
-                        `@TaoAnhPoster: ${
-                          clean ||
-                          `Thiết kế Poster quảng cáo LED tỷ lệ ${paramForm.aspectRatio} (${computedLiveSpecs.resW}×${computedLiveSpecs.resH}px) nổi bật thương hiệu Toàn Trung`
-                        }`
-                      );
+                      const defaultTaoAnhPrompt =
+                        paramForm.useCaseCategory === 'led_screen'
+                          ? `Ghép màn hình LED ${paramForm.pixelPitch} kích thước ${Math.round(paramForm.screenWidthM * 1000)}×${Math.round(paramForm.screenHeightM * 1000)}mm vào các điểm chạm đã chấm trên ảnh, kèm đường gióng kích thước kỹ thuật (mm)`
+                          : paramForm.useCaseCategory === 'space_architecture'
+                            ? `Chỉnh sửa và dựng phối cảnh không gian (${paramForm.customSubjectName || 'Nội ngoại thất / Bảng hiệu'}) theo phong cách ${paramForm.visualStylePreset}, giữ nguyên góc chụp và ánh sáng chân thực của ảnh gốc`
+                            : `Chỉnh sửa trực tiếp trên ảnh gốc: ${paramForm.customSubjectName || 'thêm/bớt chi tiết, làm đẹp màu sắc & ánh sáng theo yêu cầu'}, giữ nguyên bố cục ảnh gốc (${paramForm.bannerWidthPx}×${paramForm.bannerHeightPx}px)`;
+                      handlePromptChange(`@TaoAnh: ${clean || defaultTaoAnhPrompt}`);
                     }}
-                    className="flex items-center justify-center gap-1 rounded-xl bg-pink-600 px-2.5 py-1.5 text-[11px] font-bold text-white shadow-2xs hover:bg-pink-700 transition truncate"
-                    title="Gọi lệnh @TaoAnhPoster để thiết kế Poster / Banner quảng cáo"
+                    className="rounded-lg bg-[#7846FF] px-2.5 py-1.5 text-[11px] font-bold text-white shadow-2xs hover:bg-[#6D28D9] transition"
                   >
-                    <span>🖼️ @TaoAnhPoster (Tạo Banner)</span>
+                    ✨ @TaoAnh ({paramForm.useCaseCategory === 'led_screen' ? 'Ghép 3D' : 'Sửa / Tạo ảnh'})
                   </button>
                   <button
                     type="button"
                     onClick={() => {
-                      setLedScreenVisualTheme('mapped_poster');
-                      handlePromptChange(
-                        `@TaoAnh: Áp mẫu Banner Poster vừa thiết kế lên màn hình LED ${paramForm.pixelPitch} (${Math.round(paramForm.screenWidthM * 1000)}×${Math.round(paramForm.screenHeightM * 1000)}mm) tại các điểm chạm đã chấm trên công trình`
-                      );
+                      const clean = chatPrompt
+                        .replace(/^\s*@(?:taoanhposter|taoposter|tao[j]?anh)\s*:?\s*/i, '')
+                        .trim();
+                      const defaultPosterPrompt =
+                        paramForm.useCaseCategory === 'led_screen'
+                          ? `Thiết kế Poster quảng cáo LED tỷ lệ ${paramForm.aspectRatio} (${computedLiveSpecs.resW}×${computedLiveSpecs.resH}px) nổi bật thương hiệu Toàn Trung`
+                          : `Thiết kế Poster / Banner quảng cáo (${paramForm.customSubjectName || 'Ấn phẩm thương hiệu'}) tỷ lệ ${paramForm.aspectRatio} (${paramForm.bannerWidthPx}×${paramForm.bannerHeightPx}px) sắc nét, hiện đại`;
+                      handlePromptChange(`@TaoAnhPoster: ${clean || defaultPosterPrompt}`);
                     }}
-                    className="flex items-center justify-center gap-1 rounded-xl bg-amber-600 px-2.5 py-1.5 text-[11px] font-bold text-white shadow-2xs hover:bg-amber-700 transition truncate"
-                    title="Lấy mẫu Banner/Poster vừa tạo (@TaoAnhPoster) ghép trực tiếp vào trong màn hình LED trên mặt dựng công trình"
+                    className="rounded-lg bg-pink-600 px-2.5 py-1.5 text-[11px] font-bold text-white shadow-2xs hover:bg-pink-700 transition"
                   >
-                    <span>📺 Áp Poster lên mặt dựng</span>
+                    🖼️ @TaoAnhPoster
                   </button>
-                </div>
-
-                {/* Prompt Library + Quick Save Prompt Bar */}
-                <div className="flex items-center justify-between gap-1.5">
                   <button
                     type="button"
                     data-testid="open-prompt-library-btn"
@@ -4650,64 +5533,32 @@ export function AiDesignWorkspace() {
                       setNewSavedPromptText(chatPrompt.trim());
                       setShowPromptLibraryModal(true);
                     }}
-                    className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50/90 px-3 py-1.5 text-[11px] font-extrabold text-indigo-800 shadow-2xs hover:bg-indigo-100 transition"
-                    title="Mở Thư viện Lưu trữ các câu lệnh Prompt mẫu & cá nhân"
+                    className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-bold text-indigo-800 hover:bg-indigo-100 transition"
                   >
-                    <span>📚 Thư viện Lệnh Prompt ({promptLibrary.length})</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const trimmed = chatPrompt.trim();
-                      if (!trimmed) {
-                        setEditingPromptId(null);
-                        setNewSavedPromptTitle('');
-                        setNewSavedPromptText('');
-                        setShowPromptLibraryModal(true);
-                        return;
-                      }
-                      const autoCat: 'tao_anh' | 'tao_poster' | 'tu_van' =
-                        /^\s*@taoanhposter\b/i.test(trimmed)
-                          ? 'tao_poster'
-                          : /^\s*@tao[j]?anh\b/i.test(trimmed)
-                            ? 'tao_anh'
-                            : 'tu_van';
-                      const newItem = {
-                        id: `custom-${Date.now()}`,
-                        title:
-                          trimmed
-                            .replace(/^\s*@(?:taoanhposter|taoposter|tao[j]?anh)\s*:?\s*/i, '')
-                            .slice(0, 48) || 'Câu lệnh Prompt đã lưu',
-                        prompt: trimmed,
-                        category: autoCat,
-                        createdAt: new Date().toLocaleDateString('vi-VN'),
-                      };
-                      savePromptLibraryToStorage([newItem, ...promptLibrary]);
-                      setSuccessToast('Đã lưu câu lệnh hiện tại vào Thư viện Prompt!');
-                    }}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-extrabold text-emerald-700 hover:bg-emerald-100 transition"
-                    title="Lưu nhanh câu lệnh đang gõ ở ô chat vào Thư viện Prompt"
-                  >
-                    <span>💾 Lưu lệnh</span>
+                    📚 Mẫu lệnh ({promptLibrary.length})
                   </button>
                 </div>
 
                 <form onSubmit={handleSendChatEdit} className="relative">
                   <textarea
-                    rows={3}
+                    rows={2}
                     data-testid="ai-chat-prompt-input"
                     value={chatPrompt}
                     onChange={(e) => handlePromptChange(e.target.value)}
-                    placeholder="Nhập yêu cầu phân tích ảnh (miễn phí $0), hoặc gõ @TaoAnh / @TaoAnhPoster để AI sửa ảnh ngay..."
-                    className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50/70 p-3 pr-24 text-[13px] text-slate-900 placeholder-slate-400 focus:border-[#7846FF] focus:bg-white focus:outline-none"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        void executeChatSubmit(chatPrompt);
+                      }
+                    }}
+                    placeholder="Nhập câu hỏi tư vấn ($0) hoặc gõ @TaoAnh... (Nhấn Enter để gửi)"
+                    className="w-full resize-none rounded-xl border border-slate-300 bg-slate-50/70 p-2.5 pr-20 text-[13px] text-slate-900 placeholder-slate-400 focus:border-[#7846FF] focus:bg-white focus:outline-none"
                   />
                   <button
                     type="submit"
                     data-testid="ai-chat-submit-btn"
-                    disabled={
-                      !chatPrompt.trim() || submitting || Boolean(piiAlert) || !canUseAiDesign
-                    }
-                    className={`absolute bottom-3 right-2.5 inline-flex items-center gap-1 rounded-xl px-3.5 py-2 text-xs font-extrabold text-white shadow-xs transition disabled:opacity-50 ${
+                    disabled={!chatPrompt.trim() || submitting || Boolean(piiAlert)}
+                    className={`absolute bottom-2.5 right-2 inline-flex items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-extrabold text-white shadow-xs transition disabled:opacity-50 ${
                       /^\s*@taoanhposter\b/i.test(chatPrompt)
                         ? 'bg-pink-600 hover:bg-pink-700'
                         : /^\s*@tao[j]?anh\b/i.test(chatPrompt)
@@ -5236,281 +6087,463 @@ export function AiDesignWorkspace() {
         </div>
       )}
 
-      {/* MODAL: QUẢN TRỊ 2 CON AI (DUAL-AI ENGINE HUB CHO ADMIN) */}
+      {/* MODAL GỌN GÀNG: 2 TAB (1. CHỌN AI · 2. SETTING) */}
       {showAiConfigModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
-          <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-50 text-[#7846FF] border border-purple-200">
-                  <Cpu className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">
-                    Quản trị 2 Con AI (Admin): AI Tư vấn Miễn phí ($0) &amp; AI Tạo Ảnh (@TaoAnh)
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Cấu hình Con AI 1 (Trò chuyện tư vấn &amp; viết hộ câu lệnh miễn phí $0) và Con AI 2 (Chỉ chạy khi gọi lệnh @TaoAnh: để tối ưu chi phí).
-                  </p>
-                </div>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs"
+          onClick={() => setShowAiConfigModal(false)}
+        >
+          <div
+            className="flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header + 2 Tabs */}
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
+              <div className="flex items-center gap-1.5 rounded-xl bg-slate-200/80 p-1">
+                <button
+                  type="button"
+                  data-testid="ai-config-tab-select"
+                  onClick={() => setAiModalTab('select_ai')}
+                  className={`rounded-lg px-3.5 py-1.5 text-xs font-extrabold transition ${
+                    aiModalTab === 'select_ai'
+                      ? 'bg-white text-[#1553A2] shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  1. Chọn AI
+                </button>
+                <button
+                  type="button"
+                  data-testid="ai-config-tab-setting"
+                  onClick={() => setAiModalTab('setting_ai')}
+                  className={`rounded-lg px-3.5 py-1.5 text-xs font-extrabold transition ${
+                    aiModalTab === 'setting_ai'
+                      ? 'bg-white text-[#6D28D9] shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  2. Setting &amp; Thêm AI
+                </button>
               </div>
+
               <button
                 type="button"
                 onClick={() => setShowAiConfigModal(false)}
-                className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-600 hover:bg-slate-100"
               >
-                Đóng
+                Đóng ✕
               </button>
             </div>
 
-            {/* Top Banner: Con AI 1 (Free Consultant AI Config) */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-200/80 bg-emerald-50/70 px-6 py-3 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="rounded-full bg-[#0BAF7C] px-2.5 py-0.5 text-[11px] font-extrabold text-white">
-                  CON AI 1 · CHAT THƯỜNG ($0)
-                </span>
-                <span className="font-bold text-emerald-950">
-                  Trợ lý Tư vấn Kỹ thuật LED Toàn Trung &amp; Soạn hộ lệnh @TaoAnh:
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-emerald-800">Model Tư vấn Free:</span>
-                <select
-                  value={consultantModelName}
-                  onChange={(e) => setConsultantModelName(e.target.value)}
-                  className="rounded-lg border border-emerald-300 bg-white px-2.5 py-1 text-xs font-bold text-emerald-950 focus:outline-none"
-                >
-                  <option value="Gemini 2.5 Flash (Free $0)">Google Gemini 2.5 Flash (Free Tier $0)</option>
-                  <option value="Gemini 2.0 Flash-Lite (Free $0)">Google Gemini 2.0 Flash-Lite (Free Tier $0)</option>
-                  <option value="Toàn Trung LED Consultant Rules ($0)">Toàn Trung LED Consultant Engine (Offline $0)</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Body: Con AI 2 (@TaoAnh Image Generator AI Config) */}
-            <form
-              onSubmit={handleSaveAiProviderConfig}
-              className="grid flex-1 min-h-0 grid-cols-1 md:grid-cols-12 overflow-y-auto"
-            >
-              {/* Left Column: 6 AI Provider Cards */}
-              <div className="md:col-span-5 border-r border-slate-200 bg-slate-50/60 p-4 space-y-2">
-                <div className="flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider text-[#6D28D9] mb-2">
-                  <span>CON AI 2 · KHI GỌI LỆNH @TAOANH:</span>
-                </div>
-                {(providerStatus?.availableProviders || []).map((prov) => {
-                  const isCurrentTab = prov.providerId === configModalProviderId;
-                  return (
+            {/* ================= TAB 1: CHỌN AI (TỰ ĐỘNG HIỆN MODEL ĐỌC TỪ AI) ================= */}
+            {aiModalTab === 'select_ai' ? (
+              <form
+                onSubmit={handleSaveAiProviderConfig}
+                className="flex-1 overflow-y-auto p-5 space-y-4 text-xs"
+              >
+                {/* 1. Chọn AI Chat & Phân tích ảnh ($0) - Tự động hiển thị toàn bộ Model đọc từ AI */}
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <label className="font-extrabold text-slate-800">
+                      1. Chọn Model Chat &amp; Phân tích ảnh (Đã tự đọc {autoDiscoveredModels.length} Model):
+                    </label>
                     <button
-                      key={prov.providerId}
                       type="button"
-                      data-testid={`multi-ai-card-${prov.providerId}`}
-                      onClick={() => {
-                        setConfigModalProviderId(prov.providerId);
-                        setConfigEndpointInput(prov.apiEndpoint || '');
-                        setConfigCustomModelInput(prov.activeModel || prov.models[0]?.id || '');
-                        setConfigApiKeyInput('');
-                      }}
-                      className={`w-full rounded-xl border p-3 text-left transition ${
-                        isCurrentTab
-                          ? 'border-[#2563EB] bg-white shadow-xs ring-2 ring-blue-500/15'
-                          : 'border-slate-200/90 bg-white/80 hover:border-slate-300 hover:bg-white'
-                      }`}
+                      disabled={testingAiConnection}
+                      onClick={handleQuickConnectGmailGemini}
+                      className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-800 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50"
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-bold text-slate-900">{prov.providerName}</span>
-                        {prov.isDefault && (
-                          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-[#1E3A8A] border border-blue-200">
-                            Mặc định
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-1 flex items-center justify-between text-xs">
-                        <span className="font-mono text-[11px] text-slate-600">
-                          {prov.activeModel}
-                        </span>
-                        <span
-                          className={`inline-flex items-center gap-1 text-[11px] font-semibold ${
-                            prov.isConfigured ? 'text-emerald-700' : 'text-blue-700'
+                      <RefreshCw className={`h-3 w-3 ${testingAiConnection ? 'animate-spin' : ''}`} />
+                      <span>{testingAiConnection ? 'Đang đọc...' : '🔄 Tự đọc lại Model từ AI'}</span>
+                    </button>
+                  </div>
+                  <select
+                    value={consultantModelId}
+                    onChange={(e) => {
+                      const nextId = e.target.value;
+                      setConsultantModelId(nextId);
+                      const found = autoDiscoveredModels.find((m) => m.id === nextId);
+                      setConsultantModelName(found ? found.name : nextId);
+                    }}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-xs font-bold text-slate-900 focus:border-[#1553A2] focus:outline-none"
+                  >
+                    {autoDiscoveredModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} — [{m.badge}]
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 2. Chọn AI Tạo ảnh (@TaoAnh) */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="font-extrabold text-slate-800">
+                      2. Con AI Tạo ảnh phối cảnh (@TaoAnh):
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setAiModalTab('setting_ai')}
+                      className="font-bold text-[#6D28D9] hover:underline"
+                    >
+                      + Gắn Key / Thêm AI mới
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {(providerStatus?.availableProviders || []).map((prov) => {
+                      const isSelected = prov.providerId === configModalProviderId;
+                      return (
+                        <button
+                          key={prov.providerId}
+                          type="button"
+                          data-testid={`multi-ai-card-${prov.providerId}`}
+                          onClick={() => {
+                            setConfigModalProviderId(prov.providerId);
+                            setConfigEndpointInput(prov.apiEndpoint || '');
+                            setConfigCustomModelInput(
+                              prov.activeModel || prov.models[0]?.id || ''
+                            );
+                          }}
+                          className={`flex items-center justify-between rounded-xl border px-3 py-2.5 text-left transition ${
+                            isSelected
+                              ? 'border-[#1553A2] bg-blue-50/60 ring-2 ring-blue-500/15'
+                              : 'border-slate-200 bg-white hover:bg-slate-50'
                           }`}
                         >
+                          <div className="min-w-0 pr-2">
+                            <div className="font-extrabold text-slate-900 truncate">
+                              {prov.shortName}
+                            </div>
+                            <div className="font-mono text-[10px] text-slate-500 truncate">
+                              {prov.models.length} model · {prov.activeModel}
+                            </div>
+                          </div>
                           <span
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              prov.isConfigured ? 'bg-emerald-500' : 'bg-blue-500'
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                              prov.isConfigured
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-slate-100 text-slate-600'
                             }`}
-                          />
-                          {prov.isConfigured ? 'Đã có Key' : 'Chế độ Studio'}
+                          >
+                            {prov.isConfigured ? 'Đã có Key' : 'Mặc định'}
+                          </span>
+                        </button>
+                      );
+                    })}
+
+                    {/* Custom AI added by staff */}
+                    {customAiModels
+                      .filter((m) => m.role === 'image_gen' || m.role === 'both')
+                      .map((cm) => {
+                        const isSelected = configCustomModelInput === cm.modelId;
+                        return (
+                          <button
+                            key={cm.id}
+                            type="button"
+                            onClick={() => {
+                              setConfigModalProviderId(cm.providerId);
+                              setConfigCustomModelInput(cm.modelId);
+                              if (cm.apiEndpoint) setConfigEndpointInput(cm.apiEndpoint);
+                            }}
+                            className={`flex items-center justify-between rounded-xl border px-3 py-2.5 text-left transition ${
+                              isSelected
+                                ? 'border-[#7846FF] bg-purple-50/70 ring-2 ring-purple-500/15'
+                                : 'border-purple-200 bg-white hover:bg-purple-50/30'
+                            }`}
+                          >
+                            <div className="min-w-0 pr-2">
+                              <div className="font-extrabold text-purple-950 truncate">
+                                {cm.name}
+                              </div>
+                              <div className="font-mono text-[10px] text-slate-500 truncate">
+                                {cm.modelId}
+                              </div>
+                            </div>
+                            <span className="shrink-0 rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-800">
+                              AI Mới
+                            </span>
+                          </button>
+                        );
+                      })}
+                  </div>
+
+                  {/* Dropdown chọn Model cụ thể của Hãng đang chọn (Tự động lấy từ danh sách Model đọc được) */}
+                  {(() => {
+                    const activeProvObj = (providerStatus?.availableProviders || []).find(
+                      (p) => p.providerId === configModalProviderId
+                    );
+                    const provModels = activeProvObj?.models || [];
+                    if (provModels.length === 0) return null;
+                    return (
+                      <div className="mt-2.5 rounded-xl border border-slate-200 bg-slate-50 p-2.5">
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Chọn Model của {activeProvObj?.shortName} ({provModels.length} model khả dụng):
+                        </label>
+                        <select
+                          value={configCustomModelInput || activeProvObj?.activeModel || provModels[0]?.id}
+                          onChange={(e) => setConfigCustomModelInput(e.target.value)}
+                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs font-bold text-slate-900 focus:border-[#1553A2] focus:outline-none"
+                        >
+                          {provModels.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name} — [{m.badge}]
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Footer Save */}
+                <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowAiConfigModal(false)}
+                    className="rounded-xl border border-slate-200 px-4 py-2 font-semibold text-slate-600 hover:bg-slate-50"
+                  >
+                    Huỷ
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingAiConfig}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#1553A2] px-5 py-2 font-extrabold text-white shadow-xs hover:bg-[#1E3A8A] disabled:opacity-50"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    <span>{savingAiConfig ? 'Đang lưu...' : 'Lưu & Sử dụng'}</span>
+                  </button>
+                </div>
+              </form>
+            ) : (
+              /* ================= TAB 2: SETTING & THÊM AI (TỰ ĐỌC MODEL TỪ AI) ================= */
+              <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+                {/* KHUNG 1: GẮN GOOGLE GEMINI / AI & TỰ ĐỘNG ĐỌC DANH SÁCH MODEL */}
+                <div className="rounded-xl border border-emerald-300 bg-emerald-50/50 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-extrabold text-emerald-950">
+                      🔑 Kết nối AI &amp; Tự động đọc danh sách Model có sẵn
+                    </span>
+                    <a
+                      href="https://aistudio.google.com/app/apikey"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-lg bg-white px-2.5 py-1 text-[11px] font-bold text-[#1553A2] border border-emerald-300 hover:bg-emerald-100"
+                    >
+                      Lấy mã Key tại Google AI Studio ↗
+                    </a>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      data-testid="gmail-gemini-key-input"
+                      type="password"
+                      value={gmailGeminiKeyInput}
+                      onChange={(e) => setGmailGeminiKeyInput(e.target.value)}
+                      placeholder="Dán mã API Key vào đây (hoặc để trống nếu đã gắn Key)"
+                      className="flex-1 rounded-xl border border-emerald-300 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:border-[#0BAF7C] focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      data-testid="gmail-gemini-connect-btn"
+                      disabled={testingAiConnection || savingAiConfig}
+                      onClick={handleQuickConnectGmailGemini}
+                      className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#0BAF7C] px-4 py-2 font-extrabold text-white hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      <span>
+                        {testingAiConnection
+                          ? 'Đang tự đọc Model...'
+                          : 'Kết nối & Tự đọc Model'}
+                      </span>
+                    </button>
+                  </div>
+
+                  {testAiResult && (
+                    <div
+                      className={`rounded-lg px-3 py-2 text-[11px] font-bold ${
+                        testAiResult.ok
+                          ? 'bg-emerald-100 text-emerald-900'
+                          : 'bg-red-100 text-red-800'
+                      }`}
+                    >
+                      {testAiResult.ok ? '✅ ' : '❌ '}
+                      {testAiResult.replyText} ({testAiResult.latencyMs}ms)
+                    </div>
+                  )}
+
+                  {/* Hiển thị ngay danh sách các Model đọc được từ con AI để chọn trực tiếp */}
+                  {autoDiscoveredModels.length > 0 && (
+                    <div className="rounded-lg border border-emerald-200 bg-white p-2.5 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-extrabold text-emerald-950">
+                          📋 Danh sách {autoDiscoveredModels.length} Model đọc được từ con AI này (Bấm để chọn):
                         </span>
                       </div>
+                      <select
+                        value={consultantModelId}
+                        onChange={(e) => {
+                          const nextId = e.target.value;
+                          setConsultantModelId(nextId);
+                          setSelectedModelId(nextId);
+                          const found = autoDiscoveredModels.find((m) => m.id === nextId);
+                          setConsultantModelName(found ? found.name : nextId);
+                          setSuccessToast(`Đã chuyển sang Model: ${found ? found.name : nextId}`);
+                        }}
+                        className="w-full rounded-lg border border-emerald-300 bg-emerald-50/40 px-2.5 py-2 text-xs font-extrabold text-[#1553A2] focus:border-[#0BAF7C] focus:outline-none"
+                      >
+                        {autoDiscoveredModels.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name} — [{m.badge}]
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {/* KHUNG 2: THÊM CON AI MỚI CHO SAU NÀY (HỖ TRỢ TỰ ĐỌC MODEL TỪ HÃNG KHÁC) */}
+                <form
+                  onSubmit={handleAddCustomAiModel}
+                  className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 space-y-2.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-extrabold text-slate-800">
+                      ➕ Đấu nối Con AI mới sau này (OpenAI / OpenRouter / Custom API)
+                    </span>
+                    <button
+                      type="button"
+                      disabled={testingAiConnection}
+                      onClick={() =>
+                        handleTestProviderKey(
+                          newCustomAiProvider,
+                          newCustomAiKey,
+                          newCustomAiEndpoint,
+                          newCustomAiModelId
+                        )
+                      }
+                      className="rounded-lg bg-purple-100 px-2.5 py-1 text-[11px] font-extrabold text-purple-900 hover:bg-purple-200 disabled:opacity-50"
+                    >
+                      {testingAiConnection ? 'Đang quét...' : '🔄 Tự đọc Model từ Key này'}
                     </button>
-                  );
-                })}
-              </div>
+                  </div>
 
-              {/* Right Column: Selected Provider Details, Model Picker & API Key / Endpoint Config */}
-              <div className="md:col-span-7 p-5 space-y-4 text-sm">
-                {(() => {
-                  const activeProv =
-                    providerStatus?.availableProviders?.find(
-                      (p) => p.providerId === configModalProviderId
-                    ) || providerStatus?.availableProviders?.[0];
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <select
+                      value={newCustomAiProvider}
+                      onChange={(e) => setNewCustomAiProvider(e.target.value as AiProviderId)}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-800 focus:border-purple-600 focus:outline-none"
+                    >
+                      <option value="google_imagen">Hãng: Google Gemini / Imagen</option>
+                      <option value="openai_dalle">Hãng: OpenAI (GPT / DALL-E)</option>
+                      <option value="flux_bfl">Hãng: FLUX (Black Forest Labs)</option>
+                      <option value="custom_endpoint">Hãng: Khác (OpenRouter / Groq / Custom)</option>
+                    </select>
+                    <input
+                      type="password"
+                      value={newCustomAiKey}
+                      onChange={(e) => setNewCustomAiKey(e.target.value)}
+                      placeholder="Dán API Key của con AI mới vào đây..."
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-slate-900 focus:border-purple-600 focus:outline-none"
+                    />
+                    <input
+                      type="text"
+                      value={newCustomAiName}
+                      onChange={(e) => setNewCustomAiName(e.target.value)}
+                      placeholder="Tên hiển thị (VD: GPT-5 / Claude / DeepSeek)"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-900 focus:border-purple-600 focus:outline-none"
+                    />
+                    <input
+                      type="text"
+                      value={newCustomAiModelId}
+                      onChange={(e) => setNewCustomAiModelId(e.target.value)}
+                      placeholder="Mã Model (Tự điền khi bấm Tự đọc hoặc nhập tay)"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-slate-900 focus:border-purple-600 focus:outline-none"
+                    />
+                  </div>
 
-                  if (!activeProv) return null;
-
-                  return (
-                    <>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-base font-bold text-slate-900">
-                            {activeProv.providerName}
-                          </h4>
-                          <span className="rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 border border-slate-200">
-                            {activeProv.statusLabel}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-xs text-slate-600 leading-relaxed">
-                          {activeProv.notes}
-                        </p>
-                      </div>
-
-                      {/* Select Model within this Provider */}
-                      <div>
-                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">
-                          1. Chọn Model AI sử dụng cho {activeProv.shortName}
-                        </label>
-                        <div className="grid grid-cols-1 gap-2">
-                          {activeProv.models.map((m) => {
-                            const isSelectedModel = configCustomModelInput === m.id;
-                            return (
-                              <div
-                                key={m.id}
-                                onClick={() => setConfigCustomModelInput(m.id)}
-                                className={`cursor-pointer rounded-xl border p-3 transition ${
-                                  isSelectedModel
-                                    ? 'border-[#2563EB] bg-blue-50/40'
-                                    : 'border-slate-200 bg-white hover:bg-slate-50'
-                                }`}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-2">
-                                    <input
-                                      type="radio"
-                                      name="activeModelRadio"
-                                      checked={isSelectedModel}
-                                      onChange={() => setConfigCustomModelInput(m.id)}
-                                      className="h-3.5 w-3.5 text-[#1E3A8A]"
-                                    />
-                                    <span className="font-bold text-slate-900">{m.name}</span>
-                                    <span className="rounded bg-blue-100/80 px-2 py-0.5 text-[10px] font-bold text-[#1E3A8A]">
-                                      {m.badge}
-                                    </span>
-                                  </div>
-                                  <span className="font-mono text-xs font-semibold text-slate-600">
-                                    ${m.costPerImageUsd.toFixed(3)} / ảnh
-                                  </span>
-                                </div>
-                                <p className="mt-1 pl-5 text-xs text-slate-500">{m.description}</p>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Custom Model ID Override & API Key / Endpoint */}
-                      {activeProv.providerId !== 'local_sandbox' && (
-                        <div className="space-y-3 rounded-xl border border-slate-200 p-3.5">
-                          <div className="text-xs font-bold uppercase tracking-wider text-slate-600">
-                            2. Cấu hình Kết nối API & Mở rộng Tương lai (Tùy chọn)
-                          </div>
-
-                          <div>
-                            <label className="block text-xs font-semibold text-slate-700 mb-1">
-                              Mã Model (Model ID — Có thể nhập bất kỳ model mới nào khi hãng nâng cấp):
-                            </label>
-                            <input
-                              type="text"
-                              value={configCustomModelInput}
-                              onChange={(e) => setConfigCustomModelInput(e.target.value)}
-                              placeholder="VD: imagen-3.0-generate-002, gpt-image-1, flux-1.1-pro-ultra..."
-                              className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono text-xs text-slate-900 focus:border-[#2563EB] focus:outline-none"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-xs font-semibold text-slate-700 mb-1">
-                              API Key ({activeProv.maskedApiKey ? `Đang lưu: ${activeProv.maskedApiKey}` : 'Chưa nhập — Để trống nếu dùng chế độ Studio Sẵn sàng'}):
-                            </label>
-                            <input
-                              type="password"
-                              value={configApiKeyInput}
-                              onChange={(e) => setConfigApiKeyInput(e.target.value)}
-                              placeholder={
-                                activeProv.maskedApiKey
-                                  ? `Giữ nguyên (${activeProv.maskedApiKey}) hoặc nhập Key mới để thay đổi...`
-                                  : 'Nhập API Key khi muốn gọi trực tiếp tới máy chủ AI đám mây...'
-                              }
-                              className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono text-xs text-slate-900 focus:border-[#2563EB] focus:outline-none"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-xs font-semibold text-slate-700 mb-1">
-                              API Endpoint URL (Hỗ trợ đổi qua OpenRouter / Proxy / Server riêng):
-                            </label>
-                            <input
-                              type="text"
-                              value={configEndpointInput}
-                              onChange={(e) => setConfigEndpointInput(e.target.value)}
-                              className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono text-xs text-slate-700 focus:border-[#2563EB] focus:outline-none"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Auto-fallback safety switch */}
-                      <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-blue-200/80 bg-blue-50/50 p-3 text-xs">
-                        <input
-                          type="checkbox"
-                          checked={autoFallbackToLocal}
-                          onChange={(e) => setAutoFallbackToLocal(e.target.checked)}
-                          className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#1E3A8A]"
-                        />
-                        <div>
-                          <div className="font-bold text-slate-900">
-                            Đảm bảo hoạt động liên tục 100% (Auto-Fallback sang Toàn Trung Studio Engine)
-                          </div>
-                          <div className="text-slate-600 mt-0.5">
-                            Khi bật, nếu con AI đám mây đang chọn chưa nhập API Key hoặc hết hạn mức, hệ thống tự động kết xuất qua Engine Nội bộ Toàn Trung để quy trình làm việc của Sales & Designer không bao giờ bị gián đoạn.
-                          </div>
-                        </div>
+                  {/* Nếu vừa bấm "Tự đọc Model từ Key này" và tìm thấy danh sách model của con AI mới -> hiện dropdown chọn luôn */}
+                  {testAiResult?.discoveredModels && testAiResult.discoveredModels.length > 0 && (
+                    <div className="rounded-lg border border-purple-200 bg-purple-50/60 p-2">
+                      <label className="block text-[11px] font-bold text-purple-950 mb-1">
+                        🎯 Đã đọc được {testAiResult.discoveredModels.length} Model từ con AI này — chọn Model bạn muốn dùng:
                       </label>
+                      <select
+                        value={newCustomAiModelId}
+                        onChange={(e) => {
+                          const pickedId = e.target.value;
+                          setNewCustomAiModelId(pickedId);
+                          const pickedObj = testAiResult.discoveredModels?.find(
+                            (m) => m.id === pickedId
+                          );
+                          if (pickedObj) setNewCustomAiName(pickedObj.name);
+                        }}
+                        className="w-full rounded-lg border border-purple-300 bg-white px-2.5 py-1.5 text-xs font-bold text-purple-950"
+                      >
+                        {testAiResult.discoveredModels.map((dm) => (
+                          <option key={dm.id} value={dm.id}>
+                            {dm.name} — [{dm.badge}]
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
-                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
-                        <button
-                          type="button"
-                          onClick={() => setShowAiConfigModal(false)}
-                          className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      className="inline-flex items-center gap-1 rounded-xl bg-[#7846FF] px-4 py-1.5 font-extrabold text-white hover:bg-[#6D28D9]"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>Thêm vào danh sách AI</span>
+                    </button>
+                  </div>
+
+                  {customAiModels.length > 0 && (
+                    <div className="space-y-1.5 border-t border-slate-200 pt-2.5">
+                      {customAiModels.map((cm) => (
+                        <div
+                          key={cm.id}
+                          className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-1.5"
                         >
-                          Hủy
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={savingAiConfig}
-                          className="inline-flex items-center gap-1.5 rounded-xl bg-[#1E3A8A] px-5 py-2 text-xs font-bold text-white shadow-xs hover:bg-[#2563EB] disabled:opacity-50"
-                        >
-                          <Check className="h-3.5 w-3.5" />
-                          <span>
-                            {savingAiConfig
-                              ? 'Đang lưu & kích hoạt...'
-                              : `Chọn "${activeProv.shortName}" làm AI đang dùng`}
+                          <span className="font-bold text-slate-800 truncate">
+                            {cm.name}{' '}
+                            <span className="font-mono text-[10px] text-slate-500">
+                              ({cm.modelId})
+                            </span>
                           </span>
-                        </button>
-                      </div>
-                    </>
-                  );
-                })()}
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setConsultantModelId(cm.modelId);
+                                setConsultantModelName(cm.name);
+                                setSelectedProviderId(cm.providerId);
+                                setSelectedModelId(cm.modelId);
+                                setConfigModalProviderId(cm.providerId);
+                                setConfigCustomModelInput(cm.modelId);
+                                setSuccessToast(`Đã chọn AI: ${cm.name}`);
+                                setAiModalTab('select_ai');
+                              }}
+                              className="rounded bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-[#1553A2]"
+                            >
+                              Dùng
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCustomAiModel(cm.id)}
+                              className="rounded bg-red-50 px-1.5 py-0.5 text-red-600 hover:bg-red-100"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </form>
               </div>
-            </form>
+            )}
           </div>
         </div>
       )}

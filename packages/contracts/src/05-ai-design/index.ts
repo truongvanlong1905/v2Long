@@ -306,22 +306,22 @@ export const UpdateDesignProjectSchema = z.object({
 export type UpdateDesignProjectDto = z.infer<typeof UpdateDesignProjectSchema>;
 
 export const ChatDesignRequestSchema = z.object({
-  expectedVersion: z.number().int().positive(),
-  prompt: z.string().trim().min(2, 'Yêu cầu cần tối thiểu 2 ký tự.').max(1500),
+  expectedVersion: z.coerce.number().int().optional(),
+  prompt: z.string().trim().min(1, 'Vui lòng nhập nội dung yêu cầu chat.').max(2000),
   chatMode: z.enum(['auto', 'consultant_free', 'image_generator']).optional(),
   quality: z.enum(['draft', 'high_quality']).default('draft'),
-  providerId: z.enum(AI_PROVIDER_IDS).optional(),
+  providerId: z.string().trim().optional(),
   modelId: z.string().trim().max(120).optional(),
   placementQuad: QuadCoordinatesSchema.optional().nullable(),
   selectedPhotoUrl: z.string().trim().optional().nullable(),
-  productId: z.number().int().positive().optional().nullable(),
-  screenWidthM: z.number().positive().max(200).optional().nullable(),
-  screenHeightM: z.number().positive().max(100).optional().nullable(),
-  bannerWidthPx: z.number().int().min(128).max(15360).optional().nullable(),
-  bannerHeightPx: z.number().int().min(64).max(8640).optional().nullable(),
+  productId: z.coerce.number().int().optional().nullable(),
+  screenWidthM: z.coerce.number().optional().nullable(),
+  screenHeightM: z.coerce.number().optional().nullable(),
+  bannerWidthPx: z.coerce.number().optional().nullable(),
+  bannerHeightPx: z.coerce.number().optional().nullable(),
   aspectRatio: z.string().trim().max(30).optional().nullable(),
   simulateAiTimeout: z.boolean().optional(),
-  idempotencyKey: z.string().trim().min(8).max(120).optional(),
+  idempotencyKey: z.string().trim().max(120).optional(),
 });
 
 export type ChatDesignRequestDto = z.infer<typeof ChatDesignRequestSchema>;

@@ -16,6 +16,8 @@ export interface PerspectiveGenerationInput {
   workflow: 'perspective_3d';
   prompt: string;
   referenceImageUrl: string;
+  referenceImageBuffer?: Buffer;
+  referenceImageMimeType?: string;
   placementQuad?: QuadCoordinates;
   dimensions: {
     widthM: number;
