@@ -239,9 +239,6 @@ export function getAdapterReadinessMatrix(): AdapterConnectionStatusItem[] {
       process.env.GOOGLE_ADS_CLIENT_ID?.trim(),
   );
   const hasGa4Gsc = Boolean(process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim());
-  const hasWpCms = Boolean(
-    process.env.WP_APP_USER?.trim() && process.env.WP_APP_PASSWORD?.trim(),
-  );
   const hasWebhookSecret = Boolean(process.env.WEBHOOK_SHARED_SECRET?.trim());
   const hasGeminiKey = Boolean(
     process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_GENAI_API_KEY?.trim(),
@@ -279,18 +276,8 @@ export function getAdapterReadinessMatrix(): AdapterConnectionStatusItem[] {
         : 'Đang dùng dữ liệu mẫu nội bộ; tự động chuyển sang Live ngay khi cấp Service Account JSON.',
     },
     {
-      code: 'WORDPRESS_CMS_REST',
-      name: 'WordPress REST API (Đăng bài SEO lên 3 Website)',
-      moduleScope: 'M03 SEO & Worker #4',
-      mode: hasWpCms ? 'LIVE_CONNECTED' : 'SIMULATED_FALLBACK',
-      envKeysRequired: ['WP_APP_USER', 'WP_APP_PASSWORD'],
-      description: hasWpCms
-        ? 'Đã kết nối Application Password — đẩy bài trực tiếp lên /wp-json/wp/v2/posts.'
-        : 'Chế độ an toàn nội bộ: tạo đường dẫn bài viết chuẩn nhưng chưa đẩy ra ngoài internet.',
-    },
-    {
       code: 'GEMINI_IMAGEN_AI',
-      name: 'Google Gemini 2.5 Flash & Imagen 3 (Dựng Phối cảnh 3D & Viết bài SEO)',
+      name: 'Google Gemini & Imagen AI (Dựng Phối cảnh 3D & Viết bài SEO)',
       moduleScope: 'M03 SEO & M05 AI Design',
       mode: hasGeminiKey ? 'LIVE_CONNECTED' : 'SIMULATED_FALLBACK',
       envKeysRequired: ['GEMINI_API_KEY'],

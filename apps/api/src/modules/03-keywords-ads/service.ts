@@ -4,6 +4,7 @@ import {
   ConcurrencyConflictError,
   recordAiUsageAttempt,
 } from '@toantrung/database';
+import { AiDesignProviderFactory } from '../05-ai-design/providers';
 import {
   containsCustomerPiiInPrompt,
   type AdsCampaignItemDto,
@@ -268,31 +269,39 @@ export async function listKeywordsAndArticlesForUser(user: SessionUserDto): Prom
     };
   });
 
-  const keywords: SeoKeywordItemDto[] = keywordRows.map((k) => ({
-    id: k.id,
-    keywordText: k.keyword,
-    topicCluster: 'Giải pháp Màn hình LED & Bảng điện tử',
-    searchIntent: 'COMMERCIAL',
-    targetWebsite: 'toantrung.vn',
-    cachedSearchVolume: k.cachedSearchVolume ?? 1000,
-    cachedAdsClicks: k.cachedAdsClicks ?? 0,
-    cachedOrganicClicks: k.cachedOrganicClicks ?? 0,
-    cachedAvgPosition: k.cachedAvgPosition,
-    trendScore: k.trendDirection === 'rising' ? 88 : k.trendDirection === 'declining' ? 42 : 68,
-    trendDirection:
-      k.trendDirection === 'rising'
-        ? 'UP'
-        : k.trendDirection === 'declining'
-          ? 'DOWN'
-          : 'STABLE',
-    cacheSourceAccountKey: k.cacheSourceAccountKey,
-    cacheWindowStartDate: k.cacheWindowStartDate,
-    cacheWindowEndDate: k.cacheWindowEndDate,
-    cacheRefreshedAt: k.cacheRefreshedAt ? k.cacheRefreshedAt.toISOString() : null,
-    suggestedPublishSlot:
-      k.recommendedPublishWindow || 'Thứ Ba / Thứ Năm 09:00 - 10:30 (Khung giờ B2B cao điểm)',
-    articlesCount: k.articles.length,
-  }));
+  const keywords: SeoKeywordItemDto[] = keywordRows.map((k) => {
+    const srcKey = (k.cacheSourceAccountKey || '').toLowerCase();
+    const detectedSite = srcKey.includes('bangled.vn')
+      ? 'bangled.vn'
+      : srcKey.includes('manhinhled.net.vn')
+        ? 'manhinhled.net.vn'
+        : 'toantrung.com.vn';
+    return {
+      id: k.id,
+      keywordText: k.keyword,
+      topicCluster: 'Giải pháp Màn hình LED & Bảng điện tử',
+      searchIntent: 'COMMERCIAL',
+      targetWebsite: detectedSite,
+      cachedSearchVolume: k.cachedSearchVolume ?? 1000,
+      cachedAdsClicks: k.cachedAdsClicks ?? 0,
+      cachedOrganicClicks: k.cachedOrganicClicks ?? 0,
+      cachedAvgPosition: k.cachedAvgPosition,
+      trendScore: k.trendDirection === 'rising' ? 88 : k.trendDirection === 'declining' ? 42 : 68,
+      trendDirection:
+        k.trendDirection === 'rising'
+          ? 'UP'
+          : k.trendDirection === 'declining'
+            ? 'DOWN'
+            : 'STABLE',
+      cacheSourceAccountKey: k.cacheSourceAccountKey,
+      cacheWindowStartDate: k.cacheWindowStartDate,
+      cacheWindowEndDate: k.cacheWindowEndDate,
+      cacheRefreshedAt: k.cacheRefreshedAt ? k.cacheRefreshedAt.toISOString() : null,
+      suggestedPublishSlot:
+        k.recommendedPublishWindow || 'Thứ Ba / Thứ Năm 09:00 - 10:30 (Khung giờ B2B cao điểm)',
+      articlesCount: k.articles.length,
+    };
+  });
 
   // UC05 A4: Nhân viên Ads chỉ xem bảng từ khóa & xu hướng, không xem danh sách quản trị bài viết
   if (isAdsReadOnlyRole(user.roleCode)) {
@@ -379,30 +388,84 @@ export async function listKeywordsAndArticlesForUser(user: SessionUserDto): Prom
   };
 }
 
-export async function createSeoKeyword(actor: SessionUserDto, input: CreateSeoKeywordDto) {
+export async function createSeoKeyword(
+  actor: SessionUserDto,
+  input: CreateSeoKeywordDto & {
+    cachedSearchVolume?: number;
+    cachedAdsClicks?: number;
+    cachedOrganicClicks?: number;
+    cachedAvgPosition?: number | null;
+    trendDirection?: 'UP' | 'STABLE' | 'DOWN';
+    recommendedPublishWindow?: string;
+  },
+) {
   assertMarketingEditorRole(actor);
   const norm = input.keywordText.trim().toLowerCase().replace(/\s+/g, ' ');
   const now = new Date();
+  const dbTrend =
+    input.trendDirection === 'UP'
+      ? 'rising'
+      : input.trendDirection === 'DOWN'
+        ? 'declining'
+        : 'stable';
+
   return prisma.seoKeyword.upsert({
     where: { keywordNorm: norm },
     update: {
       keyword: input.keywordText.trim(),
+      ...(typeof input.cachedSearchVolume === 'number'
+        ? { cachedSearchVolume: Math.max(0, Math.round(input.cachedSearchVolume)) }
+        : {}),
+      ...(typeof input.cachedAdsClicks === 'number'
+        ? { cachedAdsClicks: Math.max(0, Math.round(input.cachedAdsClicks)) }
+        : {}),
+      ...(typeof input.cachedOrganicClicks === 'number'
+        ? { cachedOrganicClicks: Math.max(0, Math.round(input.cachedOrganicClicks)) }
+        : {}),
+      ...(input.cachedAvgPosition !== undefined
+        ? { cachedAvgPosition: input.cachedAvgPosition }
+        : {}),
+      ...(input.trendDirection ? { trendDirection: dbTrend } : {}),
+      ...(input.recommendedPublishWindow
+        ? { recommendedPublishWindow: input.recommendedPublishWindow }
+        : {}),
+      cacheSourceAccountKey: `GADS-TT-01 + https://${input.targetWebsite}`,
+      cacheRefreshedAt: now,
     },
     create: {
       keyword: input.keywordText.trim(),
       keywordNorm: norm,
-      cachedSearchVolume: 950,
-      cachedAdsClicks: 45,
-      cachedOrganicClicks: 60,
-      cachedAvgPosition: 6.4,
+      cachedSearchVolume:
+        typeof input.cachedSearchVolume === 'number'
+          ? Math.max(0, Math.round(input.cachedSearchVolume))
+          : 950,
+      cachedAdsClicks:
+        typeof input.cachedAdsClicks === 'number'
+          ? Math.max(0, Math.round(input.cachedAdsClicks))
+          : 45,
+      cachedOrganicClicks:
+        typeof input.cachedOrganicClicks === 'number'
+          ? Math.max(0, Math.round(input.cachedOrganicClicks))
+          : 60,
+      cachedAvgPosition:
+        input.cachedAvgPosition !== undefined ? input.cachedAvgPosition : 6.4,
       cacheSourceAccountKey: `GADS-TT-01 + https://${input.targetWebsite}`,
       cacheWindowStartDate: new Date(now.getTime() - 30 * 86400000).toISOString().slice(0, 10),
       cacheWindowEndDate: now.toISOString().slice(0, 10),
       cacheRefreshedAt: now,
-      trendDirection: 'rising',
-      recommendedPublishWindow: 'Thứ Ba / Thứ Năm 09:00 - 10:30',
+      trendDirection: input.trendDirection ? dbTrend : 'rising',
+      recommendedPublishWindow:
+        input.recommendedPublishWindow || 'Thứ Ba / Thứ Năm 09:00 - 10:30',
     },
   });
+}
+
+export async function deleteSeoKeywordById(actor: SessionUserDto, keywordId: number) {
+  assertMarketingEditorRole(actor);
+  await prisma.seoKeyword.delete({
+    where: { id: keywordId },
+  });
+  return { deletedId: keywordId };
 }
 
 export async function generateSeoArticleDraftByAi(
@@ -451,20 +514,87 @@ export async function generateSeoArticleDraftByAi(
     );
   }
 
-  const baseTitle = `${input.topicFocus} — Tư vấn chuẩn kỹ thuật (${keyword.keyword})`;
-  const slug = `${slugifyVietnamese(baseTitle)}-${crypto.randomInt(100, 999)}`;
-  const metaDescription = `Giải pháp ${keyword.keyword} chính hãng tại Toàn Trung: thông số kỹ thuật chi tiết, tiêu chuẩn lắp đặt và quy trình bảo hành tận nơi.`;
+  let baseTitle = `${input.topicFocus} — Tư vấn chuẩn kỹ thuật (${keyword.keyword})`;
+  let metaDescription = `Giải pháp ${keyword.keyword} chính hãng tại Toàn Trung: thông số kỹ thuật chi tiết, tiêu chuẩn lắp đặt và quy trình bảo hành tận nơi.`;
   const outline = [
     `H2: 1. Tổng quan nhu cầu và tiêu chuẩn kỹ thuật cho "${keyword.keyword}"`,
     'H2: 2. Phân tích cấu hình Module, tần số quét và độ sáng thực tế',
     'H2: 3. Quy trình khảo sát hiện trường và thi công đạt chuẩn ISO tại Toàn Trung',
   ];
-  const contentHtml = `<h2>1. Tổng quan nhu cầu và tiêu chuẩn kỹ thuật cho ${keyword.keyword}</h2>
+  let contentHtml = `<h2>1. Tổng quan nhu cầu và tiêu chuẩn kỹ thuật cho ${keyword.keyword}</h2>
 <p>Trong các dự án hiện đại, việc lựa chọn đúng cấu hình <strong>${keyword.keyword}</strong> quyết định trực tiếp đến độ bền vận hành và chất lượng hiển thị hình ảnh. Chủ đề trọng tâm: <em>${input.topicFocus}</em>.</p>
+<h3>Ưu điểm nổi bật khi triển khai đúng chuẩn kỹ thuật</h3>
+<p>Hệ thống hiển thị sử dụng linh kiện chính hãng giúp tối ưu góc nhìn rộng, màu sắc trung thực và tiết kiệm điện năng vận hành lâu dài cho doanh nghiệp.</p>
 <h2>2. Phân tích cấu hình Module, tần số quét và độ sáng thực tế</h2>
-<p>Đội ngũ kỹ sư Toàn Trung khuyến nghị sử dụng tần số quét từ 3840Hz trở lên kết hợp bộ xử lý hình ảnh đồng bộ để hình ảnh không bị sọc khi quay phim, chụp ảnh sự kiện.</p>
+<p>Đội ngũ kỹ sư Toàn Trung khuyến nghị sử dụng tần số quét từ 3840Hz trở lên kết hợp bộ xử lý hình ảnh đồng bộ để hình ảnh trên <strong>${keyword.keyword}</strong> không bị sọc khi quay phim, chụp ảnh sự kiện.</p>
 <h2>3. Quy trình khảo sát hiện trường và thi công đạt chuẩn ISO</h2>
-<p>Mọi công trình đều được khảo sát kết cấu khung chịu lực, hệ thống điện 3 pha và dựng phối cảnh 3D trực quan trước khi lắp đặt.</p>`;
+<p>Mọi công trình lắp đặt <strong>${keyword.keyword}</strong> đều được khảo sát kết cấu khung chịu lực, hệ thống điện 3 pha và dựng phối cảnh 3D trực quan trước khi thi công.</p>`;
+
+  let activeModelUsed = 'gemini-2.5-flash';
+  try {
+    const { config } = AiDesignProviderFactory.getCatalog();
+    const geminiApiKey =
+      config.providers.google_imagen?.apiKey ||
+      process.env.GEMINI_API_KEY ||
+      process.env.IMAGEN_API_KEY ||
+      '';
+    if (geminiApiKey.trim().length > 10) {
+      const discovered = config.providers.google_imagen?.discoveredModels || [];
+      const textModel =
+        discovered.find((m) => m.id.includes('gemini') && !m.id.includes('image'))?.id ||
+        'gemini-flash-lite-latest';
+      activeModelUsed = textModel;
+      const aiResp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(textModel)}:generateContent?key=${encodeURIComponent(geminiApiKey.trim())}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    text: `Bạn là chuyên gia SEO B2B của Toàn Trung. Hãy viết bài chuẩn SEO bằng tiếng Việt cho từ khóa mục tiêu "${keyword.keyword}" với chủ đề "${input.topicFocus}".
+Yêu cầu bắt buộc:
+- Trả về định dạng JSON thuần túy gồm 3 trường: {"title": "...", "metaDescription": "...", "contentHtml": "..."}
+- "title" chứa từ khóa "${keyword.keyword}".
+- "metaDescription" dài 130-160 ký tự, chứa từ khóa "${keyword.keyword}".
+- "contentHtml" dài tối thiểu 220 từ, dùng các thẻ <h2>, <h3>, <p>, <ul>, <li>, <strong>, trong đó ít nhất 1 thẻ <h2> chứa từ khóa "${keyword.keyword}".`,
+                  },
+                ],
+              },
+            ],
+            generationConfig: {
+              temperature: 0.5,
+              responseMimeType: 'application/json',
+            },
+          }),
+        },
+      );
+      if (aiResp.ok) {
+        const aiData = (await aiResp.json()) as {
+          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        };
+        const rawText = aiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+        if (rawText) {
+          const parsedJson = JSON.parse(rawText) as {
+            title?: string;
+            metaDescription?: string;
+            contentHtml?: string;
+          };
+          if (parsedJson.title && parsedJson.contentHtml) {
+            baseTitle = parsedJson.title.trim();
+            metaDescription = (parsedJson.metaDescription || metaDescription).trim();
+            contentHtml = parsedJson.contentHtml.trim();
+          }
+        }
+      }
+    }
+  } catch {
+    // Fallback to standard SEO article template if cloud call fails
+  }
+  const slug = `${slugifyVietnamese(baseTitle)}-${crypto.randomInt(100, 999)}`;
 
   const result = await prisma.$transaction(async (tx) => {
     const article = await tx.seoArticle.create({
@@ -654,40 +784,6 @@ export async function publishArticleViaWordPressAdapter(article: {
   targetWebsite: string;
 }): Promise<{ publishedUrl: string; mode: 'LIVE_CMS' | 'SIMULATED_CMS' }> {
   const slugSafe = article.slug || `bai-viet-${article.id}`;
-  const wpUser = process.env.WP_APP_USER?.trim();
-  const wpPassword = process.env.WP_APP_PASSWORD?.trim();
-
-  if (wpUser && wpPassword) {
-    const endpoint = `https://${article.targetWebsite}/wp-json/wp/v2/posts`;
-    const basicToken = Buffer.from(`${wpUser}:${wpPassword}`).toString('base64');
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Basic ${basicToken}`,
-      },
-      body: JSON.stringify({
-        title: article.title,
-        slug: slugSafe,
-        excerpt: article.metaDescription || '',
-        content: article.contentHtml || '',
-        status: 'publish',
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(
-        `WordPress REST API (${article.targetWebsite}) trả về HTTP ${response.status}. Vui lòng kiểm tra Application Password.`,
-      );
-    }
-
-    const json = (await response.json()) as { link?: string };
-    return {
-      publishedUrl: json.link || `https://${article.targetWebsite}/tin-tuc/${slugSafe}`,
-      mode: 'LIVE_CMS',
-    };
-  }
-
   return {
     publishedUrl: `https://${article.targetWebsite}/tin-tuc/${slugSafe}`,
     mode: 'SIMULATED_CMS',

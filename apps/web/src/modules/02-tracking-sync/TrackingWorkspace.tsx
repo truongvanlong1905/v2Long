@@ -961,9 +961,9 @@ export function TrackingWorkspace() {
                   },
                   {
                     code: 'SEO_SCHEDULED_PUBLISH' as const,
-                    title: '4. Xuất bản Bài SEO Đúng Giờ Hẹn',
+                    title: '4. Kiểm tra Lịch đăng & Tối ưu Bài SEO',
                     schedule: 'Định kỳ mỗi 5 phút',
-                    desc: 'Đẩy bài viết đã duyệt đến hạn lên 3 Website qua REST API.',
+                    desc: 'Cập nhật trạng thái lịch đăng bài viết SEO đã duyệt và rà soát bài cũ.',
                   },
                   {
                     code: 'OVERDUE_QUOTE_REMINDER' as const,
