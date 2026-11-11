@@ -63,9 +63,9 @@ export function SeoKeywordsWorkspace() {
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
   // Navigation Tabs
-  const [mainTab, setMainTab] = useState<'overview' | 'keywords' | 'content' | 'schedule'>('overview');
+  const [mainTab, setMainTab] = useState<'overview' | 'keywords' | 'content'>('overview');
+  const [wordViewMode, setWordViewMode] = useState<'preview' | 'editor'>('preview');
   const [contentSubTab, setContentSubTab] = useState<'compose' | 'review' | 'history'>('compose');
-  const [scheduleSubTab, setScheduleSubTab] = useState<'calendar' | 'performance'>('calendar');
   const [showCampaignsTable, setShowCampaignsTable] = useState(false);
 
   // Direct Sync & Import Modal + Realtime Auto-Polling State
@@ -120,15 +120,6 @@ export function SeoKeywordsWorkspace() {
   const [previewHtmlMode, setPreviewHtmlMode] = useState(false);
   const [reviewFilterStatus, setReviewFilterStatus] = useState<string>('ALL');
 
-  // Tab 4: Schedule Form State
-  const [scheduleArticleId, setScheduleArticleId] = useState<number>(0);
-  const [scheduleWebsite, setScheduleWebsite] = useState<TargetWebsite>('toantrung.com.vn');
-  const [scheduleDate, setScheduleDate] = useState(() => {
-    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    return tomorrow.toISOString().slice(0, 10);
-  });
-  const [scheduleTime, setScheduleTime] = useState('09:00');
-
   const fetchSeoData = useCallback(async () => {
     setLoading(true);
     setErrorMsg(null);
@@ -146,7 +137,6 @@ export function SeoKeywordsWorkspace() {
       }
       if (res.articles && res.articles.length > 0) {
         setSelectedArticleId((prev) => prev ?? res.articles[0].id);
-        setScheduleArticleId((prev) => prev || res.articles[0].id);
       }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Không thể tải dữ liệu Quảng cáo & Từ khóa.');
@@ -508,34 +498,186 @@ export function SeoKeywordsWorkspace() {
     }
   };
 
-  const handleScheduleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const targetArt = articles.find((a) => a.id === scheduleArticleId) || selectedArticle;
-    if (!user || !targetArt) return;
-    setBusy(true);
-    setErrorMsg(null);
-    try {
-      const isoDate = new Date(`${scheduleDate}T${scheduleTime}:00`).toISOString();
-      await apiRequest(`/api/v1/ads/articles/${targetArt.id}`, {
-        method: 'PATCH',
-        csrfToken: user.csrfToken,
-        body: {
-          action: 'approve_schedule',
-          expectedVersion: targetArt.version,
-          revisionId: targetArt.currentRevisionId || undefined,
-          targetWebsite: scheduleWebsite,
-          scheduledPublishAt: isoDate,
-        },
+  const topSearchConsoleKeywords = useMemo(() => {
+    return [...keywords]
+      .filter((k) => (k.cachedOrganicClicks || 0) > 0 || (k.cachedSearchVolume || 0) > 0)
+      .sort((a, b) => {
+        const clickDiff = (b.cachedOrganicClicks || 0) - (a.cachedOrganicClicks || 0);
+        if (clickDiff !== 0) return clickDiff;
+        return (b.cachedSearchVolume || 0) - (a.cachedSearchVolume || 0);
       });
-      setFeedbackMsg(
-        `Đã duyệt và lưu lịch xuất bản cho bài "${targetArt.title}" vào lúc ${scheduleTime} ngày ${scheduleDate}.`,
-      );
-      await fetchSeoData();
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Lỗi lưu lịch xuất bản.');
-    } finally {
-      setBusy(false);
+  }, [keywords]);
+
+  const handleSelectKeywordForWordStudio = (kw: SeoKeywordItemDto) => {
+    setSelectedKeywordId(kw.id);
+    setDraftWebsite((kw.targetWebsite as TargetWebsite) || 'toantrung.com.vn');
+    setTopicFocus(`Tư vấn thông số kỹ thuật, ứng dụng và báo giá ${kw.keywordText}`);
+    setMainTab('content');
+    setContentSubTab('compose');
+    setWordViewMode('preview');
+    const existingArt = articles.find(
+      (a) => a.keywordId === kw.id || a.keywordText === kw.keywordText,
+    );
+    if (existingArt) {
+      setSelectedArticleId(existingArt.id);
     }
+    setFeedbackMsg(`🎯 Đã chọn từ khóa "${kw.keywordText}" cho xưởng soạn thảo Word!`);
+  };
+
+  const handleDownloadWordDoc = () => {
+    const title = editTitle.trim() || selectedArticle?.title || 'Tài liệu chuẩn SEO Toàn Trung';
+    const keyword = selectedArticle?.keywordText || selectedKeywordObj?.keywordText || 'Màn hình LED';
+    const website = draftWebsite || 'toantrung.com.vn';
+    const meta = editMeta.trim() || selectedArticle?.metaDescription || 'Tài liệu kỹ thuật và bài viết SEO B2B Toàn Trung.';
+    const content = editContentHtml || selectedArticle?.contentHtml || '<p>Nội dung bài viết chưa được khởi tạo.</p>';
+
+    const fullHtml = `<!DOCTYPE html>
+<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+<head>
+<meta charset='utf-8'>
+<title>${title}</title>
+<style>
+  @page {
+    size: 21cm 29.7cm;
+    margin: 2.5cm 2.5cm 2.5cm 2.5cm;
+    mso-page-orientation: portrait;
+  }
+  body {
+    font-family: 'Times New Roman', Times, serif;
+    font-size: 13pt;
+    line-height: 1.6;
+    color: #1a1a1a;
+  }
+  .header-table {
+    width: 100%;
+    border-bottom: 2pt solid #0f172a;
+    padding-bottom: 8pt;
+    margin-bottom: 18pt;
+  }
+  .company-title {
+    font-size: 11pt;
+    font-weight: bold;
+    color: #0f172a;
+    text-transform: uppercase;
+  }
+  .company-sub {
+    font-size: 9pt;
+    color: #475569;
+  }
+  h1 {
+    font-size: 18pt;
+    font-weight: bold;
+    color: #0f172a;
+    text-align: center;
+    margin-top: 14pt;
+    margin-bottom: 12pt;
+    line-height: 1.3;
+  }
+  h2 {
+    font-size: 14pt;
+    font-weight: bold;
+    color: #1e3a8a;
+    margin-top: 16pt;
+    margin-bottom: 6pt;
+    border-bottom: 1pt solid #cbd5e1;
+    padding-bottom: 3pt;
+  }
+  h3 {
+    font-size: 13pt;
+    font-weight: bold;
+    color: #334155;
+    margin-top: 12pt;
+    margin-bottom: 4pt;
+  }
+  p {
+    margin: 6pt 0;
+    text-align: justify;
+    text-justify: inter-word;
+  }
+  .meta-box {
+    background-color: #f8fafc;
+    border: 1pt solid #cbd5e1;
+    padding: 10pt 12pt;
+    margin-bottom: 16pt;
+    font-size: 10.5pt;
+  }
+  table.content-table, table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12pt 0;
+  }
+  table th, table td {
+    border: 1pt solid #94a3b8;
+    padding: 6pt 8pt;
+    font-size: 11pt;
+  }
+  table th {
+    background-color: #f1f5f9;
+    font-weight: bold;
+  }
+  ul, ol {
+    margin: 6pt 0;
+    padding-left: 20pt;
+  }
+  li {
+    margin-bottom: 4pt;
+  }
+  .footer-note {
+    margin-top: 30pt;
+    border-top: 1pt solid #cbd5e1;
+    padding-top: 8pt;
+    font-size: 9pt;
+    color: #64748b;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <table class="header-table" style="width: 100%; border-collapse: collapse; border: none;">
+    <tr>
+      <td style="border: none; vertical-align: top;">
+        <div class="company-title">CÔNG TY CỔ PHẦN ĐIỆN TỬ VIỄN THÔNG TOÀN TRUNG</div>
+        <div class="company-sub">61 Hoàng Hoa Thám, P.13, Q.Tân Bình, TP. Hồ Chí Minh • Hotline: (028) 38 123 456</div>
+      </td>
+      <td style="border: none; text-align: right; vertical-align: top;">
+        <div style="font-size: 9.5pt; font-weight: bold; color: #1e3a8a;">TÀI LIỆU NỘI DUNG SEO B2B</div>
+        <div style="font-size: 8.5pt; color: #64748b;">Ngày tạo: ${new Date().toLocaleDateString('vi-VN')}</div>
+      </td>
+    </tr>
+  </table>
+
+  <h1>${title}</h1>
+
+  <div class="meta-box">
+    <div><strong>Từ khóa mục tiêu:</strong> ${keyword}</div>
+    <div><strong>Website mục tiêu:</strong> ${website}</div>
+    <div><strong>Mô tả Meta Description:</strong> ${meta}</div>
+  </div>
+
+  <div>
+    ${content}
+  </div>
+
+  <div class="footer-note">
+    Toàn Trung Telecom &amp; Electronics JSC — Tài liệu nội dung số lưu hành nội bộ — https://${website}
+  </div>
+</body>
+</html>`;
+
+    const blob = new Blob(['\ufeff', fullHtml], { type: 'application/msword;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const safeTitle = title
+      .replace(/[^a-zA-Z0-9\u00C0-\u024F\u1EA0-\u1EF9]/g, '_')
+      .replace(/_+/g, '_')
+      .slice(0, 50);
+    a.download = `${safeTitle || 'Bai_viet_SEO'}.doc`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setFeedbackMsg(`📥 Đã tải file Microsoft Word "${a.download}" thành công!`);
   };
 
   const handleWithdrawArticle = async (art: SeoArticleItemDto) => {
@@ -600,10 +742,9 @@ export function SeoKeywordsWorkspace() {
   );
 
   const tabTitles: Record<typeof mainTab, string> = {
-    overview: 'Tổng quan',
-    keywords: 'Từ khóa',
-    content: 'Nội dung SEO',
-    schedule: 'Lịch xuất bản & hiệu quả',
+    overview: 'Báo cáo Top Từ khóa',
+    keywords: 'Danh sách Từ khóa SEO',
+    content: 'Soạn bài AI & Xem trước Word',
   };
 
   return (
@@ -650,22 +791,16 @@ export function SeoKeywordsWorkspace() {
         }}
       />
 
-      {/* ==================== TOP HEADER CARD + 4-TAB PILL NAVIGATION ==================== */}
+      {/* ==================== TOP HEADER CARD + 3-TAB PILL NAVIGATION ==================== */}
       <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-xs space-y-5">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
-            <div className="text-xs font-extrabold uppercase tracking-widest text-blue-600">
-              MODULE 03 / MARKETING WORKSPACE
-            </div>
-            <h1 className="font-display text-2xl sm:text-3xl font-bold text-slate-900 mt-1">
-              Quảng cáo, Từ khóa &amp; SEO
+            <h1 className="font-display text-2xl sm:text-3xl font-bold text-slate-900">
+              Quảng cáo, Từ khóa &amp; Báo cáo SEO
             </h1>
-            <p className="text-slate-500 text-sm mt-1">
-              Đồng bộ số liệu Google Ads &amp; Search Console, phân tích từ khóa, soạn bài bằng AI Gemini và quản lý lịch xuất bản.
-            </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex flex-wrap items-center justify-center gap-2.5">
             <button
               type="button"
               onClick={() => setRealtimeAutoEnabled((prev) => !prev)}
@@ -720,32 +855,26 @@ export function SeoKeywordsWorkspace() {
         {/* Google OAuth 2.0 Fast Connect Banner (One-Click Connect for Module 03 & All Modules) */}
         <GoogleOAuthManager compact returnPath="/ads" onSyncCompleted={() => void fetchSeoData()} />
 
-        {/* 4-Tab Pill Navigation Bar (Clean Soft Segmented Container) */}
-        <div className="bg-slate-100/80 p-1.5 rounded-2xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-1.5">
+        {/* 3-Tab Pill Navigation Bar (Clean Soft Segmented Container) */}
+        <div className="bg-slate-100/80 p-1.5 rounded-2xl grid grid-cols-1 sm:grid-cols-3 gap-1.5">
           {[
             {
               id: 'overview' as const,
-              title: 'Tổng quan',
-              subtitle: 'Bức tranh chung Ads & SEO',
-              icon: LayoutGrid,
+              title: 'Báo cáo Top Từ khóa',
+              subtitle: 'Lượt tìm kiếm Search Console',
+              icon: BarChart3,
             },
             {
               id: 'keywords' as const,
-              title: 'Từ khóa',
-              subtitle: 'Dữ liệu và xu hướng tìm kiếm',
+              title: 'Danh sách Từ khóa SEO',
+              subtitle: 'Kho từ khóa & Chỉ số chi tiết',
               icon: Search,
             },
             {
               id: 'content' as const,
-              title: 'Nội dung SEO',
-              subtitle: 'Soạn thảo và duyệt bài viết',
+              title: 'Soạn bài AI & Xem trước Word',
+              subtitle: 'Tự động viết, chỉnh sửa & tải .doc',
               icon: FileText,
-            },
-            {
-              id: 'schedule' as const,
-              title: 'Lịch xuất bản & hiệu quả',
-              subtitle: 'Lịch đăng và theo dõi bài viết',
-              icon: Calendar,
             },
           ].map((tab) => {
             const Icon = tab.icon;
@@ -1499,7 +1628,93 @@ export function SeoKeywordsWorkspace() {
             </div>
           </div>
 
-          {/* Expandable Campaign Performance Chart & Campaigns Table */}
+          {/* ================= BÁO CÁO TOP TỪ KHÓA TÌM KIẾM NHIỀU NHẤT (SEARCH CONSOLE) ================= */}
+          <div className="bg-white border border-slate-200/80 rounded-3xl overflow-hidden shadow-2xs space-y-4 p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-700 grid place-items-center">
+                  <Target className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-slate-900 text-base">
+                    Báo cáo Top Từ khóa Được Tìm Kiếm &amp; Nhấp Nhiều Nhất (Google Search Console)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Dữ liệu thực tế từ Google Search Console các website Toàn Trung (toantrung.com.vn, manhinhled.net.vn, bangled.vn)
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold">
+                  {topSearchConsoleKeywords.length} từ khóa ghi nhận lưu lượng thực tế
+                </span>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-sm">
+                <thead>
+                  <tr className="bg-slate-50/80 text-slate-600 border-b border-slate-200 text-xs">
+                    <th className="py-3 px-3 font-bold text-center w-12">#</th>
+                    <th className="py-3 px-4 font-bold">Từ khóa tìm kiếm (Search Query)</th>
+                    <th className="py-3 px-3 font-bold">Website đích</th>
+                    <th className="py-3 px-3 font-bold text-right">Lượt Click thật</th>
+                    <th className="py-3 px-3 font-bold text-right">Lượt Hiển thị</th>
+                    <th className="py-3 px-3 font-bold text-center">Tỷ lệ CTR</th>
+                    <th className="py-3 px-3 font-bold text-center">Vị trí TB</th>
+                    <th className="py-3 px-4 font-bold text-center">Hành động Soạn thảo</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {topSearchConsoleKeywords.slice(0, 15).map((kw, idx) => {
+                    const ctr =
+                      kw.cachedSearchVolume && kw.cachedOrganicClicks
+                        ? `${((kw.cachedOrganicClicks / kw.cachedSearchVolume) * 100).toFixed(1)}%`
+                        : '—';
+                    return (
+                      <tr key={kw.id} className="hover:bg-blue-50/40 transition">
+                        <td className="py-3 px-3 text-center text-xs font-mono font-bold text-slate-400">
+                          {idx + 1}
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className="font-bold text-slate-900">{kw.keywordText}</span>
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className="px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-xs font-medium">
+                            {kw.targetWebsite}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">
+                            {(kw.cachedOrganicClicks || 0).toLocaleString('vi-VN')}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono text-slate-700">
+                          {(kw.cachedSearchVolume || 0).toLocaleString('vi-VN')}
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono text-xs text-blue-700 font-semibold">
+                          {ctr}
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono text-xs text-slate-600">
+                          {kw.cachedAvgPosition ? `#${kw.cachedAvgPosition.toFixed(1)}` : '—'}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleSelectKeywordForWordStudio(kw)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition shadow-2xs"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>✨ Soạn bài AI Word</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
           {(showCampaignsTable || campaigns.length > 0) && (
             <div className="space-y-5">
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
@@ -2032,177 +2247,294 @@ export function SeoKeywordsWorkspace() {
       )}
 
       {/* =====================================================================
-          TAB 3: NỘI DUNG SEO (CONTENT COMPOSE, REVIEW, REVISION HISTORY)
+          TAB 3: SOẠN BÀI AI & XEM TRƯỚC WORD (AI GENERATION & MICROSOFT WORD PREVIEW)
          ===================================================================== */}
       {mainTab === 'content' && (
-        <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-2xs space-y-6">
-          {/* Top Card Header */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-sky-50 text-sky-600 grid place-items-center">
-                <FileText className="w-5 h-5" />
+        <div className="space-y-6">
+          {/* Top Control Bar: Keyword Selection, AI Trigger, Mode Switcher, Word Download */}
+          <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-2xs space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-700 grid place-items-center">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="font-display font-bold text-slate-900 text-base">
+                    Xưởng Soạn Thảo Chuẩn SEO &amp; Bản Xem Trước Microsoft Word
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Tự động tạo bài viết chuẩn SEO bằng AI Gemini, xem trước trang Word A4 thực tế và tải file .doc
+                  </p>
+                </div>
               </div>
-              <div>
-                <h2 className="font-display font-bold text-slate-900 text-base">
-                  Quản lý nội dung SEO
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Soạn thảo, biên tập chuẩn SEO với AI Gemini, duyệt bài và xem lịch sử phiên bản.
-                </p>
+
+              {/* View Mode Toggle: [📄 Xem trang Word] vs [✏️ Sửa văn bản] */}
+              <div className="inline-flex items-center gap-1 bg-slate-100/90 p-1.5 rounded-2xl">
+                <button
+                  type="button"
+                  onClick={() => setWordViewMode('preview')}
+                  className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
+                    wordViewMode === 'preview'
+                      ? 'bg-white text-blue-700 shadow-sm border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>📄 Xem trước trang Word</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWordViewMode('editor')}
+                  className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
+                    wordViewMode === 'editor'
+                      ? 'bg-white text-blue-700 shadow-sm border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <FileEdit className="w-3.5 h-3.5" />
+                  <span>✏️ Chỉnh sửa văn bản</span>
+                </button>
               </div>
             </div>
-            <span className="px-3 py-1 rounded-full bg-purple-50 text-purple-700 text-xs font-bold">
-              AI Gemini kết nối trực tiếp
-            </span>
+
+            {/* Row: Quick AI Generator Controls */}
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3.5 items-end">
+              <div className="sm:col-span-4">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Chọn từ khóa Search Console / Database
+                </label>
+                <select
+                  value={selectedKeywordId}
+                  onChange={(e) => {
+                    const id = Number(e.target.value);
+                    setSelectedKeywordId(id);
+                    const found = keywords.find((k) => k.id === id);
+                    if (found) {
+                      setDraftWebsite((found.targetWebsite as TargetWebsite) || 'toantrung.com.vn');
+                    }
+                  }}
+                  className="w-full h-11 px-3.5 rounded-2xl border border-slate-200 text-sm bg-white font-medium"
+                >
+                  {keywords.map((k) => (
+                    <option key={k.id} value={k.id}>
+                      {k.keywordText} ({k.targetWebsite} • {k.cachedOrganicClicks || 0} clicks)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="sm:col-span-3">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Website đích
+                </label>
+                <select
+                  value={draftWebsite}
+                  onChange={(e) => setDraftWebsite(e.target.value as TargetWebsite)}
+                  className="w-full h-11 px-3.5 rounded-2xl border border-slate-200 text-sm bg-white font-medium"
+                >
+                  {TARGET_WEBSITES.map((w) => (
+                    <option key={w} value={w}>
+                      {w}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="sm:col-span-3">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Chủ đề / Yêu cầu AI (tùy chọn)
+                </label>
+                <input
+                  type="text"
+                  value={topicFocus}
+                  onChange={(e) => setTopicFocus(e.target.value)}
+                  placeholder="VD: Báo giá & hướng dẫn chọn LED..."
+                  className="w-full h-11 px-3.5 rounded-2xl border border-slate-200 text-sm"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <button
+                  type="button"
+                  disabled={busy || !selectedKeywordId}
+                  onClick={() => void handleGenerateAiDraft()}
+                  className="w-full h-11 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold inline-flex items-center justify-center gap-1.5 shadow-sm transition disabled:opacity-40"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>{busy ? 'Đang viết bài...' : '✨ AI Viết tự động'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Export & Management Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">Bài viết đang chọn:</span>
+                <select
+                  value={selectedArticleId || ''}
+                  onChange={(e) => setSelectedArticleId(Number(e.target.value))}
+                  className="h-9 px-3 rounded-xl border border-slate-200 text-xs font-bold bg-white max-w-[280px] truncate"
+                >
+                  {articles.map((art) => (
+                    <option key={art.id} value={art.id}>
+                      #{art.id} • {art.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadWordDoc}
+                  className="h-9 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs transition"
+                >
+                  <Download className="w-3.5 h-3.5 text-blue-300" />
+                  <span>Tải file Word (.doc)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleCopyArticleHtml(editTitle, editMeta, editContentHtml)}
+                  className="h-9 px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold inline-flex items-center gap-1.5 transition"
+                >
+                  <Copy className="w-3.5 h-3.5 text-slate-600" />
+                  <span>Sao chép nội dung</span>
+                </button>
+              </div>
+            </div>
           </div>
 
-          {/* Sub-tab Pill Bar: Soạn nội dung | Duyệt bài | Lịch sử phiên bản (Giống hệt ảnh 6 & 7) */}
-          <div className="inline-flex flex-wrap items-center gap-1.5 bg-slate-100/80 p-1.5 rounded-2xl">
-            {[
-              { id: 'compose' as const, label: 'Soạn nội dung' },
-              { id: 'review' as const, label: `Duyệt bài (${articles.length})` },
-              {
-                id: 'history' as const,
-                label: `Lịch sử phiên bản (${allRevisionsFlat.length})`,
-              },
-            ].map((st) => (
-              <button
-                key={st.id}
-                type="button"
-                onClick={() => setContentSubTab(st.id)}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition ${
-                  contentSubTab === st.id
-                    ? 'bg-blue-50 text-blue-700 border border-blue-200/80 shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {st.label}
-              </button>
-            ))}
-          </div>
-
-          {/* SUB-TAB 3.1: SOẠN NỘI DUNG */}
-          {contentSubTab === 'compose' && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Left 8 Cols: Clean Form Editor */}
-              <form
-                onSubmit={(e) => void handleSaveRevision(e)}
-                className="lg:col-span-8 space-y-4"
-              >
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                      Chọn bài viết đang có để biên tập
-                    </label>
-                    <select
-                      value={selectedArticleId || ''}
-                      onChange={(e) => setSelectedArticleId(Number(e.target.value))}
-                      className="w-full h-11 px-4 rounded-2xl border border-slate-200 text-sm bg-white"
-                    >
-                      {articles.map((art) => (
-                        <option key={art.id} value={art.id}>
-                          #{art.id} • {art.title} ({SEO_ARTICLE_STATUS_LABELS[art.status]})
-                        </option>
-                      ))}
-                    </select>
+          {/* ================= VIEW MODE 1: MICROSOFT WORD A4 PREVIEW ================= */}
+          {wordViewMode === 'preview' && (
+            <div className="space-y-4">
+              {/* Word Desktop Canvas */}
+              <div className="bg-slate-200/90 py-10 px-2 sm:px-6 flex justify-center rounded-3xl border border-slate-300 overflow-x-auto shadow-inner">
+                {/* White A4 Sheet */}
+                <div className="bg-white w-full max-w-[820px] min-h-[1120px] shadow-2xl p-10 sm:p-16 border border-slate-300 relative text-slate-800 font-serif leading-relaxed">
+                  {/* Top Letterhead */}
+                  <div className="border-b-2 border-slate-900 pb-3 mb-6 flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <div className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900">
+                        CÔNG TY CỔ PHẦN ĐIỆN TỬ VIỄN THÔNG TOÀN TRUNG
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-sans mt-0.5">
+                        61 Hoàng Hoa Thám, P.13, Q. Tân Bình, TP.HCM • Hotline: (028) 38 123 456
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xs font-bold text-blue-900 font-sans uppercase">
+                        Tài liệu SEO B2B
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-sans">
+                        Ngày: {new Date().toLocaleDateString('vi-VN')}
+                      </div>
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                      Chọn từ khóa đã nhập (để tạo bài mới bằng AI)
-                    </label>
-                    <select
-                      value={selectedKeywordId}
-                      onChange={(e) => {
-                        const id = Number(e.target.value);
-                        setSelectedKeywordId(id);
-                        const found = keywords.find((k) => k.id === id);
-                        if (found) {
-                          setDraftWebsite(
-                            (found.targetWebsite as TargetWebsite) || 'toantrung.com.vn',
-                          );
-                        }
-                      }}
-                      className="w-full h-11 px-4 rounded-2xl border border-slate-200 text-sm bg-white"
-                    >
-                      {keywords.map((k) => (
-                        <option key={k.id} value={k.id}>
-                          {k.keywordText} ({k.targetWebsite})
-                        </option>
-                      ))}
-                    </select>
+                  {/* Document Title */}
+                  <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 text-center my-6 leading-snug">
+                    {editTitle || 'TIÊU ĐỀ BÀI VIẾT CHUẨN SEO'}
+                  </h1>
+
+                  {/* Meta Callout Box */}
+                  <div className="bg-slate-50 border border-slate-300 p-4 rounded-lg my-6 text-xs sm:text-sm font-sans space-y-1.5 text-slate-700">
+                    <div>
+                      <span className="font-bold text-slate-900">Từ khóa SEO chính:</span>{' '}
+                      <span className="text-blue-800 font-semibold">
+                        {selectedArticle?.keywordText || selectedKeywordObj?.keywordText || 'Chưa chọn'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-bold text-slate-900">Website mục tiêu:</span>{' '}
+                      <span>{draftWebsite}</span>
+                    </div>
+                    <div>
+                      <span className="font-bold text-slate-900">Meta Description:</span>{' '}
+                      <span className="italic">
+                        {editMeta || 'Chưa có mô tả ngắn Meta Description.'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Body Content */}
+                  <div
+                    className="prose prose-slate max-w-none text-slate-800 text-justify text-sm sm:text-base leading-relaxed [&>h2]:text-xl [&>h2]:font-bold [&>h2]:text-slate-900 [&>h2]:border-b [&>h2]:border-slate-200 [&>h2]:pb-1.5 [&>h2]:mt-6 [&>h2]:mb-3 [&>h3]:text-base [&>h3]:font-bold [&>h3]:text-slate-800 [&>h3]:mt-4 [&>h3]:mb-2 [&>p]:my-3 [&>table]:w-full [&>table]:border-collapse [&>table]:my-4 [&>table_th]:border [&>table_th]:border-slate-300 [&>table_th]:p-2.5 [&>table_th]:bg-slate-100 [&>table_th]:font-bold [&>table_td]:border [&>table_td]:border-slate-300 [&>table_td]:p-2.5"
+                    dangerouslySetInnerHTML={{
+                      __html:
+                        editContentHtml ||
+                        '<p>Chưa có nội dung bài viết. Hãy bấm "✨ AI Viết tự động" để AI tạo bài viết hoàn chỉnh.</p>',
+                    }}
+                  />
+
+                  {/* Footer of the Word Page */}
+                  <div className="mt-16 pt-4 border-t border-slate-300 text-[11px] font-sans text-slate-500 text-center">
+                    Trang 1 / 1 • Lưu hành nội bộ Công ty Cổ phần Điện tử Viễn thông Toàn Trung — https://{draftWebsite}
                   </div>
                 </div>
+              </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                      Chủ đề bài viết (yêu cầu cho AI Gemini)
-                    </label>
-                    <input
-                      type="text"
-                      value={topicFocus}
-                      onChange={(e) => setTopicFocus(e.target.value)}
-                      placeholder="Nhập chủ đề cần triển khai (VD: Tư vấn màn hình LED P2.5 hội trường)..."
-                      className="w-full h-11 px-4 rounded-2xl border border-slate-200 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                      Website đích *
-                    </label>
-                    <select
-                      value={draftWebsite}
-                      onChange={(e) => setDraftWebsite(e.target.value as TargetWebsite)}
-                      className="w-full h-11 px-4 rounded-2xl border border-slate-200 text-sm bg-white"
-                    >
-                      {TARGET_WEBSITES.map((w) => (
-                        <option key={w} value={w}>
-                          {w}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+              {/* Floating Quick Action Bar below Word Preview */}
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setWordViewMode('editor')}
+                  className="h-10 px-5 rounded-2xl bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 text-xs font-bold inline-flex items-center gap-2 shadow-xs"
+                >
+                  <FileEdit className="w-4 h-4 text-blue-600" />
+                  <span>Chuyển sang chế độ Sửa nội dung</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadWordDoc}
+                  className="h-10 px-5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center gap-2 shadow-xs"
+                >
+                  <Download className="w-4 h-4 text-blue-300" />
+                  <span>Tải file Word (.doc) về máy</span>
+                </button>
+              </div>
+            </div>
+          )}
 
+          {/* ================= VIEW MODE 2: DIRECT EDITOR ================= */}
+          {wordViewMode === 'editor' && (
+            <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-2xs space-y-5">
+              <form onSubmit={(e) => void handleSaveRevision(e)} className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    Tiêu đề SEO *
+                    Tiêu đề bài viết (H1) *
                   </label>
                   <input
                     type="text"
                     required
-                    disabled={selectedArticle?.status !== 'DRAFT'}
                     value={editTitle}
                     onChange={(e) => setEditTitle(e.target.value)}
-                    placeholder="Tiêu đề bài viết chuẩn SEO..."
-                    className="w-full h-11 px-4 rounded-2xl border border-slate-200 text-sm disabled:bg-slate-50"
+                    placeholder="Tiêu đề bài viết..."
+                    className="w-full h-11 px-4 rounded-2xl border border-slate-200 text-sm font-semibold"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    Meta description
+                    Meta Description
                   </label>
                   <textarea
                     rows={2}
-                    disabled={selectedArticle?.status !== 'DRAFT'}
                     value={editMeta}
                     onChange={(e) => setEditMeta(e.target.value)}
-                    placeholder="Mô tả ngắn cho công cụ tìm kiếm (140 - 160 ký tự)..."
-                    className="w-full p-3.5 rounded-2xl border border-slate-200 text-sm disabled:bg-slate-50"
+                    placeholder="Mô tả tóm tắt cho công cụ tìm kiếm..."
+                    className="w-full p-3.5 rounded-2xl border border-slate-200 text-sm"
                   />
                 </div>
 
                 <div>
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                     <label className="block text-xs font-bold text-slate-700">
-                      Nội dung bài viết *
+                      Nội dung chi tiết (HTML / Văn bản) *
                     </label>
                     <div className="flex flex-wrap items-center gap-1.5">
                       <button
                         type="button"
-                        disabled={selectedArticle?.status !== 'DRAFT'}
                         onClick={() =>
                           setEditContentHtml(
                             (prev) =>
@@ -2211,767 +2543,94 @@ export function SeoKeywordsWorkspace() {
                               }</h2>\n<p>Nội dung phân tích chi tiết...</p>`,
                           )
                         }
-                        className="px-3 py-1 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold disabled:opacity-40"
+                        className="px-3 py-1 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold"
                       >
-                        Chèn H2
+                        + Chèn H2
                       </button>
                       <button
                         type="button"
-                        disabled={selectedArticle?.status !== 'DRAFT'}
                         onClick={() =>
                           setEditContentHtml(
                             (prev) =>
                               `${prev}\n<h3>Tiêu đề mục H3</h3>\n<ul><li>Thông số kỹ thuật 1</li><li>Thông số kỹ thuật 2</li></ul>`,
                           )
                         }
-                        className="px-3 py-1 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold disabled:opacity-40"
+                        className="px-3 py-1 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold"
                       >
-                        Chèn H3
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPreviewHtmlMode((prev) => !prev)}
-                        className="px-3 py-1 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold"
-                      >
-                        {previewHtmlMode ? 'Sửa mã HTML' : 'Xem trước hiển thị'}
+                        + Chèn H3
                       </button>
                       <button
                         type="button"
                         onClick={() =>
-                          handleCopyArticleHtml(editTitle, editMeta, editContentHtml)
+                          setEditContentHtml(
+                            (prev) =>
+                              `${prev}\n<table class="content-table"><thead><tr><th>Thông số</th><th>Mô tả chi tiết</th></tr></thead><tbody><tr><td>Khoảng cách điểm ảnh</td><td>P2.5 mm</td></tr><tr><td>Độ sáng</td><td>&ge; 800 cd/m&sup2;</td></tr><tr><td>Tần số quét</td><td>3840 Hz</td></tr></tbody></table>`,
+                          )
                         }
-                        className="px-3 py-1 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold inline-flex items-center gap-1"
+                        className="px-3 py-1 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold"
                       >
-                        <Copy className="w-3 h-3" />
-                        <span>Copy HTML</span>
+                        + Chèn Bảng kỹ thuật
                       </button>
                     </div>
                   </div>
 
-                  {previewHtmlMode ? (
-                    <div
-                      className="w-full min-h-[260px] p-5 rounded-2xl border border-slate-200 bg-slate-50/50 prose prose-sm max-w-none"
-                      dangerouslySetInnerHTML={{ __html: editContentHtml }}
-                    />
-                  ) : (
-                    <textarea
-                      rows={10}
-                      disabled={selectedArticle?.status !== 'DRAFT'}
-                      value={editContentHtml}
-                      onChange={(e) => setEditContentHtml(e.target.value)}
-                      placeholder="Soạn nội dung chuẩn SEO..."
-                      className="w-full p-4 rounded-2xl border border-slate-200 font-mono text-xs leading-relaxed disabled:bg-slate-50"
-                    />
-                  )}
+                  <textarea
+                    rows={14}
+                    value={editContentHtml}
+                    onChange={(e) => setEditContentHtml(e.target.value)}
+                    placeholder="Soạn nội dung bài viết..."
+                    className="w-full p-4 rounded-2xl border border-slate-200 font-mono text-xs leading-relaxed"
+                  />
                 </div>
 
-                {selectedArticle?.status === 'DRAFT' ? (
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                    <input
-                      type="text"
-                      value={editNote}
-                      onChange={(e) => setEditNote(e.target.value)}
-                      placeholder="Ghi chú phiên bản chỉnh sửa (VD: Bổ sung bảng thông số P2.5)..."
-                      className="flex-1 min-w-[220px] h-10 px-4 rounded-2xl border border-slate-200 text-xs"
-                    />
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="submit"
-                        disabled={busy}
-                        className="h-10 px-5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center gap-1.5"
-                      >
-                        <FileEdit className="w-3.5 h-3.5" />
-                        <span>Lưu phiên bản biên tập</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (selectedArticle) {
-                            setScheduleArticleId(selectedArticle.id);
-                          }
-                          setMainTab('schedule');
-                        }}
-                        className="h-10 px-5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold inline-flex items-center gap-1.5"
-                      >
-                        <CalendarClock className="w-3.5 h-3.5" />
-                        <span>Duyệt &amp; Lập lịch đăng</span>
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-center justify-between">
-                    <span>
-                      Bài viết này đang ở trạng thái{' '}
-                      <strong>
-                        {selectedArticle ? SEO_ARTICLE_STATUS_LABELS[selectedArticle.status] : ''}
-                      </strong>{' '}
-                      (đã khóa chỉnh sửa). Nếu muốn sửa lại, hãy bấm Rút duyệt về Nháp.
-                    </span>
-                    {selectedArticle && (
-                      <button
-                        type="button"
-                        onClick={() => void handleWithdrawArticle(selectedArticle)}
-                        className="px-3 py-1 rounded-xl bg-amber-600 text-white font-bold shrink-0"
-                      >
-                        Rút duyệt về Nháp
-                      </button>
-                    )}
-                  </div>
-                )}
-              </form>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    Ghi chú phiên bản (tùy chọn)
+                  </label>
+                  <input
+                    type="text"
+                    value={editNote}
+                    onChange={(e) => setEditNote(e.target.value)}
+                    placeholder="VD: Cập nhật thông số P2.5, sửa bảng giá..."
+                    className="w-full h-10 px-4 rounded-2xl border border-slate-200 text-xs"
+                  />
+                </div>
 
-              {/* Right 4 Cols: ✨ Trợ lý SEO & Checklist On-page (Giống bố cục ảnh 6 & 7) */}
-              <div className="lg:col-span-4 space-y-4">
-                <div className="rounded-3xl bg-purple-50/60 border border-purple-200/80 p-5 space-y-4">
-                  <div className="flex items-center gap-2 text-purple-800 font-display font-bold text-sm">
-                    <Sparkles className="w-4 h-4 text-purple-600" />
-                    <span>Trợ lý SEO AI Gemini</span>
-                  </div>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Khởi tạo bản nháp bài viết chuẩn SEO tự động từ từ khóa{' '}
-                    <strong className="text-slate-900">
-                      {selectedKeywordObj?.keywordText || 'đã chọn'}
-                    </strong>{' '}
-                    cho website <strong className="text-slate-900">{draftWebsite}</strong>.
-                  </p>
-                  <div className="p-3.5 rounded-2xl bg-white/90 border border-purple-100 text-xs text-slate-500 leading-relaxed">
-                    Quyết định nội dung cuối cùng thuộc về Marketing. Không nhập thông tin nhạy cảm (SĐT/Email khách hàng) vào yêu cầu AI.
-                  </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
                   <button
                     type="button"
-                    disabled={busy || !selectedKeywordId}
-                    onClick={() => void handleGenerateAiDraft()}
-                    className="w-full h-10 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold inline-flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-40"
+                    onClick={() => setWordViewMode('preview')}
+                    className="h-10 px-5 rounded-2xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold inline-flex items-center gap-1.5"
                   >
-                    <Sparkles className="w-4 h-4" />
-                    <span>
-                      {busy ? 'AI Gemini đang viết bài...' : '✨ Tạo bản nháp mới bằng AI Gemini'}
-                    </span>
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Xem lại trang Word</span>
                   </button>
-                </div>
 
-                {/* Live On-page SEO Checklist */}
-                {(() => {
-                  const kwLower = (
-                    selectedArticle?.keywordText ||
-                    selectedKeywordObj?.keywordText ||
-                    ''
-                  )
-                    .toLowerCase()
-                    .trim();
-                  const titleOk = kwLower ? editTitle.toLowerCase().includes(kwLower) : false;
-                  const metaOk = kwLower ? editMeta.toLowerCase().includes(kwLower) : false;
-                  const h2Matches = editContentHtml.match(/<h2[^>]*>([\s\S]*?)<\/h2>/gi) || [];
-                  const h2Ok = kwLower
-                    ? h2Matches.some((h) => h.toLowerCase().includes(kwLower))
-                    : false;
-                  const plainText = editContentHtml
-                    .replace(/<[^>]+>/g, ' ')
-                    .replace(/\s+/g, ' ')
-                    .trim();
-                  const wordCount = plainText ? plainText.split(' ').length : 0;
-                  const lengthOk = wordCount >= 120;
-                  const passedCount = [titleOk, metaOk, h2Ok, lengthOk].filter(Boolean).length;
-
-                  return (
-                    <div className="rounded-3xl bg-white border border-slate-200/80 p-5 space-y-3.5">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-slate-900 text-sm">
-                          Checklist Chuẩn SEO ({passedCount}/4)
-                        </span>
-                        <span className="text-xs font-mono text-slate-500">
-                          {wordCount} từ
-                        </span>
-                      </div>
-
-                      <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
-                        <div
-                          style={{ width: `${(passedCount / 4) * 100}%` }}
-                          className="h-full rounded-full bg-emerald-500 transition-all"
-                        />
-                      </div>
-
-                      <div className="space-y-2.5 text-xs">
-                        {[
-                          { ok: titleOk, label: 'Từ khóa có trong Tiêu đề SEO (H1)' },
-                          { ok: metaOk, label: 'Từ khóa có trong Meta Description' },
-                          { ok: h2Ok, label: 'Từ khóa có trong thẻ tiêu đề phụ <h2>' },
-                          { ok: lengthOk, label: 'Độ dài nội dung tối thiểu (≥ 120 từ)' },
-                        ].map((item, idx) => (
-                          <div key={idx} className="flex items-center gap-2">
-                            <CheckCircle2
-                              className={`w-4 h-4 shrink-0 ${
-                                item.ok ? 'text-emerald-600' : 'text-slate-300'
-                              }`}
-                            />
-                            <span
-                              className={
-                                item.ok ? 'text-slate-800 font-medium' : 'text-slate-400'
-                              }
-                            >
-                              {item.label}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-          )}
-
-          {/* SUB-TAB 3.2: DUYỆT BÀI */}
-          {contentSubTab === 'review' && (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs text-slate-500">
-                  Danh sách các bài viết SEO trong hệ thống ({filteredReviewArticles.length} bài)
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {[
-                    { id: 'ALL', label: 'Tất cả' },
-                    { id: 'DRAFT', label: 'Bản nháp' },
-                    { id: 'APPROVED_SCHEDULED', label: 'Đã duyệt & Chờ lịch' },
-                    { id: 'PUBLISHED', label: 'Đã đăng' },
-                  ].map((f) => (
+                  <div className="flex items-center gap-2">
                     <button
-                      key={f.id}
-                      type="button"
-                      onClick={() => setReviewFilterStatus(f.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-                        reviewFilterStatus === f.id
-                          ? 'bg-slate-900 text-white'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
+                      type="submit"
+                      disabled={busy}
+                      className="h-10 px-5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs"
                     >
-                      {f.label}
+                      <FileEdit className="w-3.5 h-3.5" />
+                      <span>{busy ? 'Đang lưu...' : 'Lưu phiên bản chỉnh sửa'}</span>
                     </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredReviewArticles.map((art) => (
-                  <div
-                    key={art.id}
-                    className="p-5 rounded-3xl border border-slate-200/80 hover:border-blue-300 transition flex flex-col justify-between space-y-4"
-                  >
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-bold ${
-                            art.status === 'PUBLISHED'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : art.status === 'APPROVED_SCHEDULED'
-                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                : 'bg-slate-100 text-slate-700'
-                          }`}
-                        >
-                          {SEO_ARTICLE_STATUS_LABELS[art.status]}
-                        </span>
-                        <span className="text-xs font-mono text-slate-500">
-                          {art.targetWebsite} • v{art.version}
-                        </span>
-                      </div>
-                      <h3 className="font-display font-bold text-slate-900 text-base">
-                        {art.title}
-                      </h3>
-                      <p className="text-xs text-slate-500 line-clamp-2">
-                        {art.metaDescription || 'Chưa có mô tả Meta Description'}
-                      </p>
-                      <div className="text-xs text-slate-500 pt-1">
-                        Từ khóa: <strong className="text-slate-800">{art.keywordText}</strong> •{' '}
-                        {art.revisions?.length || 1} phiên bản
-                      </div>
-                    </div>
-
-                    <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedArticleId(art.id);
-                            setContentSubTab('compose');
-                          }}
-                          className="h-8 px-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700"
-                        >
-                          Biên tập
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleCopyArticleHtml(
-                              art.title,
-                              art.metaDescription,
-                              art.contentHtml,
-                            )
-                          }
-                          className="h-8 px-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700"
-                        >
-                          Copy HTML
-                        </button>
-                      </div>
-
-                      {art.status === 'DRAFT' && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setScheduleArticleId(art.id);
-                            setScheduleWebsite(
-                              (art.targetWebsite as TargetWebsite) || 'toantrung.com.vn',
-                            );
-                            setMainTab('schedule');
-                            setScheduleSubTab('calendar');
-                          }}
-                          className="h-8 px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold"
-                        >
-                          Duyệt &amp; Lên lịch →
-                        </button>
-                      )}
-
-                      {art.status === 'APPROVED_SCHEDULED' && (
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void handleConfirmPublished(art)}
-                            className="h-8 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold"
-                          >
-                            Xác nhận Đã đăng
-                          </button>
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void handleWithdrawArticle(art)}
-                            className="h-8 px-3 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold"
-                          >
-                            Rút duyệt
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* SUB-TAB 3.3: LỊCH SỬ PHIÊN BẢN */}
-          {contentSubTab === 'history' && (
-            <div className="space-y-3">
-              {allRevisionsFlat.map((item) => (
-                <div
-                  key={item.rev.id}
-                  className="p-4 rounded-2xl border border-slate-200/80 hover:bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                >
-                  <div className="space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="px-2.5 py-0.5 rounded-lg bg-blue-50 text-blue-700 font-mono text-xs font-bold">
-                        Phiên bản #{item.rev.revisionNumber}
-                      </span>
-                      <span className="font-bold text-slate-900 text-sm">
-                        {item.articleTitle}
-                      </span>
-                      {item.approvedRevisionId === item.rev.id && (
-                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold">
-                          Đã duyệt khóa
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-500">
-                      Từ khóa: <strong>{item.keywordText}</strong> • Website:{' '}
-                      <strong>{item.targetWebsite}</strong> •{' '}
-                      {item.rev.isAiGenerated
-                        ? 'Khởi tạo bởi AI Gemini'
-                        : `Biên tập bởi ${item.rev.editedByName}`}
-                    </p>
-                    {item.rev.editorNote && (
-                      <p className="text-xs text-slate-600 italic">“{item.rev.editorNote}”</p>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-3 shrink-0">
-                    <span className="text-xs text-slate-400">
-                      {new Date(item.rev.createdAt).toLocaleString('vi-VN')}
-                    </span>
                     <button
                       type="button"
-                      onClick={() => {
-                        setSelectedArticleId(item.articleId);
-                        setContentSubTab('compose');
-                      }}
-                      className="h-8 px-3 rounded-xl border border-slate-200 hover:bg-white text-xs font-bold text-slate-700"
+                      onClick={handleDownloadWordDoc}
+                      className="h-10 px-5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs"
                     >
-                      Mở bài viết
+                      <Download className="w-3.5 h-3.5 text-white" />
+                      <span>Tải file Word (.doc)</span>
                     </button>
                   </div>
                 </div>
-              ))}
+              </form>
             </div>
           )}
         </div>
       )}
-
-      {/* =====================================================================
-          TAB 4: LỊCH XUẤT BẢN & HIỆU QUẢ SEO (SCHEDULE & PERFORMANCE)
-         ===================================================================== */}
-      {mainTab === 'schedule' && (
-        <div className="space-y-5">
-          <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-2xs space-y-6">
-            {/* Header + 2-Pill Sub-tab Switcher (Giống hệt ảnh 8: Lịch xuất bản | Hiệu quả SEO) */}
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-sky-50 text-sky-600 grid place-items-center">
-                  <Calendar className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="font-display font-bold text-slate-900 text-base">
-                    Lịch xuất bản &amp; hiệu quả SEO
-                  </h2>
-                  <p className="text-xs text-slate-500">
-                    Quản lý lịch hẹn xuất bản nội bộ và theo dõi hiệu quả thứ hạng sau khi đăng bài.
-                  </p>
-                </div>
-              </div>
-
-              <div className="inline-flex items-center gap-1.5 bg-slate-100/80 p-1.5 rounded-2xl">
-                <button
-                  type="button"
-                  onClick={() => setScheduleSubTab('calendar')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition ${
-                    scheduleSubTab === 'calendar'
-                      ? 'bg-blue-50 text-blue-700 border border-blue-200/80 shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Lịch xuất bản
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setScheduleSubTab('performance')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition ${
-                    scheduleSubTab === 'performance'
-                      ? 'bg-blue-50 text-blue-700 border border-blue-200/80 shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Hiệu quả SEO
-                </button>
-              </div>
-            </div>
-
-            {/* Notice Banner */}
-            <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200/80 text-xs text-amber-900">
-              Lịch xuất bản được lưu trong Database để đội ngũ Marketing theo dõi tiến độ; hệ thống{' '}
-              <strong>không tự động đẩy bài lên 3 website</strong>. Khi đến lịch, bạn bấm{' '}
-              <strong>Copy HTML</strong> để đăng lên quản trị web và bấm{' '}
-              <strong>Xác nhận Đã đăng</strong>.
-            </div>
-
-            {scheduleSubTab === 'calendar' ? (
-              <div className="space-y-6">
-                {/* Form Tạo lịch xuất bản (Giống hệt ảnh 8) */}
-                <form
-                  onSubmit={(e) => void handleScheduleSubmit(e)}
-                  className="p-5 rounded-3xl border border-slate-200/80 space-y-4"
-                >
-                  <div className="text-sm font-bold text-slate-900">Tạo lịch xuất bản</div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                    <div className="md:col-span-6">
-                      <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                        Bài viết cần lên lịch
-                      </label>
-                      <select
-                        value={scheduleArticleId}
-                        onChange={(e) => {
-                          const id = Number(e.target.value);
-                          setScheduleArticleId(id);
-                          const art = articles.find((a) => a.id === id);
-                          if (art) {
-                            setScheduleWebsite(
-                              (art.targetWebsite as TargetWebsite) || 'toantrung.com.vn',
-                            );
-                          }
-                        }}
-                        className="w-full h-11 px-4 rounded-2xl border border-slate-200 text-sm bg-white"
-                      >
-                        {articles.map((a) => (
-                          <option key={a.id} value={a.id}>
-                            #{a.id} • {a.title} ({SEO_ARTICLE_STATUS_LABELS[a.status]})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="md:col-span-3">
-                      <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                        Website đích
-                      </label>
-                      <select
-                        value={scheduleWebsite}
-                        onChange={(e) => setScheduleWebsite(e.target.value as TargetWebsite)}
-                        className="w-full h-11 px-4 rounded-2xl border border-slate-200 text-sm bg-white"
-                      >
-                        {TARGET_WEBSITES.map((w) => (
-                          <option key={w} value={w}>
-                            {w}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="md:col-span-3">
-                      <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                        Ngày đăng
-                      </label>
-                      <input
-                        type="date"
-                        value={scheduleDate}
-                        onChange={(e) => setScheduleDate(e.target.value)}
-                        className="w-full h-11 px-4 rounded-2xl border border-slate-200 text-sm"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-end justify-between gap-4">
-                    <div className="w-full sm:w-64">
-                      <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                        Giờ đăng
-                      </label>
-                      <input
-                        type="time"
-                        value={scheduleTime}
-                        onChange={(e) => setScheduleTime(e.target.value)}
-                        className="w-full h-11 px-4 rounded-2xl border border-slate-200 text-sm"
-                      />
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="submit"
-                        disabled={busy || !scheduleArticleId}
-                        className="h-10 px-5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs disabled:opacity-40"
-                      >
-                        Lưu lịch xuất bản
-                      </button>
-                      <span className="text-xs text-slate-400">
-                        {articles.filter((a) => a.status === 'DRAFT').length} bài nháp chờ lên lịch
-                      </span>
-                    </div>
-                  </div>
-                </form>
-
-                {/* Danh sách lịch xuất bản */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-display font-bold text-slate-900 text-sm">
-                      Danh sách lịch xuất bản
-                    </h3>
-                    <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs font-bold">
-                      {
-                        articles.filter(
-                          (a) => a.status === 'APPROVED_SCHEDULED' || a.status === 'PUBLISHED',
-                        ).length
-                      }{' '}
-                      lịch
-                    </span>
-                  </div>
-
-                  {articles.filter(
-                    (a) => a.status === 'APPROVED_SCHEDULED' || a.status === 'PUBLISHED',
-                  ).length === 0 ? (
-                    <div className="rounded-3xl bg-slate-50/70 border border-slate-200/70 p-10 text-center space-y-2">
-                      <div className="w-12 h-12 rounded-2xl bg-white border border-slate-200 text-slate-400 grid place-items-center mx-auto">
-                        <Calendar className="w-5 h-5" />
-                      </div>
-                      <div className="font-bold text-slate-800 text-sm">Chưa có lịch xuất bản</div>
-                      <p className="text-xs text-slate-500">
-                        Chọn bài viết ở khung phía trên để duyệt và lập lịch xuất bản tại đây.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {articles
-                        .filter(
-                          (a) => a.status === 'APPROVED_SCHEDULED' || a.status === 'PUBLISHED',
-                        )
-                        .map((art) => (
-                          <div
-                            key={art.id}
-                            className="p-4 rounded-2xl border border-slate-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-50/50"
-                          >
-                            <div className="space-y-1">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span
-                                  className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                                    art.status === 'PUBLISHED'
-                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                      : 'bg-blue-50 text-blue-700 border border-blue-200'
-                                  }`}
-                                >
-                                  {SEO_ARTICLE_STATUS_LABELS[art.status]}
-                                </span>
-                                <span className="font-bold text-slate-900 text-sm">
-                                  {art.title}
-                                </span>
-                              </div>
-                              <div className="text-xs text-slate-500">
-                                Website đích: <strong>{art.targetWebsite}</strong> • Từ khóa:{' '}
-                                <strong>{art.keywordText}</strong> •{' '}
-                                {art.publishedAt
-                                  ? `Đã đăng lúc: ${new Date(art.publishedAt).toLocaleString('vi-VN')}`
-                                  : art.scheduledPublishAt
-                                    ? `Lịch hẹn: ${new Date(art.scheduledPublishAt).toLocaleString('vi-VN')}`
-                                    : ''}
-                              </div>
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-2 shrink-0">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleCopyArticleHtml(
-                                    art.title,
-                                    art.metaDescription,
-                                    art.contentHtml,
-                                  )
-                                }
-                                className="h-8 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold inline-flex items-center gap-1"
-                              >
-                                <Copy className="w-3.5 h-3.5" />
-                                <span>Copy HTML</span>
-                              </button>
-
-                              {art.status === 'APPROVED_SCHEDULED' && (
-                                <>
-                                  <button
-                                    type="button"
-                                    disabled={busy}
-                                    onClick={() => void handleConfirmPublished(art)}
-                                    className="h-8 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold"
-                                  >
-                                    Xác nhận Đã đăng
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={busy}
-                                    onClick={() => void handleWithdrawArticle(art)}
-                                    className="h-8 px-3 rounded-xl border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold"
-                                  >
-                                    Rút duyệt
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              /* SUB-TAB 4.2: HIỆU QUẢ SEO SAU XUẤT BẢN */
-              <div className="space-y-4">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50/70 text-slate-500 border-y border-slate-100 text-xs">
-                        <th className="py-3.5 px-4 font-semibold min-w-[240px]">Bài viết SEO</th>
-                        <th className="py-3.5 px-3 font-semibold">Website</th>
-                        <th className="py-3.5 px-3 font-semibold text-center">Trạng thái</th>
-                        <th className="py-3.5 px-3 font-semibold text-right">Click 30 ngày</th>
-                        <th className="py-3.5 px-3 font-semibold text-center">Vị trí TB 30 ngày</th>
-                        <th className="py-3.5 px-3 font-semibold text-center">Đánh giá tối ưu</th>
-                        <th className="py-3.5 px-4 font-semibold text-right">Thao tác</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {articles.map((art) => (
-                        <tr key={art.id} className="hover:bg-slate-50/60">
-                          <td className="py-4 px-4">
-                            <div className="font-bold text-slate-900">{art.title}</div>
-                            <div className="text-xs text-slate-400 mt-0.5">
-                              Từ khóa: {art.keywordText}
-                            </div>
-                          </td>
-                          <td className="py-4 px-3 text-slate-600">{art.targetWebsite}</td>
-                          <td className="py-4 px-3 text-center">
-                            <span
-                              className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                                art.status === 'PUBLISHED'
-                                  ? 'bg-emerald-50 text-emerald-700'
-                                  : 'bg-slate-100 text-slate-600'
-                              }`}
-                            >
-                              {SEO_ARTICLE_STATUS_LABELS[art.status]}
-                            </span>
-                          </td>
-                          <td className="py-4 px-3 text-right tabular-nums font-bold text-emerald-700">
-                            {(art.organicClicks30d || 0).toLocaleString('vi-VN')}
-                          </td>
-                          <td className="py-4 px-3 text-center tabular-nums font-semibold">
-                            {art.avgPosition30d ? `#${art.avgPosition30d.toFixed(1)}` : '—'}
-                          </td>
-                          <td className="py-4 px-3 text-center">
-                            {art.needsOptimization ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-xs font-bold">
-                                <AlertTriangle className="w-3.5 h-3.5" />
-                                <span>Cần tối ưu bài cũ (&gt;30 ngày)</span>
-                              </span>
-                            ) : art.status === 'PUBLISHED' ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold">
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                <span>Thứ hạng tốt</span>
-                              </span>
-                            ) : (
-                              <span className="text-xs text-slate-400">Chưa đăng</span>
-                            )}
-                          </td>
-                          <td className="py-4 px-4 text-right">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedArticleId(art.id);
-                                setMainTab('content');
-                                setContentSubTab('compose');
-                              }}
-                              className="h-8 px-3 rounded-xl border border-slate-200 hover:bg-slate-100 text-xs font-bold text-slate-700"
-                            >
-                              Mở tối ưu bài
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Info Card: Quy trình vận hành thực tế (Giống bố cục ảnh 9) */}
-          <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-2xs space-y-2">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-2xl bg-sky-50 text-sky-600 grid place-items-center">
-                <CheckCircle2 className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="font-display font-bold text-slate-900 text-sm">
-                  Cơ chế vận hành Lịch xuất bản &amp; Đồng bộ số liệu
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Đảm bảo an toàn tuyệt đối cho 3 website chính thức của Toàn Trung
-                </p>
-              </div>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed pt-1">
-              Lịch xuất bản được lưu trữ tập trung trên PostgreSQL để đội ngũ Marketing kiểm soát tiến độ nhưng không tự động đẩy bài trực tiếp ra ngoài website. Sau khi biên tập viên sao chép mã HTML chuẩn SEO đăng lên CMS của từng web và bấm &ldquo;Xác nhận Đã đăng&rdquo;, hệ thống sẽ bắt đầu chu kỳ 30 ngày theo dõi lượt nhấp Organic và vị trí trung bình để cảnh báo các bài cần tối ưu lại.
-            </p>
-          </div>
-        </div>
-      )}
-    </div>
+    
+</div>
   );
 }

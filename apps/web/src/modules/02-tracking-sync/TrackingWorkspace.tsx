@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Crosshair,
+  Download,
   FolderUp,
   Info,
   Play,
@@ -270,118 +271,112 @@ export function TrackingWorkspace() {
 
   return (
     <div className="space-y-3.5 text-sm">
-      {/* Header — Clean Modern White Card */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3.5">
-        <div>
-          <h1 className="font-display text-2xl font-bold text-ink tracking-tight">
-            Chiến dịch
-          </h1>
-          <p className="text-sm text-ink-muted mt-0.5">
-            Ưu tiên tín hiệu <code className="font-mono">gclid &gt; UTM &gt; Referrer</code>, phân tầng 3 cấp Lead (L1/L2/L3) và đối soát Google Lead Form tự động.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
+      {/* Centralized Action Toolbar — Centered without clunky duplicate title */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-2xs flex flex-wrap items-center justify-center gap-2.5">
+        {/* Single Canonical Date Range Selector */}
+        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/80">
           {[7, 30, 90].map((d) => (
             <button
               key={d}
               type="button"
               onClick={() => setPeriodDays(d)}
-              className={`h-9 px-3.5 rounded-xl text-sm font-semibold ${periodDays === d
-                  ? 'bg-brand text-white'
-                  : 'bg-white border border-slate-200 text-slate-600'
-                }`}
+              className={`h-8 px-3.5 rounded-lg text-xs font-bold transition ${
+                periodDays === d
+                  ? 'bg-brand text-white shadow-xs'
+                  : 'text-slate-600 hover:text-ink hover:bg-white'
+              }`}
             >
               {d} ngày
             </button>
           ))}
-
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void handleTriggerSync('FULL_0200')}
-            className="h-9 px-3.5 rounded-xl bg-brand hover:bg-brand-deep text-white text-sm font-bold inline-flex items-center gap-1.5 shadow-sm"
-          >
-            <Play className="w-4 h-4" />
-            <span>Chạy Đồng bộ + Tra lại gclid</span>
-          </button>
-
-          <input
-            ref={adsImportInputRef}
-            type="file"
-            accept=".xlsx,.csv,.tsv"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (!file || !user) return;
-              setBusy(true);
-              setErrorMsg(null);
-              void (async () => {
-                try {
-                  const fd = new FormData();
-                  fd.append('file', file);
-                  const res = await apiRequest<{
-                    importedCampaigns: number;
-                    importedKeywords: number;
-                  }>('/api/v1/ads/export', {
-                    method: 'POST',
-                    csrfToken: user.csrfToken,
-                    isFormData: true,
-                    body: fd,
-                  });
-                  setFeedbackMsg(
-                    `Đã nhập thành công file "${file.name}" từ Google Ads: cập nhật ${res.importedCampaigns} chiến dịch và ${res.importedKeywords} từ khóa tìm kiếm.`,
-                  );
-                  await fetchDashboard();
-                } catch (err) {
-                  setErrorMsg(
-                    err instanceof Error
-                      ? err.message
-                      : 'Không thể nhập file báo cáo Google Ads.',
-                  );
-                } finally {
-                  setBusy(false);
-                  if (adsImportInputRef.current) {
-                    adsImportInputRef.current.value = '';
-                  }
-                }
-              })();
-            }}
-          />
-
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => adsImportInputRef.current?.click()}
-            className="h-9 px-3.5 rounded-xl border border-emerald-200 bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 text-sm font-semibold inline-flex items-center gap-1.5"
-            title="Nhập file báo cáo Chiến dịch hoặc Từ khóa tải về từ Google Ads (.xlsx / .csv)"
-          >
-            <FolderUp className="w-4 h-4 text-emerald-700" />
-            <span>Nhập file Google Ads (.xlsx / .csv)</span>
-          </button>
-
-          <a
-            href={`/api/v1/tracking/export?periodDays=${periodDays}`}
-            className="h-9 px-3.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-sm font-semibold inline-flex items-center gap-1.5"
-            title="Xuất báo cáo Excel Tracking & Đồng bộ (02_Tracking_DongBo.xlsx)"
-          >
-            <span>Xuất Excel (.xlsx)</span>
-          </a>
-
-          <div className="h-9 px-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Realtime Live</span>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void fetchDashboard()}
-            className="h-9 px-3.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-sm font-semibold inline-flex items-center gap-1.5 hover:bg-slate-50 transition"
-          >
-            <RefreshCw className="w-4 h-4" />
-            <span>Làm mới</span>
-          </button>
         </div>
+
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void handleTriggerSync('FULL_0200')}
+          className="h-9 px-3.5 rounded-xl bg-brand hover:bg-brand-deep text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-sm transition"
+        >
+          <Play className="w-3.5 h-3.5" />
+          <span>Chạy Đồng bộ + Tra lại gclid</span>
+        </button>
+
+        <input
+          ref={adsImportInputRef}
+          type="file"
+          accept=".xlsx,.csv,.tsv"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (!file || !user) return;
+            setBusy(true);
+            setErrorMsg(null);
+            void (async () => {
+              try {
+                const fd = new FormData();
+                fd.append('file', file);
+                const res = await apiRequest<{
+                  importedCampaigns: number;
+                  importedKeywords: number;
+                }>('/api/v1/ads/export', {
+                  method: 'POST',
+                  csrfToken: user.csrfToken,
+                  isFormData: true,
+                  body: fd,
+                });
+                setFeedbackMsg(
+                  `Đã nhập thành công file "${file.name}" từ Google Ads: cập nhật ${res.importedCampaigns} chiến dịch và ${res.importedKeywords} từ khóa tìm kiếm.`,
+                );
+                await fetchDashboard();
+              } catch (err) {
+                setErrorMsg(
+                  err instanceof Error
+                    ? err.message
+                    : 'Không thể nhập file báo cáo Google Ads.',
+                );
+              } finally {
+                setBusy(false);
+                if (adsImportInputRef.current) {
+                  adsImportInputRef.current.value = '';
+                }
+              }
+            })();
+          }}
+        />
+
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => adsImportInputRef.current?.click()}
+          className="h-9 px-3.5 rounded-xl border border-emerald-200 bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold inline-flex items-center gap-1.5 transition"
+          title="Nhập file báo cáo Chiến dịch hoặc Từ khóa tải về từ Google Ads (.xlsx / .csv)"
+        >
+          <FolderUp className="w-3.5 h-3.5 text-emerald-700" />
+          <span>Nhập file Google Ads (.xlsx / .csv)</span>
+        </button>
+
+        <a
+          href={`/api/v1/tracking/export?periodDays=${periodDays}`}
+          className="h-9 px-3.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 transition"
+          title="Xuất báo cáo Excel Tracking & Đồng bộ (02_Tracking_DongBo.xlsx)"
+        >
+          <Download className="w-3.5 h-3.5 text-slate-600" />
+          <span>Xuất Excel (.xlsx)</span>
+        </a>
+
+        <div className="h-9 px-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span>Realtime Live</span>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => void fetchDashboard()}
+          className="h-9 px-3.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-slate-50 transition"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          <span>Làm mới</span>
+        </button>
       </div>
 
       {/* Google OAuth 2.0 Fast Connect Banner (One-Click Connect for Module 02 & All Modules) */}
