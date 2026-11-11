@@ -108,6 +108,30 @@ export function SeoKeywordsWorkspace() {
   const [kwWebsiteFilter, setKwWebsiteFilter] = useState<string>('ALL');
   const [kwGroupFilter, setKwGroupFilter] = useState<string>('ALL');
 
+  // Connect to system-wide scoped search bar
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const tabMap: Record<typeof mainTab, string> = {
+      overview: 'Từ khóa SEO › Tổng quan',
+      keywords: 'Từ khóa SEO › Quản lý Từ khóa',
+      content: 'Từ khóa SEO › Nội dung SEO',
+    };
+    window.dispatchEvent(
+      new CustomEvent('tt-search-scope-change', { detail: { label: tabMap[mainTab] } }),
+    );
+  }, [mainTab]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleGlobalSearch = (e: Event) => {
+      const custom = e as CustomEvent<string>;
+      const val = typeof custom.detail === 'string' ? custom.detail : '';
+      setKwSearchFilter(val);
+    };
+    window.addEventListener('tt-global-search', handleGlobalSearch as EventListener);
+    return () => window.removeEventListener('tt-global-search', handleGlobalSearch as EventListener);
+  }, []);
+
   // Tab 3: SEO Content Compose / Edit State
   const [selectedKeywordId, setSelectedKeywordId] = useState<number>(0);
   const [draftWebsite, setDraftWebsite] = useState<TargetWebsite>('toantrung.com.vn');
@@ -317,9 +341,16 @@ export function SeoKeywordsWorkspace() {
   }, [keywords, kwSearchFilter, kwWebsiteFilter, kwGroupFilter, getKeywordRecommendation]);
 
   const filteredReviewArticles = useMemo(() => {
-    if (reviewFilterStatus === 'ALL') return articles;
-    return articles.filter((a) => a.status === reviewFilterStatus);
-  }, [articles, reviewFilterStatus]);
+    return articles.filter((a) => {
+      if (reviewFilterStatus !== 'ALL' && a.status !== reviewFilterStatus) return false;
+      if (kwSearchFilter.trim()) {
+        const q = kwSearchFilter.toLowerCase().trim();
+        const hay = `${a.title} ${a.keywordText} ${a.targetWebsite}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [articles, reviewFilterStatus, kwSearchFilter]);
 
   const allRevisionsFlat = useMemo(() => {
     const list: Array<{

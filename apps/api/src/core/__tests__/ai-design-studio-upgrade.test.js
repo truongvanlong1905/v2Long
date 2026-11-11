@@ -161,9 +161,11 @@ test('M05-03: Shared Database Integration & Project Model Lifecycle (Create -> C
     ],
   };
 
+  const existingLead = await prisma.lead.findFirst();
+
   const created = await prisma.designRequest.create({
     data: {
-      leadId: 1,
+      leadId: existingLead?.id ?? null,
       assignedDesignerId: 5,
       requestType: '3d_perspective',
       ledCategory: 'Màn hình LED Indoor (P2.5)',

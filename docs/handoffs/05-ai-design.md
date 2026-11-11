@@ -1,6 +1,6 @@
 # Handoff 05-ai-design — Hỗ trợ thiết kế & phối cảnh AI (Giai đoạn 2)
 
-Cập nhật: 06/11/2026.  
+Cập nhật: 11/11/2026.  
 Nhóm 5 — Lý Tăng Hữu.  
 Nhánh Git: `feature/ai-design`.  
 Kho mã nguồn GitHub: `https://github.com/truongvanlong1905/ToanTrungMar` (nhánh `main`).
@@ -10,7 +10,11 @@ Kho mã nguồn GitHub: `https://github.com/truongvanlong1905/ToanTrungMar` (nh�
 ## 1. Hiện trạng & Nguồn nghiệp vụ chuẩn
 - Đã tiếp nhận và phân tích toàn diện **Tài liệu đặc tả BA: UC06 (Hỗ trợ thiết kế & phối cảnh AI)** kèm Sơ đồ hoạt động, Sơ đồ tuần tự và BPMN As-is/To-be.
 - Chi tiết đặc tả nghiệp vụ đầy đủ đã được ghi nhận tại [docs/modules/05-ai-design.md](../modules/05-ai-design.md).
-- Mã nguồn hiện tại: Đã triển khai hoàn chỉnh (`apps/web/src/modules/05-ai-design/AiDesignWorkspace.tsx`, `apps/api/src/modules/05-ai-design/service.ts`, `packages/contracts/src/05-ai-design/index.ts`), bao gồm Studio 3 cột kéo thả 4 góc màn hình LED 3D, tạo Banner đa tỷ lệ, bảo vệ CSRF & chặn PII gửi sang AI, quản lý lịch sử phiên bản và tải ảnh hiện trạng/thành phẩm.
+- Mã nguồn hiện tại: Đã triển khai hoàn chỉnh (`apps/web/src/modules/05-ai-design/AiDesignWorkspace.tsx`, `apps/api/src/modules/05-ai-design/service.ts`, `apps/api/src/modules/05-ai-design/providers/`, `packages/contracts/src/05-ai-design/index.ts`):
+  - Rút gọn **Cài đặt thông số** chỉ còn 2 cột thiết yếu (**1. Thông tin dự án** và **2. Cài đặt chuẩn Đầu ra & Khung hình**), loại bỏ tab **Sơ đồ Cabin & BOM** và nút **Hồ sơ A4 / PDF** tự suy diễn thông số kỹ thuật giả định.
+  - Tách **Kho ảnh** thành 2 kho riêng biệt: **🏗️ Công trình** (tải hàng loạt ảnh công trình vào dự án đang mở) và **🏢 Kho SP Cty** (kho ảnh mẫu sản phẩm công ty dùng chung xuyên suốt mọi dự án để bấm chọn ghép vào hiện trường / Banner).
+  - Rút gọn bộ chọn **Model** thành 1 danh sách tối giản (`GPT 2.5 Image`, `Gemini 2.5 Flash Image`, `Google Imagen 3`, `Gemini 3.5 Flash`, `FLUX.1 Pro Ultra`) kèm dòng gắn API Key nhanh.
+  - Đã kiểm tra `npm run typecheck` (0 lỗi trên cả 4 workspace) và `node --test apps/api/src/core/__tests__/ai-design-studio-upgrade.test.js` (16/16 test PASS).
 
 ---
 

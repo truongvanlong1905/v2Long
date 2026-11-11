@@ -1393,6 +1393,55 @@ export async function processChatDesignRequest(
 
   const activePhotoFileData = storageKeyToRead ? readPrivateBusinessFile(storageKeyToRead) : null;
 
+  // Gather any Product Reference Photos (ảnh sản phẩm mẫu từ Kho Sản phẩm Công ty dùng chung hoặc của dự án)
+  const requestedProductIds = new Set(input.referenceProductPhotoIds || []);
+  const productReferencePhotoObjs = photosList.filter(
+    (p) => requestedProductIds.has(p.id) || (requestedProductIds.size === 0 && p.photoRole === 'product_reference')
+  );
+  const productReferenceBuffers: Array<{ buffer: Buffer; mimeType: string; name: string }> = [];
+  const attachedProductPhotosMeta: Array<{ id: string; name: string; url: string }> = [];
+  const seenStorageKeys = new Set<string>();
+
+  for (const prodPhoto of productReferencePhotoObjs) {
+    attachedProductPhotosMeta.push({
+      id: prodPhoto.id,
+      name: prodPhoto.name,
+      url: prodPhoto.url,
+    });
+    if (prodPhoto.storageObjectKey && !seenStorageKeys.has(prodPhoto.storageObjectKey)) {
+      seenStorageKeys.add(prodPhoto.storageObjectKey);
+      const f = readPrivateBusinessFile(prodPhoto.storageObjectKey);
+      if (f && f.buffer.length > 0) {
+        productReferenceBuffers.push({
+          buffer: f.buffer,
+          mimeType: f.mimeType || 'image/jpeg',
+          name: prodPhoto.name,
+        });
+      }
+    }
+  }
+
+  // Also support Company Product Vault photos selected across projects via referenceProductPhotoUrls
+  for (const rawUrl of input.referenceProductPhotoUrls || []) {
+    try {
+      const q = rawUrl.includes('?') ? rawUrl.split('?')[1] || '' : '';
+      const storageKey = new URLSearchParams(q).get('key');
+      if (storageKey && !seenStorageKeys.has(storageKey)) {
+        seenStorageKeys.add(storageKey);
+        const f = readPrivateBusinessFile(storageKey);
+        if (f && f.buffer.length > 0) {
+          productReferenceBuffers.push({
+            buffer: f.buffer,
+            mimeType: f.mimeType || 'image/jpeg',
+            name: input.referenceProductName || f.fileName || 'san-pham-cong-ty.png',
+          });
+        }
+      }
+    } catch {
+      // ignore invalid url
+    }
+  }
+
   const effectiveWidthM =
     (designContext.fields.widthMm ? designContext.fields.widthMm / 1000 : null) ||
     input.screenWidthM ||
@@ -1697,6 +1746,8 @@ export async function processChatDesignRequest(
         text: input.prompt,
         timestamp: new Date().toISOString(),
         chatMode: 'consultant_free',
+        attachedProductPhotos:
+          attachedProductPhotosMeta.length > 0 ? attachedProductPhotosMeta : undefined,
       },
       {
         id: `msg-ai-consult-${Date.now() + 1}`,
@@ -1782,6 +1833,8 @@ export async function processChatDesignRequest(
         text: input.prompt,
         timestamp: new Date().toISOString(),
         chatMode: 'consultant_free',
+        attachedProductPhotos:
+          attachedProductPhotosMeta.length > 0 ? attachedProductPhotosMeta : undefined,
       },
       {
         id: `msg-ai-missing-${Date.now() + 1}`,
@@ -1873,11 +1926,17 @@ export async function processChatDesignRequest(
               DEFAULT_SHOWROOM_PHOTO,
             referenceImageBuffer: activePhotoFileData?.buffer,
             referenceImageMimeType: activePhotoFileData?.mimeType,
+            productReferenceBuffers:
+              productReferenceBuffers.length > 0 ? productReferenceBuffers : undefined,
             placementQuad: effectiveQuad,
             compositingMode: effectiveCompositingMode,
             productSpec: {
               productCode: currentMeta.productSpec?.productCode || 'LED_INDOOR',
-              productName: existing.ledCategory || 'Màn hình LED Indoor',
+              productName:
+                input.referenceProductName ||
+                productReferencePhotoObjs[0]?.name ||
+                existing.ledCategory ||
+                'Màn hình LED Indoor',
               pitch: effectivePitch,
               screenStyle: effectiveStyle,
             },
@@ -1899,6 +1958,8 @@ export async function processChatDesignRequest(
           {
             workflow: 'banner',
             prompt: cleanImagePrompt,
+            productReferenceBuffers:
+              productReferenceBuffers.length > 0 ? productReferenceBuffers : undefined,
             dimensions: {
               widthPx: effectiveBannerW,
               heightPx: effectiveBannerH,
@@ -1958,6 +2019,8 @@ export async function processChatDesignRequest(
         text: input.prompt,
         timestamp: new Date().toISOString(),
         chatMode: 'consultant_free',
+        attachedProductPhotos:
+          attachedProductPhotosMeta.length > 0 ? attachedProductPhotosMeta : undefined,
       },
       {
         id: `msg-ai-limit-${Date.now() + 1}`,
@@ -2001,14 +2064,34 @@ export async function processChatDesignRequest(
 
   // Post-process banner resolution & typography warning when action is GENERATE_BANNER
   let finalBufferToSave = providerResult.imageBuffer;
+  let finalMimeToSave = providerResult.mimeType || 'image/png';
+
+  // When the browser passed a high-res clientRenderedBase64 composite (e.g. real site photo + real company product photo)
+  // and the provider used local_sandbox or fallback, use the high-res composited image!
+  if (
+    input.clientRenderedBase64 &&
+    (normalizedProviderId === 'local_sandbox' || Boolean(providerResult.fallbackNotice))
+  ) {
+    try {
+      const clientBuf = Buffer.from(input.clientRenderedBase64, 'base64');
+      const clientCheck = validateGeneratedImageBuffer(clientBuf);
+      if (clientCheck.isValid) {
+        finalBufferToSave = clientBuf;
+        finalMimeToSave = clientCheck.detectedMimeType || 'image/jpeg';
+      }
+    } catch {
+      // keep providerResult.imageBuffer
+    }
+  }
+
   let bannerTypographyWarning: string | null = null;
   let bannerResizeExplanation: string | null = null;
   let curvedDistortionWarning: string | null = null;
 
   if (dbType === 'banner') {
     const bannerProcessed = processBannerToTargetResolution({
-      sourceBuffer: providerResult.imageBuffer,
-      sourceMimeType: providerResult.mimeType || 'image/png',
+      sourceBuffer: finalBufferToSave,
+      sourceMimeType: finalMimeToSave,
       targetWidthPx: effectiveBannerW,
       targetHeightPx: effectiveBannerH,
       prompt: cleanImagePrompt,
@@ -2025,7 +2108,7 @@ export async function processChatDesignRequest(
     bucket: 'design',
     prefix: `ai-draft-req-${requestId}-v${nextVersionNumber}`,
     fileBuffer: finalBufferToSave,
-    declaredMimeType: providerResult.mimeType || 'image/png',
+    declaredMimeType: finalMimeToSave,
   });
 
   const aiLog = await recordAiUsageAttempt(prisma, {
@@ -2107,6 +2190,8 @@ export async function processChatDesignRequest(
       text: input.prompt,
       timestamp: new Date().toISOString(),
       chatMode: 'image_generator',
+      attachedProductPhotos:
+        attachedProductPhotosMeta.length > 0 ? attachedProductPhotosMeta : undefined,
     },
     {
       id: `msg-ai-${Date.now() + 1}`,
@@ -2263,6 +2348,17 @@ export async function updateDesignProject(
     meta.photos = photos;
   }
 
+  if (input.toggleProductPhotoId && photos.length > 0) {
+    for (const p of photos) {
+      if (p.id === input.toggleProductPhotoId) {
+        p.photoRole =
+          input.productPhotoRole ||
+          (p.photoRole === 'product_reference' ? 'site_photo' : 'product_reference');
+      }
+    }
+    meta.photos = photos;
+  }
+
   // Import Lead attachments into Ảnh kỹ thuật when requested
   const targetLeadId = input.leadId !== undefined ? input.leadId : existing.leadId;
   if (input.importLeadAttachments && targetLeadId) {
@@ -2400,29 +2496,33 @@ export async function addProjectPhoto(
   const meta = parseProjectMetadata(existing.installPositionJson);
   const photos = meta.photos || [];
 
+  const isProductRef = input.photoRole === 'product_reference';
   const newPhoto: ProjectPhotoItemDto = {
     id: `photo-${Date.now()}-${photos.length + 1}`,
     name: input.photoName || input.fileName,
     url: `/api/v1/design/asset-file?key=${encodeURIComponent(saved.storageObjectKey)}`,
     storageObjectKey: saved.storageObjectKey,
-    selected: true,
+    selected: !isProductRef || photos.length === 0,
+    photoRole: isProductRef ? 'product_reference' : 'site_photo',
     uploadedAt: new Date().toISOString(),
   };
 
-  // Set this newly added photo as selected, deselecting others
-  photos.forEach((p) => {
-    p.selected = false;
-  });
+  // If this is a site photo (or first photo), select it and deselect other site photos
+  if (!isProductRef || photos.length === 0) {
+    photos.forEach((p) => {
+      p.selected = false;
+    });
+  }
   photos.push(newPhoto);
   meta.photos = photos;
-  if (meta.designContext) {
+  if (meta.designContext && (!isProductRef || photos.length === 1)) {
     meta.designContext.fields.selectedPhotoId = newPhoto.id;
   }
 
   await prisma.designRequest.update({
     where: { id: requestId },
     data: {
-      sitePhotoUrl: saved.storageObjectKey,
+      sitePhotoUrl: !isProductRef || !existing.sitePhotoUrl ? saved.storageObjectKey : existing.sitePhotoUrl,
       installPositionJson: JSON.stringify(meta),
       version: { increment: 1 },
     },

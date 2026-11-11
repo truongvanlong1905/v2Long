@@ -40,14 +40,14 @@ export class OpenAiImageProvider implements AiDesignProvider {
     const isConfigured = Boolean(this.apiKey);
     return {
       provider: 'openai_dalle',
-      providerName: 'OpenAI GPT-Image-1 & DALL-E 3',
+      providerName: 'OpenAI GPT 2.5 Image / GPT-Image-1 & DALL-E 3',
       isConfigured,
       statusLabel: isConfigured ? 'Đã kết nối API Key' : 'Chưa cấu hình API Key (OPENAI_API_KEY)',
       activeModel: this.activeModel,
       costPerImageUsd: 0.04,
       supportsInpainting: true,
       notes:
-        'Hỗ trợ chỉnh sửa ảnh theo vùng mask (Inpainting), hiển thị chữ sắc nét trên Banner LED và phối cảnh theo API OpenAI.',
+        'Hỗ trợ ghép ảnh sản phẩm vào ảnh hiện trường (Multi-Image Edit), hiển thị chữ sắc nét trên Banner và dựng phối cảnh 3D.',
     };
   }
 
@@ -55,13 +55,17 @@ export class OpenAiImageProvider implements AiDesignProvider {
     input: PerspectiveGenerationInput
   ): Promise<ProviderGenerationResult> {
     const started = Date.now();
+    const requestedModel = (input.modelId || this.activeModel || 'gpt-image-1').trim();
+    const apiModel = requestedModel === 'gpt-2.5-image' ? 'gpt-image-1' : requestedModel;
+    const isGptImageModel = apiModel.startsWith('gpt-image');
+
     if (input.simulateTimeout) {
       await new Promise((r) => setTimeout(r, 120));
       return {
         imageBuffer: Buffer.alloc(0),
         mimeType: 'image/png',
         durationMs: Date.now() - started,
-        modelUsed: 'dall-e-2-edit',
+        modelUsed: requestedModel,
         provider: 'openai_dalle',
         promptTokens: 0,
         completionTokens: 0,
@@ -78,7 +82,7 @@ export class OpenAiImageProvider implements AiDesignProvider {
         imageBuffer: Buffer.alloc(0),
         mimeType: 'image/png',
         durationMs: Date.now() - started,
-        modelUsed: 'dall-e-2-edit',
+        modelUsed: requestedModel,
         provider: 'openai_dalle',
         promptTokens: 0,
         completionTokens: 0,
@@ -91,21 +95,56 @@ export class OpenAiImageProvider implements AiDesignProvider {
     }
 
     try {
-      // In production, invoke https://api.openai.com/v1/images/edits or generations
-      const res = await fetch('https://api.openai.com/v1/images/generations', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'dall-e-3',
+      // When using gpt-image-1 / gpt-2.5-image and we have a site photo or product reference photo(s), use /v1/images/edits for true multi-image compositing!
+      const hasSitePhoto = Boolean(input.referenceImageBuffer && input.referenceImageBuffer.length > 0);
+      const hasProductPhotos = Boolean(input.productReferenceBuffers && input.productReferenceBuffers.length > 0);
+
+      let res: Response;
+      if (isGptImageModel && (hasSitePhoto || hasProductPhotos)) {
+        const form = new FormData();
+        form.append('model', apiModel);
+        form.append('prompt', input.prompt);
+        form.append('size', '1536x1024');
+        if (hasSitePhoto && input.referenceImageBuffer) {
+          const blob = new Blob([new Uint8Array(input.referenceImageBuffer)], {
+            type: input.referenceImageMimeType || 'image/png',
+          });
+          form.append('image[]', blob, 'site-photo.png');
+        }
+        if (hasProductPhotos && input.productReferenceBuffers) {
+          input.productReferenceBuffers.forEach((prod, idx) => {
+            const blob = new Blob([new Uint8Array(prod.buffer)], {
+              type: prod.mimeType || 'image/png',
+            });
+            form.append('image[]', blob, prod.name || `product-${idx + 1}.png`);
+          });
+        }
+        res = await fetch('https://api.openai.com/v1/images/edits', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: form,
+        });
+      } else {
+        const bodyPayload: Record<string, unknown> = {
+          model: isGptImageModel ? apiModel : 'dall-e-3',
           prompt: input.prompt,
           n: 1,
-          size: '1024x1024',
-          response_format: 'b64_json',
-        }),
-      });
+          size: isGptImageModel ? '1536x1024' : '1024x1024',
+        };
+        if (!isGptImageModel) {
+          bodyPayload.response_format = 'b64_json';
+        }
+        res = await fetch(this.apiEndpoint || 'https://api.openai.com/v1/images/generations', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(bodyPayload),
+        });
+      }
 
       const durationMs = Date.now() - started;
       if (!res.ok) {
@@ -114,7 +153,7 @@ export class OpenAiImageProvider implements AiDesignProvider {
           imageBuffer: Buffer.alloc(0),
           mimeType: 'image/png',
           durationMs,
-          modelUsed: 'dall-e-3',
+          modelUsed: requestedModel,
           provider: 'openai_dalle',
           promptTokens: 0,
           completionTokens: 0,
@@ -129,10 +168,10 @@ export class OpenAiImageProvider implements AiDesignProvider {
       const json = await res.json();
       const b64 = json.data?.[0]?.b64_json;
       return {
-        imageBuffer: Buffer.from(b64, 'base64'),
+        imageBuffer: Buffer.from(b64 || '', 'base64'),
         mimeType: 'image/png',
         durationMs,
-        modelUsed: 'dall-e-3',
+        modelUsed: requestedModel,
         provider: 'openai_dalle',
         promptTokens: Math.round(input.prompt.length * 1.5),
         completionTokens: 1024,
@@ -146,7 +185,7 @@ export class OpenAiImageProvider implements AiDesignProvider {
         imageBuffer: Buffer.alloc(0),
         mimeType: 'image/png',
         durationMs: Date.now() - started,
-        modelUsed: 'dall-e-3',
+        modelUsed: requestedModel,
         provider: 'openai_dalle',
         promptTokens: 0,
         completionTokens: 0,
@@ -161,12 +200,16 @@ export class OpenAiImageProvider implements AiDesignProvider {
 
   async generateBannerDraft(input: BannerGenerationInput): Promise<ProviderGenerationResult> {
     const started = Date.now();
+    const requestedModel = (input.modelId || this.activeModel || 'gpt-image-1').trim();
+    const apiModel = requestedModel === 'gpt-2.5-image' ? 'gpt-image-1' : requestedModel;
+    const isGptImageModel = apiModel.startsWith('gpt-image');
+
     if (!this.apiKey) {
       return {
         imageBuffer: Buffer.alloc(0),
         mimeType: 'image/png',
         durationMs: Date.now() - started,
-        modelUsed: 'dall-e-3',
+        modelUsed: requestedModel,
         provider: 'openai_dalle',
         promptTokens: 0,
         completionTokens: 0,
@@ -179,20 +222,55 @@ export class OpenAiImageProvider implements AiDesignProvider {
     }
 
     try {
-      const res = await fetch('https://api.openai.com/v1/images/generations', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'dall-e-3',
+      const hasProductPhotos = Boolean(input.productReferenceBuffers && input.productReferenceBuffers.length > 0);
+      let res: Response;
+
+      if (isGptImageModel && hasProductPhotos && input.productReferenceBuffers) {
+        const form = new FormData();
+        form.append('model', apiModel);
+        form.append('prompt', input.prompt);
+        form.append(
+          'size',
+          input.dimensions.widthPx >= input.dimensions.heightPx ? '1536x1024' : '1024x1536'
+        );
+        input.productReferenceBuffers.forEach((prod, idx) => {
+          const blob = new Blob([new Uint8Array(prod.buffer)], {
+            type: prod.mimeType || 'image/png',
+          });
+          form.append('image[]', blob, prod.name || `product-${idx + 1}.png`);
+        });
+        res = await fetch('https://api.openai.com/v1/images/edits', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: form,
+        });
+      } else {
+        const bodyPayload: Record<string, unknown> = {
+          model: isGptImageModel ? apiModel : 'dall-e-3',
           prompt: input.prompt,
           n: 1,
-          size: input.dimensions.widthPx > input.dimensions.heightPx ? '1792x1024' : '1024x1792',
-          response_format: 'b64_json',
-        }),
-      });
+          size: isGptImageModel
+            ? input.dimensions.widthPx >= input.dimensions.heightPx
+              ? '1536x1024'
+              : '1024x1536'
+            : input.dimensions.widthPx > input.dimensions.heightPx
+              ? '1792x1024'
+              : '1024x1792',
+        };
+        if (!isGptImageModel) {
+          bodyPayload.response_format = 'b64_json';
+        }
+        res = await fetch(this.apiEndpoint || 'https://api.openai.com/v1/images/generations', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(bodyPayload),
+        });
+      }
 
       const durationMs = Date.now() - started;
       if (!res.ok) {
@@ -201,7 +279,7 @@ export class OpenAiImageProvider implements AiDesignProvider {
           imageBuffer: Buffer.alloc(0),
           mimeType: 'image/png',
           durationMs,
-          modelUsed: 'dall-e-3',
+          modelUsed: requestedModel,
           provider: 'openai_dalle',
           promptTokens: 0,
           completionTokens: 0,
@@ -216,10 +294,10 @@ export class OpenAiImageProvider implements AiDesignProvider {
       const json = await res.json();
       const b64 = json.data?.[0]?.b64_json;
       return {
-        imageBuffer: Buffer.from(b64, 'base64'),
+        imageBuffer: Buffer.from(b64 || '', 'base64'),
         mimeType: 'image/png',
         durationMs,
-        modelUsed: 'dall-e-3',
+        modelUsed: requestedModel,
         provider: 'openai_dalle',
         promptTokens: Math.round(input.prompt.length * 1.5),
         completionTokens: 1024,
@@ -233,7 +311,7 @@ export class OpenAiImageProvider implements AiDesignProvider {
         imageBuffer: Buffer.alloc(0),
         mimeType: 'image/png',
         durationMs: Date.now() - started,
-        modelUsed: 'dall-e-3',
+        modelUsed: requestedModel,
         provider: 'openai_dalle',
         promptTokens: 0,
         completionTokens: 0,

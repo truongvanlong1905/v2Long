@@ -77,6 +77,7 @@ export interface ProjectPhotoItemDto {
   url: string;
   storageObjectKey?: string;
   selected: boolean;
+  photoRole?: 'site_photo' | 'product_reference';
   uploadedAt: string;
   sourceLeadAttachmentId?: number;
 }
@@ -88,6 +89,7 @@ export interface DesignChatMessageDto {
   timestamp: string;
   chatMode?: 'consultant_free' | 'image_generator';
   suggestedTaoAnhPrompt?: string;
+  attachedProductPhotos?: Array<{ id: string; name: string; url: string }>;
   versionId?: number;
   versionNumber?: number;
   providerId?: string;
@@ -298,6 +300,8 @@ export const UpdateDesignProjectSchema = z.object({
   compositingMode: z.enum(['STRICT', 'REALISTIC']).optional(),
   renamePhotoId: z.string().trim().optional(),
   renamePhotoName: z.string().trim().min(1).max(120).optional(),
+  toggleProductPhotoId: z.string().trim().optional(),
+  productPhotoRole: z.enum(['site_photo', 'product_reference']).optional(),
   renameVersionId: z.number().int().positive().optional(),
   renameVersionLabel: z.string().trim().min(1).max(200).optional(),
   isArchived: z.boolean().optional(),
@@ -323,6 +327,10 @@ export const ChatDesignRequestSchema = z.object({
   modelId: z.string().trim().max(120).optional(),
   placementQuad: QuadCoordinatesSchema.optional().nullable(),
   selectedPhotoUrl: z.string().trim().optional().nullable(),
+  clientRenderedBase64: z.string().optional().nullable(),
+  referenceProductPhotoIds: z.array(z.string()).optional(),
+  referenceProductPhotoUrls: z.array(z.string()).optional(),
+  referenceProductName: z.string().trim().max(200).optional().nullable(),
   productId: z.coerce.number().int().optional().nullable(),
   screenWidthM: z.coerce.number().optional().nullable(),
   screenHeightM: z.coerce.number().optional().nullable(),
@@ -382,6 +390,7 @@ export const AddProjectPhotoSchema = z.object({
   fileName: z.string().trim().min(1).max(200),
   mimeType: z.string().trim().default('image/jpeg'),
   base64Data: z.string().min(1),
+  photoRole: z.enum(['site_photo', 'product_reference']).optional(),
 });
 
 export type AddProjectPhotoDto = z.infer<typeof AddProjectPhotoSchema>;

@@ -18,6 +18,7 @@ export interface PerspectiveGenerationInput {
   referenceImageUrl: string;
   referenceImageBuffer?: Buffer;
   referenceImageMimeType?: string;
+  productReferenceBuffers?: Array<{ buffer: Buffer; mimeType: string; name: string }>;
   sourcePhotoId?: string | null;
   sourceVersionId?: number | null;
   placementQuad?: QuadCoordinates;
@@ -43,6 +44,7 @@ export interface PerspectiveGenerationInput {
 export interface BannerGenerationInput {
   workflow: 'banner';
   prompt: string;
+  productReferenceBuffers?: Array<{ buffer: Buffer; mimeType: string; name: string }>;
   sourceVersionId?: number | null;
   dimensions: {
     widthPx: number;

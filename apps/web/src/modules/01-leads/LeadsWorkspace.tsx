@@ -653,18 +653,52 @@ export function LeadsWorkspace() {
     const handleGlobalSearch = (e: Event) => {
       const custom = e as CustomEvent<string>;
       const val = typeof custom.detail === 'string' ? custom.detail : '';
+      if (
+        user?.email &&
+        val.trim().toLowerCase() === user.email.trim().toLowerCase()
+      ) {
+        return;
+      }
       setSearchQuery(val);
     };
     window.addEventListener('tt-lead-search', handleGlobalSearch as EventListener);
-    return () => window.removeEventListener('tt-lead-search', handleGlobalSearch as EventListener);
-  }, []);
+    window.addEventListener('tt-global-search', handleGlobalSearch as EventListener);
+    return () => {
+      window.removeEventListener('tt-lead-search', handleGlobalSearch as EventListener);
+      window.removeEventListener('tt-global-search', handleGlobalSearch as EventListener);
+    };
+  }, [user?.email]);
 
-  // Debounce search query by 300ms
+  // Broadcast active sub-section scope to WorkspaceShell top search bar
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let scopeLabel = 'Leads › Tổng Lead hợp lệ';
+    if (reminderFilter !== 'none') {
+      scopeLabel = 'Leads › Nhắc việc tự động';
+    } else if (specialAlertFilter !== 'none') {
+      scopeLabel = 'Leads › 6. Lưu ý (Trùng / Spam)';
+    } else if (statusFilter === 'new_lead') {
+      scopeLabel = 'Leads › 1. Vừa nhận thông tin';
+    } else if (statusFilter === 'quoting') {
+      scopeLabel = 'Leads › 2. Đang soạn báo giá';
+    } else if (statusFilter === 'quote_sent') {
+      scopeLabel = 'Leads › 3. Đã gửi báo giá';
+    } else if (statusFilter === 'won') {
+      scopeLabel = 'Leads › 4. Chốt thành công';
+    } else if (statusFilter === 'lost') {
+      scopeLabel = 'Leads › 5. Thất bại';
+    }
+    window.dispatchEvent(
+      new CustomEvent('tt-search-scope-change', { detail: { label: scopeLabel } }),
+    );
+  }, [statusFilter, specialAlertFilter, reminderFilter]);
+
+  // Debounce search query by 200ms
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearchQuery(searchQuery);
       setCurrentPage(1);
-    }, 300);
+    }, 200);
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
@@ -775,7 +809,6 @@ export function LeadsWorkspace() {
     abortControllerRef.current = controller;
 
     const qs = new URLSearchParams();
-    if (debouncedSearchQuery.trim()) qs.set('search', debouncedSearchQuery.trim());
     if (includeSpam) qs.set('includeSpam', 'true');
     const url = `/api/v1/leads?${qs.toString()}`;
 
@@ -1207,6 +1240,38 @@ export function LeadsWorkspace() {
         return horizon.key === b2bHorizonFilter;
       });
     }
+    // Scoped search strictly inside the currently selected Lead sub-section / tab
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      const qDigits = q.replace(/\D/g, '');
+      list = list.filter((l) => {
+        const haystack = [
+          l.leadCode,
+          l.phone,
+          l.contactName,
+          l.companyName,
+          l.projectName,
+          l.email,
+          l.hcmDistrict,
+          l.province,
+          l.installationAddress,
+          l.assignedSalesName,
+          l.selfReportedSource,
+          l.tracking?.marketingSource,
+          l.customProductNote,
+          l.initialNote,
+          l.lostReason,
+          l.reopenReason,
+          ...l.products.map((p) => p.productName),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (haystack.includes(q)) return true;
+        if (qDigits.length >= 3 && l.phone.replace(/\D/g, '').includes(qDigits)) return true;
+        return false;
+      });
+    }
     return list;
   }, [
     timeFilteredLeads,
@@ -1218,6 +1283,7 @@ export function LeadsWorkspace() {
     overdueOnly,
     unreceivedOnly,
     b2bHorizonFilter,
+    searchQuery,
   ]);
 
   const totalFilteredCount = displayedLeads.length;
@@ -2995,30 +3061,30 @@ export function LeadsWorkspace() {
             })}
           </div>
 
-          {/* UI-01, UI-02, UI-03: Simplified 7-Column Default Desktop Table with Subtle Row Accents */}
+          {/* UI-01, UI-02, UI-03: Simplified 7-Column Default Desktop Table — Fits 100% Width with Zero Horizontal Scroll */}
           <div className="hidden md:block bg-white border border-slate-200/90 rounded-2xl overflow-hidden shadow-2xs">
-            <div className="overflow-x-auto">
+            <div className={showOptionalColumns ? 'overflow-x-auto' : 'overflow-x-hidden'}>
               <table
-                className={`w-full text-left border-collapse text-sm ${
-                  showOptionalColumns ? 'min-w-[1280px]' : 'table-fixed'
+                className={`w-full text-left border-collapse text-[13px] ${
+                  showOptionalColumns ? 'min-w-[1220px]' : 'table-fixed'
                 }`}
               >
-                <thead className="bg-slate-50/90 text-slate-600 border-b border-slate-200/80 text-xs font-bold uppercase tracking-wider">
+                <thead className="bg-slate-50/90 text-slate-600 border-b border-slate-200/80 text-[11px] font-bold uppercase tracking-wider">
                   <tr>
-                    <th className="py-3 px-3.5 w-[19%]">Khách hàng / Dự án</th>
-                    <th className="py-3 px-3 w-[13%]">Liên hệ &amp; Nguồn / Kênh</th>
-                    <th className="py-3 px-3 w-[12%]">Sản phẩm LED</th>
-                    <th className="py-3 px-3 w-[16%]">Trạng thái &amp; Lịch theo dõi</th>
-                    <th className="py-3 px-3 w-[17%]">Sales phụ trách</th>
-                    <th className="py-3 px-3 w-[11%]">Ngày nhận</th>
+                    <th className="py-2.5 px-3 w-[19%]">Khách hàng / Dự án</th>
+                    <th className="py-2.5 px-2.5 w-[16%]">Liên hệ &amp; Nguồn / Kênh</th>
+                    <th className="py-2.5 px-2.5 w-[13%]">Sản phẩm LED</th>
+                    <th className="py-2.5 px-2.5 w-[16%]">Trạng thái &amp; Lịch theo dõi</th>
+                    <th className="py-2.5 px-2.5 w-[14%]">Sales phụ trách</th>
+                    <th className="py-2.5 px-2 w-[9%]">Ngày nhận</th>
                     {showOptionalColumns && (
                       <>
-                        <th className="py-3 px-3 w-[140px]">Khu vực / Địa chỉ</th>
-                        <th className="py-3 px-3 w-[120px]">Chi tiết UTM</th>
-                        <th className="py-3 px-3 w-[160px]">Ghi chú</th>
+                        <th className="py-2.5 px-2.5 w-[135px]">Khu vực / Địa chỉ</th>
+                        <th className="py-2.5 px-2.5 w-[115px]">Chi tiết UTM</th>
+                        <th className="py-2.5 px-2.5 w-[150px]">Ghi chú</th>
                       </>
                     )}
-                    <th className="py-3 px-3.5 text-right w-[12%]">Thao tác</th>
+                    <th className="py-2.5 px-3 text-right w-[13%]">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200/70">
@@ -3098,10 +3164,10 @@ export function LeadsWorkspace() {
                           }`}
                         >
                           {/* Col 1: Customer / Project */}
-                          <td className="py-2.5 px-3.5 align-middle overflow-hidden">
+                          <td className="py-2 px-3 align-middle overflow-hidden">
                             <div className="flex items-center gap-1.5 truncate">
                               <span
-                                className="font-bold text-slate-900 text-sm truncate"
+                                className="font-bold text-slate-900 text-[13px] truncate"
                                 title={primaryName}
                               >
                                 {primaryName}
@@ -3117,12 +3183,12 @@ export function LeadsWorkspace() {
                               )}
                             </div>
                             <div
-                              className="text-[13px] text-slate-600 truncate mt-0.5"
+                              className="text-xs text-slate-600 truncate mt-0.5"
                               title={secondaryProject}
                             >
                               {secondaryProject}
                             </div>
-                            <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500 font-mono truncate">
+                            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500 font-mono truncate">
                               <span className="truncate font-semibold text-[#1E3A8A]" title={lead.leadCode}>
                                 {lead.leadCode}
                               </span>
@@ -3135,17 +3201,17 @@ export function LeadsWorkspace() {
                             </div>
                           </td>
 
-                          {/* Col 2: Contact (Readable Name, Phone, Channel) */}
-                          <td className="py-2.5 px-3 align-middle whitespace-nowrap">
-                            <div className="font-bold font-mono text-slate-900 text-sm flex items-center gap-1.5">
+                          {/* Col 2: Contact (Readable Name, Phone, Channel — Bounded without forcing horizontal scroll) */}
+                          <td className="py-2 px-2.5 align-middle overflow-hidden">
+                            <div className="font-bold font-mono text-slate-900 text-[13px] flex items-center gap-1 truncate">
                               <Phone className="w-3.5 h-3.5 text-[#1E3A8A] shrink-0" />
-                              <span>{lead.phone}</span>
+                              <span className="truncate">{lead.phone}</span>
                             </div>
-                            <div className="text-[13px] text-slate-600 truncate max-w-[155px] mt-0.5">
+                            <div className="text-xs text-slate-600 truncate mt-0.5">
                               {lead.contactName || 'Khách liên hệ'}
                             </div>
-                            <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                              <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-900 border border-indigo-200/70 text-xs font-semibold truncate max-w-[155px]">
+                            <div className="mt-1 flex items-center gap-1 flex-wrap">
+                              <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-900 border border-indigo-200/70 text-[11px] font-semibold truncate max-w-full">
                                 {(() => {
                                   const rawSrc =
                                     lead.selfReportedSource ||
@@ -3167,7 +3233,7 @@ export function LeadsWorkspace() {
                                 })()}
                               </span>
                               {!lead.isPhoneNormalized && (
-                                <span className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium">
+                                <span className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-medium truncate">
                                   SĐT cần chuẩn hóa
                                 </span>
                               )}
@@ -3175,18 +3241,18 @@ export function LeadsWorkspace() {
                           </td>
 
                           {/* Col 3: Products */}
-                          <td className="py-2.5 px-3 align-middle max-w-[175px] xl:max-w-[215px]">
+                          <td className="py-2 px-2.5 align-middle overflow-hidden">
                             {primaryProduct ? (
-                              <div className="flex items-center gap-1.5 flex-wrap">
+                              <div className="flex items-center gap-1 flex-wrap">
                                 <span
-                                  className="px-2 py-1 rounded-lg bg-blue-50 text-[#1E3A8A] border border-blue-200 text-xs font-semibold truncate max-w-[135px] xl:max-w-[165px]"
+                                  className="px-2 py-0.5 rounded-lg bg-blue-50 text-[#1E3A8A] border border-blue-200 text-[11px] font-semibold truncate max-w-full"
                                   title={primaryProduct.productName}
                                 >
                                   {primaryProduct.productName}
                                 </span>
                                 {extraProducts.length > 0 && (
                                   <span
-                                    className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 text-xs font-bold shrink-0"
+                                    className="px-1.5 py-0.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 text-[11px] font-bold shrink-0"
                                     title={`Sản phẩm kèm theo: ${extraProducts
                                       .map((p) => p.productName)
                                       .join(', ')}`}
@@ -3196,20 +3262,20 @@ export function LeadsWorkspace() {
                                 )}
                               </div>
                             ) : (
-                              <span className="text-xs text-slate-400">Chưa chọn sản phẩm</span>
+                              <span className="text-xs text-slate-400">Chưa chọn SP</span>
                             )}
                           </td>
 
                           {/* Col 4: Pipeline Status & Warnings */}
-                          <td className="py-2.5 px-3 align-middle">
-                            <div className="flex flex-col items-start gap-1">
+                          <td className="py-2 px-2.5 align-middle overflow-hidden">
+                            <div className="flex flex-col items-start gap-1 max-w-full">
                               <span
-                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs whitespace-nowrap ${
+                                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg border text-[11px] truncate max-w-full ${
                                   STATUS_BADGE_STYLES[lead.pipelineStatus]
                                 }`}
                               >
-                                <span className="w-1.5 h-1.5 rounded-full bg-current opacity-85" />
-                                <span>{PIPELINE_STATUS_LABELS[lead.pipelineStatus]}</span>
+                                <span className="w-1.5 h-1.5 rounded-full bg-current opacity-85 shrink-0" />
+                                <span className="truncate">{PIPELINE_STATUS_LABELS[lead.pipelineStatus]}</span>
                               </span>
 
                               {/* Separate Restrained Warning Pills */}
@@ -3391,10 +3457,10 @@ export function LeadsWorkspace() {
                           </td>
 
                           {/* Col 5: Assigned Sales (Clean Bounded Width, No Overflow into Col 6) */}
-                          <td className="py-2.5 px-3 align-middle min-w-0 max-w-0 overflow-hidden">
+                          <td className="py-2 px-2.5 align-middle min-w-0 max-w-0 overflow-hidden">
                             <div className="flex flex-col min-w-0 max-w-full">
                               <div
-                                className="font-semibold text-slate-900 text-sm truncate"
+                                className="font-semibold text-slate-900 text-[13px] truncate"
                                 title={lead.assignedSalesName || 'Chưa phân bổ'}
                               >
                                 {lead.assignedSalesName || 'Chưa phân bổ'}
@@ -3402,7 +3468,7 @@ export function LeadsWorkspace() {
                               {fraud.transferredFromSalesName && (
                                 <div className="mt-0.5 min-w-0 max-w-full">
                                   <span
-                                    className="inline-flex items-center gap-1 max-w-full min-w-0 px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-[11px] font-semibold text-indigo-800"
+                                    className="inline-flex items-center gap-1 max-w-full min-w-0 px-1.5 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-[10px] font-semibold text-indigo-800"
                                     title={`Chuyển từ ${fraud.transferredFromSalesName}${fraud.transferCount > 1 ? ` (${fraud.transferCount} lần)` : ''}`}
                                   >
                                     <span className="truncate min-w-0">
@@ -3418,13 +3484,13 @@ export function LeadsWorkspace() {
                               )}
                               <div className="mt-0.5 min-w-0 truncate">
                                 {lead.receivedConfirmedAt ? (
-                                  <span className="inline-flex items-center gap-1 text-xs text-emerald-700 font-semibold truncate">
-                                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                                  <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-semibold truncate">
+                                    <CheckCircle2 className="w-3 h-3 shrink-0" />
                                     <span className="truncate">Đã tiếp nhận</span>
                                   </span>
                                 ) : (
-                                  <span className="inline-flex items-center gap-1 text-xs text-amber-700 font-semibold truncate">
-                                    <Clock className="w-3.5 h-3.5 shrink-0" />
+                                  <span className="inline-flex items-center gap-1 text-[11px] text-amber-700 font-semibold truncate">
+                                    <Clock className="w-3 h-3 shrink-0" />
                                     <span className="truncate">Chờ xác nhận</span>
                                   </span>
                                 )}
@@ -3433,11 +3499,11 @@ export function LeadsWorkspace() {
                           </td>
 
                           {/* Col 6: Received Date */}
-                          <td className="py-2.5 px-3 align-middle whitespace-nowrap min-w-0">
-                            <div className="text-sm font-semibold text-slate-800">
+                          <td className="py-2 px-2 align-middle overflow-hidden min-w-0">
+                            <div className="text-[13px] font-semibold text-slate-800 truncate">
                               {new Date(lead.contactedAt).toLocaleDateString('vi-VN')}
                             </div>
-                            <div className="text-xs text-slate-500 mt-0.5">
+                            <div className="text-[11px] text-slate-500 mt-0.5 truncate">
                               {new Date(lead.contactedAt).toLocaleTimeString('vi-VN', {
                                 hour: '2-digit',
                                 minute: '2-digit',
@@ -3448,26 +3514,26 @@ export function LeadsWorkspace() {
                           {/* Optional Columns when toggled on */}
                           {showOptionalColumns && (
                             <>
-                              <td className="py-2.5 px-3 align-middle max-w-[180px]">
-                                <div className="text-sm text-slate-800 truncate">
+                              <td className="py-2 px-2.5 align-middle max-w-[180px]">
+                                <div className="text-xs text-slate-800 truncate">
                                   {lead.areaType === 'hcm'
                                     ? `TP.HCM · ${lead.hcmDistrict || ''}`
                                     : lead.province || '—'}
                                 </div>
                                 {lead.installationAddress && (
-                                  <div className="text-xs text-slate-500 truncate mt-0.5">
+                                  <div className="text-[11px] text-slate-500 truncate mt-0.5">
                                     {lead.installationAddress}
                                   </div>
                                 )}
                               </td>
-                              <td className="py-2.5 px-3 align-middle whitespace-nowrap">
-                                <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-xs font-medium">
+                              <td className="py-2 px-2.5 align-middle whitespace-nowrap">
+                                <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[11px] font-medium">
                                   {lead.tracking?.marketingSource ||
                                     lead.selfReportedSource ||
                                     CONTACT_CHANNEL_LABELS[lead.contactChannel]}
                                 </span>
                               </td>
-                              <td className="py-2.5 px-3 align-middle max-w-[200px]">
+                              <td className="py-2 px-2.5 align-middle max-w-[200px]">
                                 <p className="text-xs text-slate-600 truncate" title={noteSummary}>
                                   {noteSummary}
                                 </p>
@@ -3475,27 +3541,27 @@ export function LeadsWorkspace() {
                             </>
                           )}
 
-                          {/* Col 7: Consolidated Row Actions with Direct Edit */}
+                          {/* Col 7: Consolidated Row Actions with Direct Edit — Compact Fit */}
                           <td
-                            className="py-2.5 px-3.5 align-middle text-right whitespace-nowrap"
+                            className="py-2 px-2.5 align-middle text-right overflow-hidden"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <div className="inline-flex items-center justify-end gap-1">
+                            <div className="inline-flex items-center justify-end gap-1 flex-wrap">
                               {!lead.isAnonymized && cleanDigits.length >= 9 && (
                                 <>
                                   <a
                                     href={`tel:${cleanDigits}`}
-                                    className="h-8 px-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold inline-flex items-center gap-1 transition"
+                                    className="h-7 px-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-bold inline-flex items-center gap-0.5 transition shrink-0"
                                     title={`Gọi ${lead.phone}`}
                                   >
-                                    <Phone className="w-3.5 h-3.5" />
+                                    <Phone className="w-3 h-3" />
                                     <span>Gọi</span>
                                   </a>
                                   <a
                                     href={`https://zalo.me/${cleanDigits}`}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="h-8 px-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-[#1E3A8A] border border-blue-200 text-xs font-bold inline-flex items-center transition"
+                                    className="h-7 px-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-[#1E3A8A] border border-blue-200 text-[11px] font-bold inline-flex items-center transition shrink-0"
                                     title="Nhắn Zalo"
                                   >
                                     Zalo
@@ -3508,7 +3574,7 @@ export function LeadsWorkspace() {
                                   setSelectedLeadId(lead.id);
                                   setLeadDetailTab('info');
                                 }}
-                                className="h-8 px-3 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-[#1E3A8A] text-xs font-semibold inline-flex items-center shadow-2xs transition"
+                                className="h-7 px-2.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-[#1E3A8A] text-[11px] font-semibold inline-flex items-center shadow-2xs transition shrink-0"
                                 title={
                                   editable
                                     ? 'Mở chi tiết để xem và chỉnh sửa trực tiếp thông tin Lead'

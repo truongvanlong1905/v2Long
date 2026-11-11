@@ -60,7 +60,8 @@ export class GoogleImagenProvider implements AiDesignProvider {
     prompt: string,
     started: number,
     referenceImageBuffer?: Buffer,
-    referenceImageMimeType?: string
+    referenceImageMimeType?: string,
+    productReferenceBuffers?: Array<{ buffer: Buffer; mimeType: string; name: string }>
   ): Promise<{ result: ProviderGenerationResult | null; freeTierBlocked?: boolean }> {
     if (!this.apiKey) return { result: null };
     const requestedImgModel =
@@ -71,12 +72,12 @@ export class GoogleImagenProvider implements AiDesignProvider {
       new Set(
         [
           requestedImgModel,
+          'gemini-2.5-flash-image',
           'gemini-3.1-flash-image',
           'gemini-3.1-flash-lite-image',
-          'gemini-2.5-flash-image',
         ].filter(Boolean)
       )
-    ).slice(0, 2);
+    ).slice(0, 3);
 
     const parts: Array<
       | { text: string }
@@ -93,6 +94,19 @@ export class GoogleImagenProvider implements AiDesignProvider {
           data: referenceImageBuffer.toString('base64'),
         },
       });
+    }
+
+    if (productReferenceBuffers && productReferenceBuffers.length > 0) {
+      for (const prod of productReferenceBuffers) {
+        if (prod.buffer && prod.buffer.length > 0 && prod.buffer.length < 5 * 1024 * 1024) {
+          parts.push({
+            inlineData: {
+              mimeType: prod.mimeType?.startsWith('image/') ? prod.mimeType : 'image/jpeg',
+              data: prod.buffer.toString('base64'),
+            },
+          });
+        }
+      }
     }
 
     let freeTierBlocked = false;
@@ -201,12 +215,13 @@ export class GoogleImagenProvider implements AiDesignProvider {
       };
     }
 
-    // Try multimodal Gemini Image Editing first (with referenceImageBuffer attached!)
+    // Try multimodal Gemini Image Editing first (with referenceImageBuffer + productReferenceBuffers attached!)
     const gemAttempt = await this.tryGeminiGenerateContentImage(
       input.prompt,
       started,
       input.referenceImageBuffer,
-      input.referenceImageMimeType
+      input.referenceImageMimeType,
+      input.productReferenceBuffers
     );
     if (gemAttempt.result) return gemAttempt.result;
     if (gemAttempt.freeTierBlocked) {
@@ -357,7 +372,13 @@ export class GoogleImagenProvider implements AiDesignProvider {
       };
     }
 
-    const gemAttempt = await this.tryGeminiGenerateContentImage(input.prompt, started);
+    const gemAttempt = await this.tryGeminiGenerateContentImage(
+      input.prompt,
+      started,
+      undefined,
+      undefined,
+      input.productReferenceBuffers
+    );
     if (gemAttempt.result) return gemAttempt.result;
     if (gemAttempt.freeTierBlocked) {
       return {
