@@ -47,6 +47,8 @@ import {
 import { apiRequest } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
 import { GoogleOAuthManager } from '@/components/google-oauth/GoogleOAuthManager';
+import { StandardDateRangeDropdown, type StandardDatePreset } from '@/components/common/StandardDateRangeDropdown';
+import { RealtimeLiveMotionIndicator } from '@/components/common/RealtimeLiveMotionIndicator';
 
 export function SeoKeywordsWorkspace() {
   const { user } = useSession();
@@ -62,11 +64,14 @@ export function SeoKeywordsWorkspace() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
-  // Navigation Tabs
+  // Navigation Tabs & Date Filter
   const [mainTab, setMainTab] = useState<'overview' | 'keywords' | 'content'>('overview');
   const [wordViewMode, setWordViewMode] = useState<'preview' | 'editor'>('preview');
   const [contentSubTab, setContentSubTab] = useState<'compose' | 'review' | 'history'>('compose');
   const [showCampaignsTable, setShowCampaignsTable] = useState(false);
+  const [datePreset, setDatePreset] = useState<StandardDatePreset>('30D');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
 
   // Direct Sync & Import Modal + Realtime Auto-Polling State
   const adsImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -822,62 +827,71 @@ export function SeoKeywordsWorkspace() {
         }}
       />
 
-      {/* ==================== TOP HEADER CARD + 3-TAB PILL NAVIGATION ==================== */}
-      <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-xs space-y-5">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      {/* ==================== TOP HEADER CARD + 3 LARGE EXPANSIVE TABS ==================== */}
+      <div className="bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6">
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-5 pb-2">
           <div>
-            <h1 className="font-display text-2xl sm:text-3xl font-bold text-slate-900">
+            <h1 className="font-display text-2xl sm:text-3xl lg:text-4xl font-extrabold text-slate-900 tracking-tight">
               Quảng cáo, Từ khóa &amp; Báo cáo SEO
             </h1>
+            <p className="text-sm text-slate-500 mt-1 font-medium">
+              Đồng bộ dữ liệu thời gian thực từ Google Ads, Google Analytics 4 và Search Console Toàn Trung.
+            </p>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => setRealtimeAutoEnabled((prev) => !prev)}
-              className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-xs font-bold transition ${
-                realtimeAutoEnabled
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                  : 'bg-slate-100 border-slate-200 text-slate-600'
-              }`}
-              title="Bật/Tắt chế độ tự động đọc dữ liệu Realtime từ Google Analytics 4 & Google Sheets mỗi 15 giây"
-            >
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  realtimeAutoEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
-                }`}
-              />
-              <span>
-                {realtimeAutoEnabled
-                  ? `Đọc Realtime (15s)${realtimePolling ? ' • Đang quét...' : ''}`
-                  : 'Realtime: Tạm dừng'}
-              </span>
-            </button>
+          <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3">
+            {/* Standard Date Range Dropdown (Matching Leads & Tracking) */}
+            <StandardDateRangeDropdown
+              preset={datePreset}
+              customStartDate={customStartDate}
+              customEndDate={customEndDate}
+              onChangePreset={(p) => {
+                setDatePreset(p);
+                void fetchSeoData();
+              }}
+              onChangeCustomRange={(start, end) => {
+                setCustomStartDate(start);
+                setCustomEndDate(end);
+                void fetchSeoData();
+              }}
+              size="md"
+            />
+
+            {/* Realtime Live Motion Indicator with 15s auto-polling */}
+            <RealtimeLiveMotionIndicator
+              isPolling={realtimePolling}
+              lastUpdated={lastRealtimeSyncAt}
+              intervalSec={15}
+              onRefresh={() => void pollRealtimeData(false)}
+              label="Realtime Live"
+              subLabel="Tự động cập nhật 15s"
+              size="md"
+            />
 
             <button
               type="button"
               onClick={() => setShowDirectSyncModal(true)}
-              className="h-9 px-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center gap-1.5 transition shadow-2xs"
+              className="h-11 px-4 sm:px-5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-bold inline-flex items-center gap-2 transition shadow-xs"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${busy || realtimePolling ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${busy || realtimePolling ? 'animate-spin' : ''}`} />
               <span>Kết nối Google Ads &amp; GA4</span>
             </button>
 
             <button
               type="button"
               onClick={() => adsImportInputRef.current?.click()}
-              className="h-9 px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold inline-flex items-center gap-1.5 transition"
+              className="h-11 px-4 sm:px-5 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-bold inline-flex items-center gap-2 transition shadow-2xs"
             >
-              <FolderUp className="w-3.5 h-3.5 text-slate-600" />
+              <FolderUp className="w-4 h-4 text-slate-600" />
               <span>Nhập Excel/CSV</span>
             </button>
 
             <button
               type="button"
               onClick={handleExportData}
-              className="h-9 px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold inline-flex items-center gap-1.5 transition"
+              className="h-11 px-4 sm:px-5 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-bold inline-flex items-center gap-2 transition shadow-2xs"
             >
-              <Download className="w-3.5 h-3.5 text-slate-600" />
+              <Download className="w-4 h-4 text-slate-600" />
               <span>Xuất báo cáo</span>
             </button>
           </div>
@@ -886,25 +900,66 @@ export function SeoKeywordsWorkspace() {
         {/* Google OAuth 2.0 Fast Connect Banner (One-Click Connect for Module 03 & All Modules) */}
         <GoogleOAuthManager compact returnPath="/ads" onSyncCompleted={() => void fetchSeoData()} />
 
-        {/* 3-Tab Pill Navigation Bar (Clean Soft Segmented Container) */}
-        <div className="bg-slate-100/80 p-1.5 rounded-2xl grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+        {/* Live Traffic Stream Bar (GA4 Realtime + Search Console Motion) */}
+        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-3 sm:p-3.5 shadow-sm border border-indigo-500/30 flex flex-wrap items-center justify-between gap-3 overflow-hidden">
+          <div className="flex items-center gap-3">
+            <span className="relative flex h-3 w-3 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
+            </span>
+            <div className="text-xs">
+              <span className="font-extrabold text-emerald-400 uppercase tracking-wide mr-2">
+                GA4 Realtime Stream:
+              </span>
+              <strong className="text-white font-mono text-sm bg-white/10 px-2 py-0.5 rounded-md border border-white/10 mr-2">
+                {realtimeActiveUsers30m} người dùng trực tiếp
+              </strong>
+              <span className="text-slate-300 hidden md:inline">
+                {realtimeActivePages.length > 0
+                  ? `Đang xem: "${realtimeActivePages[0].page}" (${realtimeActivePages[0].users} user)`
+                  : 'Đang theo dõi luồng sự kiện 30 phút qua'}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex items-end gap-1 h-3.5" title="Tần suất tín hiệu Realtime">
+              <span className="w-1 bg-emerald-400 animate-equalizer-1 rounded-xs" />
+              <span className="w-1 bg-indigo-400 animate-equalizer-2 rounded-xs" />
+              <span className="w-1 bg-teal-400 animate-equalizer-3 rounded-xs" />
+              <span className="w-1 bg-emerald-300 animate-equalizer-4 rounded-xs" />
+            </div>
+            <span className="text-[11px] font-mono text-slate-300 bg-black/30 px-2 py-1 rounded-lg border border-white/10">
+              ⚡ Quét tự động 15s
+            </span>
+          </div>
+        </div>
+
+        {/* 3 LARGE HIGH-VISIBILITY INTERACTIVE CARDS */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4 p-2 sm:p-2.5 rounded-3xl bg-slate-100/90 border border-slate-200/80">
           {[
             {
               id: 'overview' as const,
               title: 'Báo cáo Top Từ khóa',
-              subtitle: 'Lượt tìm kiếm Search Console',
+              subtitle: 'Phân tích lượt tìm kiếm & Click thật từ Google Search Console',
+              badge: 'Search Console Realtime',
+              badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-300',
               icon: BarChart3,
             },
             {
               id: 'keywords' as const,
               title: 'Danh sách Từ khóa SEO',
-              subtitle: 'Kho từ khóa & Chỉ số chi tiết',
+              subtitle: 'Kho từ khóa toàn hệ thống, chỉ số CPC, CTR & Xu hướng',
+              badge: `${keywords.length} Từ khóa`,
+              badgeColor: 'bg-blue-100 text-blue-800 border-blue-300',
               icon: Search,
             },
             {
               id: 'content' as const,
               title: 'Soạn bài AI & Xem trước Word',
-              subtitle: 'Tự động viết, chỉnh sửa & tải .doc',
+              subtitle: 'Xưởng viết tự động chuẩn SEO, sửa trực tiếp & tải file Word .doc',
+              badge: `${articles.length} Bài viết Word`,
+              badgeColor: 'bg-purple-100 text-purple-800 border-purple-300',
               icon: FileText,
             },
           ].map((tab) => {
@@ -915,26 +970,45 @@ export function SeoKeywordsWorkspace() {
                 key={tab.id}
                 type="button"
                 onClick={() => setMainTab(tab.id)}
-                className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left transition-all ${
+                className={`group relative flex items-start gap-4 p-5 sm:p-6 rounded-2xl text-left transition-all duration-200 ${
                   active
-                    ? 'bg-blue-50/95 border border-blue-200/90 shadow-2xs text-blue-700'
-                    : 'bg-transparent border border-transparent text-slate-600 hover:bg-white/60 hover:text-slate-900'
+                    ? 'bg-white shadow-md border-2 border-blue-600 ring-4 ring-blue-500/10 scale-[1.01]'
+                    : 'bg-white/80 hover:bg-white border-2 border-transparent hover:border-slate-300 shadow-2xs hover:shadow-sm'
                 }`}
               >
-                <Icon
-                  className={`w-4 h-4 shrink-0 ${
-                    active ? 'text-blue-600' : 'text-slate-500'
+                <div
+                  className={`w-14 h-14 sm:w-16 sm:h-16 rounded-2xl grid place-items-center shrink-0 transition-all ${
+                    active
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-500/25'
+                      : 'bg-slate-100 group-hover:bg-blue-50 text-slate-500 group-hover:text-blue-600 border border-slate-200/80'
                   }`}
-                />
-                <div className="min-w-0">
-                  <div
-                    className={`text-sm font-bold truncate ${
-                      active ? 'text-blue-700' : 'text-slate-800'
-                    }`}
-                  >
-                    {tab.title}
+                >
+                  <Icon className="w-7 h-7 sm:w-8 sm:h-8" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`text-base sm:text-lg font-extrabold tracking-tight ${
+                        active ? 'text-blue-700' : 'text-slate-900'
+                      }`}
+                    >
+                      {tab.title}
+                    </span>
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border shrink-0 ${tab.badgeColor}`}
+                    >
+                      {tab.id === 'overview' && (
+                        <span className="relative flex h-2 w-2 shrink-0">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                        </span>
+                      )}
+                      <span>{tab.badge}</span>
+                    </span>
                   </div>
-                  <div className="text-xs text-slate-500 truncate mt-0.5">{tab.subtitle}</div>
+                  <p className="text-xs sm:text-sm text-slate-500 font-medium mt-1.5 leading-relaxed">
+                    {tab.subtitle}
+                  </p>
                 </div>
               </button>
             );

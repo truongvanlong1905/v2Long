@@ -224,51 +224,52 @@ export function GoogleOAuthManager({
     );
   }
 
-  // COMPACT MODE: Top bar banner in Module 02 & Module 03
+  // COMPACT MODE: Top bar banner in Module 02 & Module 03 (Enhanced large legible design)
   if (compact) {
     if (status?.connected) {
       return (
-        <div className="flex flex-wrap items-center justify-between gap-2.5 p-3 rounded-2xl bg-gradient-to-r from-emerald-50/90 to-teal-50/70 border border-emerald-200 text-xs shadow-2xs">
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50/90 to-emerald-50/80 border border-emerald-300/80 shadow-2xs">
+          <div className="flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-extrabold text-base shrink-0 shadow-sm ring-2 ring-emerald-500/20">
               G
             </div>
             <div>
-              <div className="flex items-center gap-1.5 font-bold text-emerald-950">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <div className="flex items-center gap-2 font-extrabold text-sm sm:text-base text-emerald-950 flex-wrap">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
                 <span>Google OAuth 2.0 Đã kết nối:</span>
-                <span className="font-mono text-emerald-800 underline">{status.connectedEmail}</span>
+                <span className="font-mono text-emerald-900 underline font-bold">{status.connectedEmail}</span>
                 {status.isSandboxDemo && (
-                  <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
+                  <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-bold border border-amber-300">
                     Demo Sandbox
                   </span>
                 )}
               </div>
-              <div className="text-[11px] text-emerald-700 mt-0.5 flex items-center gap-2 flex-wrap">
+              <div className="text-xs sm:text-sm text-emerald-800 mt-1 flex items-center gap-2.5 flex-wrap font-medium">
                 <span>⚡ Đồng bộ tự động 3 ca: <strong>02:00 · 11:00 · 17:00</strong></span>
-                <span>• Lần cuối: {status.lastSyncAt ? new Date(status.lastSyncAt).toLocaleTimeString('vi-VN') : 'Vừa xong'}</span>
+                <span>•</span>
+                <span>Lần cuối: <strong>{status.lastSyncAt ? new Date(status.lastSyncAt).toLocaleTimeString('vi-VN') : 'Vừa xong'}</strong></span>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <button
               type="button"
               disabled={busy}
               onClick={() => void handleSyncAllNow()}
-              className="h-8 px-3 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold inline-flex items-center gap-1.5 shadow-2xs transition disabled:opacity-50"
+              className="h-10 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-bold inline-flex items-center gap-2 shadow-xs transition disabled:opacity-50"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} />
               <span>{busy ? 'Đang đồng bộ...' : 'Đồng bộ ngay'}</span>
             </button>
             <button
               type="button"
               disabled={busy}
               onClick={() => void handleDisconnect()}
-              className="h-8 px-2.5 rounded-lg bg-white border border-slate-200 hover:bg-rose-50 hover:text-rose-700 text-slate-600 font-medium inline-flex items-center gap-1 transition"
+              className="h-10 px-3 rounded-xl bg-white border border-slate-300 hover:bg-rose-50 hover:text-rose-700 text-slate-700 font-bold inline-flex items-center gap-1.5 transition shadow-2xs"
               title="Ngắt kết nối Google"
             >
-              <Unlink className="w-3.5 h-3.5" />
+              <Unlink className="w-4 h-4" />
             </button>
           </div>
         </div>

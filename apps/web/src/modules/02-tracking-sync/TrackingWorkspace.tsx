@@ -19,6 +19,8 @@ import { apiRequest } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
 import { GoogleOAuthManager } from '@/components/google-oauth/GoogleOAuthManager';
 import { GoogleAssetsHubSection, type GoogleAssetsHubDto } from '@/components/google-oauth/GoogleAssetsHubSection';
+import { StandardDateRangeDropdown, type StandardDatePreset } from '@/components/common/StandardDateRangeDropdown';
+import { RealtimeLiveMotionIndicator } from '@/components/common/RealtimeLiveMotionIndicator';
 
 interface AdapterStatusItem {
   code: string;
@@ -47,6 +49,9 @@ export function TrackingWorkspace() {
   const { user } = useSession();
   const [data, setData] = useState<ExtendedTrackingDashboardDto | null>(null);
   const [periodDays, setPeriodDays] = useState<number>(30);
+  const [datePreset, setDatePreset] = useState<StandardDatePreset>('30D');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -71,30 +76,36 @@ export function TrackingWorkspace() {
 
   // Reconciliation resolution note
   const [reconcileNotes, setReconcileNotes] = useState<Record<number, string>>({});
+  const [realtimePolling, setRealtimePolling] = useState<boolean>(false);
+  const [lastPolledAt, setLastPolledAt] = useState<Date>(new Date());
 
-  const fetchDashboard = useCallback(async () => {
+  const fetchDashboard = useCallback(async (forceFresh = false) => {
     setLoading((prev) => (data ? false : true));
+    setRealtimePolling(true);
     setErrorMsg(null);
     try {
       const res = await apiRequest<ExtendedTrackingDashboardDto>(
         `/api/v1/tracking?periodDays=${periodDays}`,
+        { skipCache: forceFresh },
       );
       setData(res);
+      setLastPolledAt(new Date());
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Không thể tải dữ liệu Tracking.');
     } finally {
       setLoading(false);
+      setRealtimePolling(false);
     }
   }, [periodDays, data]);
 
   useEffect(() => {
-    void fetchDashboard();
-    // Silent background realtime refresh (every 25s) without manual F5
+    void fetchDashboard(true);
+    // Continuous Realtime Live Auto-Polling (every 15s) with live motion updates
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        void fetchDashboard();
+        void fetchDashboard(true);
       }
-    }, 25000);
+    }, 15000);
     return () => clearInterval(interval);
   }, [fetchDashboard]);
 
@@ -271,25 +282,35 @@ export function TrackingWorkspace() {
 
   return (
     <div className="space-y-3.5 text-sm">
-      {/* Centralized Action Toolbar — Centered without clunky duplicate title */}
+      {/* Centralized Action Toolbar — Centered with Standard Date Picker (matching Leads) */}
       <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-2xs flex flex-wrap items-center justify-center gap-2.5">
-        {/* Single Canonical Date Range Selector */}
-        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/80">
-          {[7, 30, 90].map((d) => (
-            <button
-              key={d}
-              type="button"
-              onClick={() => setPeriodDays(d)}
-              className={`h-8 px-3.5 rounded-lg text-xs font-bold transition ${
-                periodDays === d
-                  ? 'bg-brand text-white shadow-xs'
-                  : 'text-slate-600 hover:text-ink hover:bg-white'
-              }`}
-            >
-              {d} ngày
-            </button>
-          ))}
-        </div>
+        {/* Standard Date Range Dropdown Popover (Identical to Leads Workspace) */}
+        <StandardDateRangeDropdown
+          preset={datePreset}
+          customStartDate={customStartDate}
+          customEndDate={customEndDate}
+          onChangePreset={(p) => {
+            setDatePreset(p);
+            if (p === '7D') setPeriodDays(7);
+            else if (p === '30D' || p === 'THIS_MONTH') setPeriodDays(30);
+            else if (p === '90D' || p === 'ALL') setPeriodDays(90);
+            else if (p === 'TODAY') setPeriodDays(1);
+          }}
+          onChangeCustomRange={(start, end) => {
+            setCustomStartDate(start);
+            setCustomEndDate(end);
+            if (start && end) {
+              const diffDays = Math.max(
+                1,
+                Math.round(
+                  (new Date(end).getTime() - new Date(start).getTime()) / (1000 * 3600 * 24),
+                ),
+              );
+              setPeriodDays(diffDays);
+            }
+          }}
+          size="sm"
+        />
 
         <button
           type="button"
@@ -364,19 +385,48 @@ export function TrackingWorkspace() {
           <span>Xuất Excel (.xlsx)</span>
         </a>
 
-        <div className="h-9 px-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span>Realtime Live</span>
-        </div>
+        {/* Realtime Live Motion Indicator with dynamic countdown & auto-refresh */}
+        <RealtimeLiveMotionIndicator
+          isPolling={realtimePolling}
+          lastUpdated={data?.lastSyncedAt || lastPolledAt}
+          intervalSec={15}
+          onRefresh={() => void fetchDashboard(true)}
+          label="Realtime Live"
+          subLabel="Đồng bộ liên tục 15s"
+          size="md"
+        />
+      </div>
 
-        <button
-          type="button"
-          onClick={() => void fetchDashboard()}
-          className="h-9 px-3.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-slate-50 transition"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          <span>Làm mới</span>
-        </button>
+      {/* Live Stream Activity Ticker Banner */}
+      <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-teal-950 text-white rounded-2xl px-4 py-2.5 shadow-sm border border-emerald-500/30 flex items-center justify-between gap-3 overflow-hidden">
+        <div className="flex items-center gap-2.5 shrink-0">
+          <span className="relative flex h-2.5 w-2.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+          </span>
+          <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
+            Live Stream
+          </span>
+        </div>
+        <div className="flex-1 text-xs text-slate-300 font-medium truncate flex items-center gap-3">
+          <span>
+            🟢 <strong>GA4 Multi-Site:</strong> Đang giám sát luồng truy cập thời gian thực trên 4 website
+          </span>
+          <span className="text-slate-600">•</span>
+          <span>
+            🔍 <strong>Search Console:</strong> Tra cứu từ khóa click thực tế
+          </span>
+          <span className="text-slate-600">•</span>
+          <span>
+            ⚡ <strong>GCLID Attribution:</strong> Tự động ánh xạ Lead với quảng cáo Google Ads
+          </span>
+        </div>
+        <div className="shrink-0 flex items-end gap-1 h-3.5" title="Tín hiệu kết nối Realtime">
+          <span className="w-1 bg-emerald-400 animate-equalizer-1 rounded-xs" />
+          <span className="w-1 bg-teal-400 animate-equalizer-2 rounded-xs" />
+          <span className="w-1 bg-emerald-500 animate-equalizer-3 rounded-xs" />
+          <span className="w-1 bg-teal-300 animate-equalizer-4 rounded-xs" />
+        </div>
       </div>
 
       {/* Google OAuth 2.0 Fast Connect Banner (One-Click Connect for Module 02 & All Modules) */}

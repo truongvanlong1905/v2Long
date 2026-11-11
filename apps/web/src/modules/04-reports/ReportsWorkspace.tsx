@@ -26,6 +26,8 @@ import { formatMoney } from '@/core/format/money';
 import { apiRequest, peekApiCache } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
 import { ReportDocComposer } from './ReportDocComposer';
+import { StandardDateRangeDropdown, type StandardDatePreset } from '@/components/common/StandardDateRangeDropdown';
+import { RealtimeLiveMotionIndicator } from '@/components/common/RealtimeLiveMotionIndicator';
 
 const PRESET_OPTIONS: Array<{ value: ReportPreset; label: string }> = [
   { value: '7d', label: '7 ngày qua' },
@@ -37,6 +39,7 @@ const PRESET_OPTIONS: Array<{ value: ReportPreset; label: string }> = [
 export function ReportsWorkspace() {
   const { user } = useSession();
   const [preset, setPreset] = useState<ReportPreset>('all');
+  const [datePreset, setDatePreset] = useState<StandardDatePreset>('ALL');
   const [fromDate, setFromDate] = useState('2026-10-01');
   const [toDate, setToDate] = useState('2026-11-06');
   const [data, setData] = useState<ReportsDashboardDto | null>(() =>
@@ -47,6 +50,8 @@ export function ReportsWorkspace() {
   );
   const [error, setError] = useState<string | null>(null);
   const [reportViewMode, setReportViewMode] = useState<'dashboard' | 'doc_composer'>('dashboard');
+  const [isReportsPolling, setIsReportsPolling] = useState(false);
+  const [lastReportsPolledAt, setLastReportsPolledAt] = useState<Date>(new Date());
 
   const canExport = Boolean(user && hasBaPermission(user.roleCode, 'EXPORT_DATA'));
 
@@ -57,12 +62,16 @@ export function ReportsWorkspace() {
       params.set('toDate', toDate);
     }
     const url = `/api/v1/reports?${params.toString()}`;
-    const cached = !manual ? peekApiCache<ReportsDashboardDto>(url) : null;
-    if (cached) {
-      setData(cached);
-      setLoading(false);
+    if (!manual) {
+      const cached = peekApiCache<ReportsDashboardDto>(url);
+      if (cached) {
+        setData(cached);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
     } else {
-      setLoading(true);
+      setIsReportsPolling(true);
     }
     setError(null);
     try {
@@ -70,15 +79,24 @@ export function ReportsWorkspace() {
         skipCache: manual,
       });
       setData(resData);
+      setLastReportsPolledAt(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Lỗi tải báo cáo');
     } finally {
       setLoading(false);
+      setIsReportsPolling(false);
     }
   }, [preset, fromDate, toDate]);
 
   useEffect(() => {
     void loadReports();
+    // Continuous Realtime Live Auto-Polling (every 15s)
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        void loadReports(true);
+      }
+    }, 15000);
+    return () => clearInterval(interval);
   }, [loadReports]);
 
   useEffect(() => {
@@ -159,48 +177,34 @@ export function ReportsWorkspace() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="inline-flex p-1 rounded-xl bg-slate-100 border border-slate-200/80">
-            {PRESET_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setPreset(opt.value)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${preset === opt.value
-                  ? 'bg-brand text-white shadow-sm'
-                  : 'text-slate-600 hover:text-ink'
-                  }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+          <StandardDateRangeDropdown
+            preset={datePreset}
+            customStartDate={fromDate}
+            customEndDate={toDate}
+            onChangePreset={(p) => {
+              setDatePreset(p);
+              if (p === '7D') setPreset('7d');
+              else if (p === '30D' || p === 'THIS_MONTH') setPreset('30d');
+              else if (p === 'ALL' || p === '90D' || p === 'TODAY') setPreset('all');
+            }}
+            onChangeCustomRange={(start, end) => {
+              setFromDate(start);
+              setToDate(end);
+              setPreset('custom');
+            }}
+            size="sm"
+          />
 
-          {preset === 'custom' && (
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
-                className="h-9 px-2.5 rounded-xl border border-slate-200 text-sm font-medium"
-              />
-              <span className="text-sm text-slate-400">→</span>
-              <input
-                type="date"
-                value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
-                className="h-9 px-2.5 rounded-xl border border-slate-200 text-sm font-medium"
-              />
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={() => void loadReports()}
-            className="h-9 px-3.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-sm font-semibold text-slate-700 inline-flex items-center gap-1.5"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            <span>Làm mới</span>
-          </button>
+          {/* Realtime Live Motion Indicator with dynamic countdown & auto-refresh */}
+          <RealtimeLiveMotionIndicator
+            isPolling={isReportsPolling}
+            lastUpdated={lastReportsPolledAt}
+            intervalSec={15}
+            onRefresh={() => void loadReports(true)}
+            label="Realtime Live"
+            subLabel="Tự động cập nhật 15s"
+            size="sm"
+          />
 
           {/* Switcher between Dashboard Analytics and A4 Word/Docs Composer */}
           <div className="inline-flex p-1 rounded-xl bg-slate-100 border border-slate-200/80">

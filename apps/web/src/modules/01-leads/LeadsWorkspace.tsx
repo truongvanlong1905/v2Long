@@ -60,6 +60,8 @@ import { apiRequest, peekApiCache } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
 import { ManualLeadModal } from './ManualLeadModal';
 import { LeadActivityTimeline } from './LeadActivityTimeline';
+import { StandardDateRangeDropdown, type StandardDatePreset } from '@/components/common/StandardDateRangeDropdown';
+import { RealtimeLiveMotionIndicator } from '@/components/common/RealtimeLiveMotionIndicator';
 
 const STATUS_BADGE_STYLES: Record<PipelineStatus, string> = {
   new_lead: 'bg-violet-50 text-violet-700 border-violet-200 font-semibold',
@@ -802,8 +804,10 @@ export function LeadsWorkspace() {
   >('site_photo');
   const [editingAttachmentReplaceFile, setEditingAttachmentReplaceFile] = useState<File | null>(null);
   const [bypassPriceCheckConfirmed, setBypassPriceCheckConfirmed] = useState<boolean>(false);
+  const [isLeadsPolling, setIsLeadsPolling] = useState<boolean>(false);
+  const [lastLeadsPolledAt, setLastLeadsPolledAt] = useState<Date>(new Date());
 
-  const fetchLeads = useCallback(async () => {
+  const fetchLeads = useCallback(async (forceFresh = false) => {
     abortControllerRef.current?.abort();
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -812,28 +816,33 @@ export function LeadsWorkspace() {
     if (includeSpam) qs.set('includeSpam', 'true');
     const url = `/api/v1/leads?${qs.toString()}`;
 
-    const cached = peekApiCache<{
-      leads: LeadItemDto[];
-      totalCount?: number;
-      products: ProductCatalogDto[];
-      salesOptions: SalesAssigneeOptionDto[];
-      priceCheckAlerts: PriceCheckAlertDto[];
-      isReceivingLeads?: boolean;
-    }>(url);
+    if (!forceFresh) {
+      const cached = peekApiCache<{
+        leads: LeadItemDto[];
+        totalCount?: number;
+        products: ProductCatalogDto[];
+        salesOptions: SalesAssigneeOptionDto[];
+        priceCheckAlerts: PriceCheckAlertDto[];
+        isReceivingLeads?: boolean;
+      }>(url);
 
-    if (cached) {
-      setLeads(cached.leads);
-      setTotalCount(cached.totalCount ?? cached.leads.length);
-      setProducts(cached.products);
-      setSalesOptions(cached.salesOptions);
-      setPriceCheckAlerts(cached.priceCheckAlerts);
-      if (typeof cached.isReceivingLeads === 'boolean') {
-        setIsReceivingLeads(cached.isReceivingLeads);
+      if (cached) {
+        setLeads(cached.leads);
+        setTotalCount(cached.totalCount ?? cached.leads.length);
+        setProducts(cached.products);
+        setSalesOptions(cached.salesOptions);
+        setPriceCheckAlerts(cached.priceCheckAlerts);
+        if (typeof cached.isReceivingLeads === 'boolean') {
+          setIsReceivingLeads(cached.isReceivingLeads);
+        }
+        setLoading(false);
+      } else {
+        setLoading((prev) => (leads.length === 0 ? true : prev));
       }
-      setLoading(false);
     } else {
-      setLoading((prev) => (leads.length === 0 ? true : prev));
+      setIsLeadsPolling(true);
     }
+
     setErrorMsg(null);
     try {
       const data = await apiRequest<{
@@ -843,7 +852,7 @@ export function LeadsWorkspace() {
         salesOptions: SalesAssigneeOptionDto[];
         priceCheckAlerts: PriceCheckAlertDto[];
         isReceivingLeads?: boolean;
-      }>(url, { signal: controller.signal });
+      }>(url, { signal: controller.signal, skipCache: forceFresh });
 
       setLeads(data.leads);
       setTotalCount(data.totalCount ?? data.leads.length);
@@ -853,10 +862,12 @@ export function LeadsWorkspace() {
       if (typeof data.isReceivingLeads === 'boolean') {
         setIsReceivingLeads(data.isReceivingLeads);
       }
+      setLastLeadsPolledAt(new Date());
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return;
       setErrorMsg(err instanceof Error ? err.message : 'Lỗi tải danh sách Lead.');
     } finally {
+      setIsLeadsPolling(false);
       if (abortControllerRef.current === controller) {
         setLoading(false);
       }
@@ -865,12 +876,12 @@ export function LeadsWorkspace() {
 
   useEffect(() => {
     void fetchLeads();
-    // Silent background realtime refresh (every 20s) so user never has to press F5
+    // Continuous Realtime Live Auto-Polling (every 15s) with live motion updates
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        void fetchLeads();
+        void fetchLeads(true);
       }
-    }, 20000);
+    }, 15000);
     return () => {
       clearInterval(interval);
       abortControllerRef.current?.abort();
@@ -2042,166 +2053,26 @@ export function LeadsWorkspace() {
     <div className="space-y-3.5">
       {/* Control Bar — Căn giữa toàn bộ công cụ trên 1 hàng: Mốc thời gian + Chế độ xem + Nhắc việc tự động + Xuất/Nhập Excel + Tạo Lead mới */}
       <div className="rounded-2xl bg-white text-slate-900 px-4 py-2.5 shadow-2xs border border-slate-200/90 flex flex-wrap items-center justify-center gap-2.5">
-        {/* Dropdown Mốc thời gian (Bấm vào mới sổ ra bảng chọn nhanh & Từ ngày - Đến ngày) */}
-        <div className="relative">
-            <div className="inline-flex items-center rounded-xl border border-slate-200 bg-slate-50/80 hover:bg-slate-100/80 transition shadow-2xs">
-              <button
-                type="button"
-                onClick={() => setShowDateDropdown((prev) => !prev)}
-                className={`h-9 px-3 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition ${
-                  dateRangePreset !== 'ALL' || customStartDate || customEndDate
-                    ? 'bg-blue-50 text-[#1E3A8A] border-blue-200'
-                    : 'text-slate-700'
-                }`}
-              >
-                <Calendar className="w-3.5 h-3.5 text-[#1E3A8A]" />
-                <span>
-                  {dateRangePreset === 'ALL' && !customStartDate && !customEndDate && 'Mốc thời gian: Tất cả'}
-                  {dateRangePreset === 'TODAY' && 'Mốc thời gian: Hôm nay'}
-                  {dateRangePreset === '7D' && 'Mốc thời gian: 7 ngày qua'}
-                  {dateRangePreset === '30D' && 'Mốc thời gian: 30 ngày qua'}
-                  {dateRangePreset === 'THIS_MONTH' && 'Mốc thời gian: Tháng này'}
-                  {dateRangePreset === 'CUSTOM' &&
-                    (customStartDate || customEndDate
-                      ? `${customStartDate ? new Date(`${customStartDate}T00:00:00`).toLocaleDateString('vi-VN') : '...'} → ${customEndDate ? new Date(`${customEndDate}T00:00:00`).toLocaleDateString('vi-VN') : '...'}`
-                      : 'Tùy chọn khoảng ngày')}
-                </span>
-                <ChevronDown
-                  className={`w-3.5 h-3.5 text-slate-400 transition-transform ${
-                    showDateDropdown ? 'rotate-180 text-[#1E3A8A]' : ''
-                  }`}
-                />
-              </button>
-
-              {(dateRangePreset !== 'ALL' || customStartDate || customEndDate) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDateRangePreset('ALL');
-                    setCustomStartDate('');
-                    setCustomEndDate('');
-                    setCurrentPage(1);
-                    setShowDateDropdown(false);
-                  }}
-                  className="h-9 px-2 text-xs font-bold text-rose-500 hover:text-rose-700 border-l border-slate-200/80"
-                  title="Xóa lọc thời gian"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-
-            {showDateDropdown && (
-              <>
-                <div
-                  className="fixed inset-0 z-30"
-                  onClick={() => setShowDateDropdown(false)}
-                />
-                <div className="absolute left-0 mt-2 w-80 rounded-2xl bg-white border border-slate-200 shadow-xl p-3.5 z-40 space-y-3 animate-in fade-in zoom-in-95 duration-150">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                      <Calendar className="w-3.5 h-3.5 text-[#1E3A8A]" />
-                      <span>Chọn nhanh mốc thời gian</span>
-                    </span>
-                    {(dateRangePreset !== 'ALL' || customStartDate || customEndDate) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setDateRangePreset('ALL');
-                          setCustomStartDate('');
-                          setCustomEndDate('');
-                          setCurrentPage(1);
-                          setShowDateDropdown(false);
-                        }}
-                        className="text-[11px] font-semibold text-rose-600 hover:underline"
-                      >
-                        Đặt lại mặc định
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {(
-                      [
-                        { id: 'ALL', label: 'Tất cả thời gian' },
-                        { id: 'TODAY', label: 'Hôm nay' },
-                        { id: '7D', label: '7 ngày qua' },
-                        { id: '30D', label: '30 ngày qua' },
-                        { id: 'THIS_MONTH', label: 'Tháng này' },
-                      ] as const
-                    ).map((opt) => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => {
-                          setDateRangePreset(opt.id);
-                          setCustomStartDate('');
-                          setCustomEndDate('');
-                          setCurrentPage(1);
-                          setShowDateDropdown(false);
-                        }}
-                        className={`h-8 px-2.5 rounded-xl text-xs font-semibold text-left transition flex items-center justify-between ${
-                          dateRangePreset === opt.id
-                            ? 'bg-[#1E3A8A] text-white shadow-2xs'
-                            : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
-                        } ${opt.id === 'ALL' ? 'col-span-2' : ''}`}
-                      >
-                        <span>{opt.label}</span>
-                        {dateRangePreset === opt.id && <CheckCircle2 className="w-3.5 h-3.5" />}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="pt-2.5 border-t border-slate-100 space-y-2">
-                    <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                      Hoặc tra theo khoảng ngày cụ thể
-                    </span>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-500 mb-1">
-                          Từ ngày
-                        </label>
-                        <input
-                          type="date"
-                          value={customStartDate}
-                          onChange={(e) => {
-                            setCustomStartDate(e.target.value);
-                            setDateRangePreset('CUSTOM');
-                            setCurrentPage(1);
-                          }}
-                          className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-500 mb-1">
-                          Đến ngày
-                        </label>
-                        <input
-                          type="date"
-                          value={customEndDate}
-                          onChange={(e) => {
-                            setCustomEndDate(e.target.value);
-                            setDateRangePreset('CUSTOM');
-                            setCurrentPage(1);
-                          }}
-                          className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs text-slate-800 focus:outline-none focus:border-[#1E3A8A]"
-                        />
-                      </div>
-                    </div>
-                    <div className="flex justify-end pt-1">
-                      <button
-                        type="button"
-                        onClick={() => setShowDateDropdown(false)}
-                        className="h-8 px-3 rounded-lg bg-[#1E3A8A] hover:bg-blue-800 text-white text-xs font-semibold transition"
-                      >
-                        Xong
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
+        {/* Standard Date Range Dropdown */}
+        <StandardDateRangeDropdown
+          preset={dateRangePreset as StandardDatePreset}
+          customStartDate={customStartDate}
+          customEndDate={customEndDate}
+          onChangePreset={(p) => {
+            setDateRangePreset(p as any);
+            setCustomStartDate('');
+            setCustomEndDate('');
+            setCurrentPage(1);
+          }}
+          onChangeCustomRange={(start, end) => {
+            setCustomStartDate(start);
+            setCustomEndDate(end);
+            setDateRangePreset('CUSTOM');
+            setCurrentPage(1);
+          }}
+          include90Days={false}
+          size="sm"
+        />
 
           {searchQuery.trim() && (
             <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl bg-blue-50 border border-blue-200 text-xs font-semibold text-[#1E3A8A]">
@@ -2298,6 +2169,17 @@ export function LeadsWorkspace() {
               </span>
             </button>
           </div>
+
+          {/* Realtime Live Motion Indicator with dynamic countdown & auto-refresh */}
+          <RealtimeLiveMotionIndicator
+            isPolling={isLeadsPolling}
+            lastUpdated={lastLeadsPolledAt}
+            intervalSec={15}
+            onRefresh={() => void fetchLeads(true)}
+            label="Realtime Live"
+            subLabel="Tự động cập nhật 15s"
+            size="sm"
+          />
 
           {/* Xuất Excel */}
           {user && hasBaPermission(user.roleCode, 'EXPORT_DATA') && (

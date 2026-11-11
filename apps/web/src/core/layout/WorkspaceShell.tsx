@@ -32,6 +32,7 @@ import {
 } from '@toantrung/contracts';
 import { apiRequest } from '../http/client';
 import { useSession } from '../session/SessionContext';
+import { RealtimeLiveMotionIndicator } from '@/components/common/RealtimeLiveMotionIndicator';
 
 interface NavItem {
   href: string;
@@ -618,6 +619,17 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            {/* System-wide Realtime Live Motion Heartbeat Indicator */}
+            <div className="hidden sm:block">
+              <RealtimeLiveMotionIndicator
+                size="sm"
+                intervalSec={15}
+                label="Realtime Live"
+                subLabel="Hệ thống kết nối liên tục"
+                showEqualizer={true}
+              />
+            </div>
+
             {/* Mobile Search Toggle */}
             <button
               type="button"

@@ -98,10 +98,19 @@ export function GoogleAssetsHubSection({ hub, periodDays = 30, onSelectPeriod }:
             G
           </div>
           <div>
-            <h3 className="font-bold text-base sm:text-lg flex items-center gap-2">
-              Bảng Điều Khiển 4 Cột Trụ Google Thực Tế
-              <span className="text-xs bg-emerald-500/30 text-emerald-200 border border-emerald-400/40 px-2 py-0.5 rounded-full font-medium">
-                100% Real Live Google Data
+            <h3 className="font-bold text-base sm:text-lg flex items-center gap-2 flex-wrap">
+              <span>Bảng Điều Khiển 4 Cột Trụ Google Thực Tế</span>
+              <span className="inline-flex items-center gap-1.5 text-xs bg-emerald-500/30 text-emerald-200 border border-emerald-400/40 px-2.5 py-0.5 rounded-full font-semibold">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+                </span>
+                <span>100% Real Live Stream</span>
+                <span className="flex items-end gap-0.5 h-3 ml-0.5">
+                  <span className="w-0.5 bg-emerald-300 animate-equalizer-1" />
+                  <span className="w-0.5 bg-emerald-300 animate-equalizer-2" />
+                  <span className="w-0.5 bg-emerald-300 animate-equalizer-3" />
+                </span>
               </span>
               <span className="text-xs bg-white/20 text-white px-2 py-0.5 rounded-md font-bold font-mono">
                 {periodDays} ngày qua
@@ -188,35 +197,44 @@ export function GoogleAssetsHubSection({ hub, periodDays = 30, onSelectPeriod }:
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {hub.ga4.properties.map((prop, idx) => {
               const isSelected = selectedGa4Index === idx;
+              const hasTraffic = prop.activeUsers > 0;
               return (
                 <button
                   key={prop.id}
                   type="button"
                   onClick={() => setSelectedGa4Index(idx)}
-                  className={`text-left p-3.5 rounded-xl border transition-all ${isSelected
-                      ? 'border-emerald-600 bg-emerald-50/70 shadow-sm ring-2 ring-emerald-500/20'
-                      : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-                    }`}
+                  className={`relative text-left p-4 rounded-2xl border transition-all duration-200 transform ${
+                    isSelected
+                      ? 'border-emerald-600 bg-emerald-50/80 shadow-md ring-4 ring-emerald-500/15 scale-[1.01]'
+                      : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 hover:shadow-xs'
+                  }`}
                 >
-                  <div className="flex items-center justify-between gap-1 mb-1.5">
-                    <span className="font-bold text-xs sm:text-sm text-slate-800 truncate" title={prop.name}>
+                  <div className="flex items-center justify-between gap-1 mb-2">
+                    <span className="font-extrabold text-xs sm:text-sm text-slate-800 truncate" title={prop.name}>
                       {prop.name}
                     </span>
-                    <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">
-                      ID: {prop.id}
-                    </span>
+                    {hasTraffic ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Live
+                      </span>
+                    ) : (
+                      <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">
+                        ID: {prop.id}
+                      </span>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-slate-100 text-xs">
                     <div>
                       <span className="text-[11px] text-slate-500 block">Người dùng</span>
-                      <strong className="text-emerald-700 text-sm font-display font-bold">
+                      <strong className="text-emerald-700 text-base font-display font-extrabold">
                         {prop.activeUsers.toLocaleString('vi-VN')}
                       </strong>
                     </div>
                     <div>
                       <span className="text-[11px] text-slate-500 block">Lượt xem</span>
-                      <strong className="text-ink text-sm font-display font-bold">
+                      <strong className="text-slate-900 text-base font-display font-extrabold">
                         {prop.pageViews.toLocaleString('vi-VN')}
                       </strong>
                     </div>
