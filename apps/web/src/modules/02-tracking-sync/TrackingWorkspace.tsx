@@ -389,7 +389,11 @@ export function TrackingWorkspace() {
 
       {/* 4-Pillars Google Live Hub: GA4 (4 Sites), Search Console, Google Trends, Google Ads */}
       {data?.googleAssetsHub && (
-        <GoogleAssetsHubSection hub={data.googleAssetsHub} />
+        <GoogleAssetsHubSection
+          hub={data.googleAssetsHub}
+          periodDays={periodDays}
+          onSelectPeriod={(d) => setPeriodDays(d)}
+        />
       )}
 
       {/* Adapter Mode & Freshness Notice */}

@@ -75,9 +75,11 @@ export interface GoogleAssetsHubDto {
 
 interface Props {
   hub?: GoogleAssetsHubDto;
+  periodDays?: number;
+  onSelectPeriod?: (days: number) => void;
 }
 
-export function GoogleAssetsHubSection({ hub }: Props) {
+export function GoogleAssetsHubSection({ hub, periodDays = 30, onSelectPeriod }: Props) {
   const [activeTab, setActiveTab] = useState<'GA4' | 'SEARCH_CONSOLE' | 'TRENDS' | 'ADS'>('GA4');
   const [selectedGa4Index, setSelectedGa4Index] = useState(0);
   const [selectedScIndex, setSelectedScIndex] = useState(0);
@@ -101,6 +103,9 @@ export function GoogleAssetsHubSection({ hub }: Props) {
               <span className="text-xs bg-emerald-500/30 text-emerald-200 border border-emerald-400/40 px-2 py-0.5 rounded-full font-medium">
                 100% Real Live Google Data
               </span>
+              <span className="text-xs bg-white/20 text-white px-2 py-0.5 rounded-md font-bold font-mono">
+                {periodDays} ngày qua
+              </span>
             </h3>
             <p className="text-xs text-slate-300">
               Tài khoản kết nối: <strong>{hub.connectedEmail || 'Chưa kết nối'}</strong> • Phân loại rõ ràng: GA4 (4 Website) • Search Console • Google Trends • Google Ads
@@ -108,8 +113,29 @@ export function GoogleAssetsHubSection({ hub }: Props) {
           </div>
         </div>
 
-        {/* 4 Tabs Navigation */}
-        <div className="flex items-center gap-1.5 bg-black/30 p-1 rounded-xl">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Quick Period Selector inside Hub */}
+          {onSelectPeriod && (
+            <div className="flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
+              {[7, 30, 90].map((days) => (
+                <button
+                  key={days}
+                  type="button"
+                  onClick={() => onSelectPeriod(days)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                    periodDays === days
+                      ? 'bg-emerald-400 text-slate-950 shadow-xs'
+                      : 'text-slate-300 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  {days} ngày
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* 4 Tabs Navigation */}
+          <div className="flex items-center gap-1.5 bg-black/30 p-1 rounded-xl">
           <button
             type="button"
             onClick={() => setActiveTab('GA4')}
@@ -161,6 +187,7 @@ export function GoogleAssetsHubSection({ hub }: Props) {
             <Target className="w-3.5 h-3.5" />
             <span>Google Ads</span>
           </button>
+        </div>
         </div>
       </div>
 
