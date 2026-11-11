@@ -2,6 +2,10 @@ import { hasBaPermission } from '@toantrung/contracts';
 import { jsonError } from '../../../../../core/http';
 import { requireAuthenticatedSession } from '../../../../../core/permissions';
 import { readPrivateBusinessFile } from '../../../../../core/storage/private-files.service';
+import {
+  assertCanAccessStorageObjectKey,
+  ForbiddenDesignProjectAccessError,
+} from '../../../../../modules/05-ai-design/service';
 
 export async function GET(req: Request) {
   const auth = await requireAuthenticatedSession(req);
@@ -9,7 +13,8 @@ export async function GET(req: Request) {
 
   const canView =
     hasBaPermission(auth.user.roleCode, 'AI_DESIGN') ||
-    hasBaPermission(auth.user.roleCode, 'ATTACHMENT_UPLOAD_VIEW');
+    hasBaPermission(auth.user.roleCode, 'ATTACHMENT_UPLOAD_VIEW') ||
+    hasBaPermission(auth.user.roleCode, 'LEAD_VIEW_OWN');
 
   if (!canView) {
     return jsonError('FORBIDDEN', 'Tài khoản không có quyền xem tệp tài sản thiết kế.', 403);
@@ -19,6 +24,15 @@ export async function GET(req: Request) {
   const key = searchParams.get('key');
   if (!key) {
     return jsonError('INVALID_KEY', 'Thiếu tham số khóa tệp.', 400);
+  }
+
+  try {
+    await assertCanAccessStorageObjectKey(auth.user, key);
+  } catch (err) {
+    if (err instanceof ForbiddenDesignProjectAccessError) {
+      return jsonError('FORBIDDEN_PROJECT_ACCESS', err.message, 403);
+    }
+    return jsonError('FORBIDDEN', 'Tài khoản không có quyền xem ảnh của dự án này.', 403);
   }
 
   const file = readPrivateBusinessFile(key);

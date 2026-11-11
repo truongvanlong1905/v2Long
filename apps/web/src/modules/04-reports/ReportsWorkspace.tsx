@@ -165,11 +165,10 @@ export function ReportsWorkspace() {
                 key={opt.value}
                 type="button"
                 onClick={() => setPreset(opt.value)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${
-                  preset === opt.value
-                    ? 'bg-brand text-white shadow-sm'
-                    : 'text-slate-600 hover:text-ink'
-                }`}
+                className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${preset === opt.value
+                  ? 'bg-brand text-white shadow-sm'
+                  : 'text-slate-600 hover:text-ink'
+                  }`}
               >
                 {opt.label}
               </button>
@@ -208,22 +207,20 @@ export function ReportsWorkspace() {
             <button
               type="button"
               onClick={() => setReportViewMode('dashboard')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-bold transition ${
-                reportViewMode === 'dashboard'
-                  ? 'bg-[#1E3A8A] text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`px-3 py-1.5 rounded-lg text-sm font-bold transition ${reportViewMode === 'dashboard'
+                ? 'bg-[#1E3A8A] text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+                }`}
             >
               Số liệu Tổng hợp
             </button>
             <button
               type="button"
               onClick={() => setReportViewMode('doc_composer')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-bold transition ${
-                reportViewMode === 'doc_composer'
-                  ? 'bg-[#1E3A8A] text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`px-3 py-1.5 rounded-lg text-sm font-bold transition ${reportViewMode === 'doc_composer'
+                ? 'bg-[#1E3A8A] text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+                }`}
             >
               Soạn Báo cáo A4 (Docs)
             </button>
@@ -439,9 +436,9 @@ export function ReportsWorkspace() {
                       data.unansweredQuotes.map((q) => {
                         const productItems = q.productSummary
                           ? q.productSummary
-                              .split(',')
-                              .map((s) => s.trim())
-                              .filter(Boolean)
+                            .split(',')
+                            .map((s) => s.trim())
+                            .filter(Boolean)
                           : [];
                         return (
                           <tr
@@ -491,11 +488,10 @@ export function ReportsWorkspace() {
                             </td>
                             <td className="py-3.5 px-4 text-right whitespace-nowrap">
                               <span
-                                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-bold text-xs whitespace-nowrap ${
-                                  q.isOverdue7Days
-                                    ? 'bg-rose-600 text-white shadow-2xs'
-                                    : 'bg-amber-100 text-amber-800 border border-amber-200'
-                                }`}
+                                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-bold text-xs whitespace-nowrap ${q.isOverdue7Days
+                                  ? 'bg-rose-600 text-white shadow-2xs'
+                                  : 'bg-amber-100 text-amber-800 border border-amber-200'
+                                  }`}
                               >
                                 {q.isOverdue7Days ? (
                                   <>
@@ -545,9 +541,8 @@ export function ReportsWorkspace() {
                           <td className="py-3 px-4 font-semibold text-ink whitespace-nowrap">
                             <div className="flex items-center gap-2">
                               <span
-                                className={`w-2 h-2 rounded-full shrink-0 ${
-                                  sp.isOnline ? 'bg-emerald-500' : 'bg-slate-300'
-                                }`}
+                                className={`w-2 h-2 rounded-full shrink-0 ${sp.isOnline ? 'bg-emerald-500' : 'bg-slate-300'
+                                  }`}
                               />
                               <span>{sp.salesFullName}</span>
                             </div>
@@ -572,11 +567,10 @@ export function ReportsWorkspace() {
             )}
 
             <section
-              className={`${
-                user && ['ADMIN', 'BOD', 'SALES_LEAD', 'SALES'].includes(user.roleCode)
-                  ? 'lg:col-span-5'
-                  : 'lg:col-span-12'
-              } bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-card`}
+              className={`${user && ['ADMIN', 'BOD', 'SALES_LEAD', 'SALES'].includes(user.roleCode)
+                ? 'lg:col-span-5'
+                : 'lg:col-span-12'
+                } bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-card`}
             >
               <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
                 <h2 className="font-display text-base font-bold text-ink">
@@ -689,9 +683,8 @@ export function ReportsWorkspace() {
                           {row.stt}
                         </td>
                         <td
-                          className={`py-3.5 px-3 tabular-nums font-bold whitespace-nowrap ${
-                            isSpamRow ? 'text-red-700' : 'text-brand'
-                          }`}
+                          className={`py-3.5 px-3 tabular-nums font-bold whitespace-nowrap ${isSpamRow ? 'text-red-700' : 'text-brand'
+                            }`}
                         >
                           {row.leadCode}
                         </td>
@@ -719,13 +712,12 @@ export function ReportsWorkspace() {
                         </td>
                         <td className="py-3.5 px-3 whitespace-nowrap">
                           <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${
-                              row.marketingSource === 'Google Ads'
-                                ? 'bg-blue-50 text-blue-700 border border-blue-200/70'
-                                : row.marketingSource === 'Facebook Ads'
-                                  ? 'bg-indigo-50 text-indigo-700 border border-indigo-200/70'
-                                  : 'bg-slate-100 text-slate-600'
-                            }`}
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${row.marketingSource === 'Google Ads'
+                              ? 'bg-blue-50 text-blue-700 border border-blue-200/70'
+                              : row.marketingSource === 'Facebook Ads'
+                                ? 'bg-indigo-50 text-indigo-700 border border-indigo-200/70'
+                                : 'bg-slate-100 text-slate-600'
+                              }`}
                           >
                             {row.marketingSource}
                           </span>

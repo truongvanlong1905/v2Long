@@ -46,6 +46,7 @@ import {
 } from '@toantrung/contracts';
 import { apiRequest } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
+import { GoogleOAuthManager } from '@/components/google-oauth/GoogleOAuthManager';
 
 export function SeoKeywordsWorkspace() {
   const { user } = useSession();
@@ -715,6 +716,9 @@ export function SeoKeywordsWorkspace() {
             </button>
           </div>
         </div>
+
+        {/* Google OAuth 2.0 Fast Connect Banner (One-Click Connect for Module 03 & All Modules) */}
+        <GoogleOAuthManager compact returnPath="/ads" onSyncCompleted={() => void fetchSeoData()} />
 
         {/* 4-Tab Pill Navigation Bar (Clean Soft Segmented Container) */}
         <div className="bg-slate-100/80 p-1.5 rounded-2xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-1.5">

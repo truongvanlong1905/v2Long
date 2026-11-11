@@ -28,6 +28,7 @@ import {
 import type { ImageCropConfig, PublicBrandingDto } from '@toantrung/contracts';
 import { apiRequest, ApiClientError } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
+import { GoogleOAuthManager } from '@/components/google-oauth/GoogleOAuthManager';
 
 interface AuditItem {
   id: number;
@@ -51,10 +52,10 @@ export default function SettingsPage() {
   const [adminBranding, setAdminBranding] = useState<PublicBrandingDto>(branding);
   const [audits, setAudits] = useState<AuditItem[]>([]);
 
-  // Sub-tab navigation: 'system_health' (Enhancement 8) vs 'branding_identity' (Enhancement 9)
-  const [activeSettingsTab, setActiveSettingsTab] = useState<'system_health' | 'branding_identity'>(
-    'branding_identity',
-  );
+  // Sub-tab navigation: 'system_health' | 'branding_identity' | 'google_integrations'
+  const [activeSettingsTab, setActiveSettingsTab] = useState<
+    'system_health' | 'branding_identity' | 'google_integrations'
+  >('branding_identity');
 
   // Human-Friendly System Health & 1-Click Backup State (Enhancement 8)
   const [backingUp, setBackingUp] = useState(false);
@@ -661,6 +662,20 @@ export default function SettingsPage() {
           <button
             type="button"
             role="tab"
+            aria-selected={activeSettingsTab === 'google_integrations'}
+            onClick={() => setActiveSettingsTab('google_integrations')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold inline-flex items-center gap-2 transition-all ${
+              activeSettingsTab === 'google_integrations'
+                ? 'bg-[#1E3A8A] text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Globe className="w-3.5 h-3.5 text-blue-400" />
+            <span>Google OAuth 2.0 (Toàn dự án)</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={activeSettingsTab === 'system_health'}
             onClick={() => setActiveSettingsTab('system_health')}
             className={`px-4 py-2 rounded-lg text-xs font-bold inline-flex items-center gap-2 transition-all ${
@@ -674,6 +689,13 @@ export default function SettingsPage() {
           </button>
         </div>
       </div>
+
+      {/* =====================================================================
+          SUB-TAB: GOOGLE OAUTH 2.0 INTEGRATION (MODULES 02, 03, 04)
+      ===================================================================== */}
+      {activeSettingsTab === 'google_integrations' && (
+        <GoogleOAuthManager returnPath="/settings" />
+      )}
 
       {/* =====================================================================
           SUB-TAB 1: NON-TECHNICAL, HUMAN-FRIENDLY SYSTEM HEALTH & BACKUP (ENHANCEMENT 8)

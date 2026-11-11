@@ -14,6 +14,10 @@ import {
   triggerPlatformSyncExecution,
 } from '../modules/02-tracking-sync/service';
 import {
+  getGoogleConnection,
+  syncAllGoogleDataAcrossModules,
+} from '../modules/02-tracking-sync/google-oauth.service';
+import {
   publishArticleViaWordPressAdapter,
   refreshKeywordDerivedCacheFromCanonicalMetrics,
 } from '../modules/03-keywords-ads/service';
@@ -22,6 +26,12 @@ import {
  * 1. Đồng bộ D3 đầy đủ (02:00) hoặc nhẹ (11:00 / 17:00)
  */
 export async function runScheduledD3SyncJob(slot: 'FULL_0200' | 'LIGHT_1100' | 'LIGHT_1700') {
+  const googleConn = await getGoogleConnection();
+  if (googleConn?.connected) {
+    // If Google OAuth is connected, sync using OAuth tokens
+    await syncAllGoogleDataAcrossModules(slot);
+  }
+
   const result = await triggerPlatformSyncExecution({
     scheduleSlot: slot,
     platforms: ['GOOGLE_ADS', 'GA4', 'SEARCH_CONSOLE', 'FANPAGE', 'GOOGLE_TRENDS'],
@@ -81,12 +91,25 @@ export async function runDailyGoogleLeadFormReconciliationJob(targetDateStr?: st
   const discrepancy = Math.abs(platformReportedCount - crmLeadCount);
   const status = discrepancy > 0 ? 'alert_open' : 'ok';
 
+  let accountPropertyId = 'truongvanlong.19052005@gmail.com';
+  try {
+    const setting = await prisma.systemSetting.findUnique({
+      where: { key: 'google_oauth_connection' },
+    });
+    if (setting?.value) {
+      const conn = JSON.parse(setting.value);
+      accountPropertyId = conn.detectedGadsCustomerId || conn.connectedEmail || accountPropertyId;
+    }
+  } catch {
+    // fallback
+  }
+
   return prisma.leadReconciliation.upsert({
     where: {
       uq_reconcile_date_platform_account: {
         reconcileDate,
         platform: 'google_ads',
-        accountPropertyId: 'GADS-TT-01',
+        accountPropertyId,
       },
     },
     update: {
@@ -99,7 +122,7 @@ export async function runDailyGoogleLeadFormReconciliationJob(targetDateStr?: st
     create: {
       reconcileDate,
       platform: 'google_ads',
-      accountPropertyId: 'GADS-TT-01',
+      accountPropertyId,
       crmLeadCount,
       crmErrorLogCount,
       platformReportedCount,

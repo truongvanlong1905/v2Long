@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  Crown,
   Download,
   FileText,
   Filter,
@@ -31,6 +32,7 @@ import {
   Search,
   Send,
   ShieldAlert,
+  Sparkles,
   Star,
   Table2,
   Trash2,
@@ -283,6 +285,7 @@ interface FraudEvaluationResult {
     | 'SCENARIO_2_LOST_RETURNING'
     | 'SCENARIO_3_MULTI_CONTRACTOR';
   matchedCustomerLead: LeadItemDto | null;
+  isCustomerWonVIP: boolean;
   projectContractors: Array<{
     leadId: number;
     leadCode: string;
@@ -326,6 +329,11 @@ function evaluateLeadFraudCriteria(
   const transferredFromSalesName = latestTransfer?.fromSalesName || null;
   const transferCount = transferActivities.length;
 
+  // Tìm hồ sơ được liên kết trực tiếp qua duplicateOfLeadId:
+  const explicitLinkedLead = lead.duplicateOfLeadId
+    ? allLeads.find((o) => o.id === lead.duplicateOfLeadId)
+    : null;
+
   // Criteria 1: Duplicate Phone (>= 2 submissions within 30 days or backend duplicateType)
   // Chỉ đếm các hồ sơ tạo trước hoặc tại thời điểm hồ sơ hiện tại (other.id <= lead.id) để Hồ sơ gốc ban đầu không bị báo trùng ngược
   const samePhoneWithin30d = allLeads.filter((other) => {
@@ -339,11 +347,9 @@ function evaluateLeadFraudCriteria(
   const isCurrentLeadClosed =
     lead.pipelineStatus === 'won' || lead.pipelineStatus === 'lost';
 
-  // Tìm các Lead trùng Khách hàng tạo TRƯỚC hồ sơ này (other.id < lead.id):
-  // Hồ sơ đầu tiên (gốc) sẽ không bị gắn nhãn trùng ngược khi có Lead mới tạo sau nó.
-  const sameCustomerLeads = allLeads.filter((other) => {
+  // Tìm tất cả các hồ sơ của cùng một khách hàng (cùng SĐT, Email hoặc Công ty):
+  const allRelatedCustomerLeads = allLeads.filter((other) => {
     if (other.id === lead.id || isInvalidClosedLead(other)) return false;
-    if (other.id > lead.id) return false;
     const otherClean = other.phone.replace(/\D/g, '');
     const phoneMatch = cleanPhone && !cleanPhone.includes('*') && otherClean === cleanPhone;
     const emailMatch =
@@ -352,6 +358,20 @@ function evaluateLeadFraudCriteria(
       normCompany.length >= 5 && (other.companyName || '').trim().toLowerCase() === normCompany;
     return Boolean(phoneMatch || emailMatch || companyMatch);
   });
+
+  const wonCustomerLead =
+    (explicitLinkedLead?.pipelineStatus === 'won' ? explicitLinkedLead : null) ||
+    allRelatedCustomerLeads.find((o) => o.pipelineStatus === 'won') ||
+    null;
+
+  const isCustomerWonVIP =
+    lead.pipelineStatus === 'won' ||
+    Boolean(wonCustomerLead) ||
+    lead.duplicateOfLeadStatus === 'won' ||
+    Boolean(lead.reopenReason && lead.reopenReason.includes('đã từng chốt hợp đồng'));
+
+  // Tìm các Lead trùng Khách hàng tạo TRƯỚC hồ sơ này (other.id < lead.id):
+  const sameCustomerLeads = allRelatedCustomerLeads.filter((other) => other.id < lead.id);
 
   const phoneSubmitCount30d = isCurrentLeadClosed
     ? 1
@@ -394,7 +414,6 @@ function evaluateLeadFraudCriteria(
     : null;
 
   // Phân loại 3 Kịch bản Trùng Lead:
-  // Nếu bản thân Lead đã đóng (Chốt thành công / Thất bại) thì không hiện cờ cảnh báo trùng nữa.
   let duplicateScenario: FraudEvaluationResult['duplicateScenario'] = 'NONE';
   let matchedCustomerLead: LeadItemDto | null = null;
 
@@ -403,7 +422,7 @@ function evaluateLeadFraudCriteria(
     const currentCreatedMs = new Date(lead.contactedAt).getTime();
 
     // 1. Trùng với Lead đang mở gần đây (<= 14 ngày): Khách gửi nhiều kênh cùng lúc
-    const openSameCustomerLead = sameCustomerLeads.find((other) => {
+    const openSameCustomerLead = allRelatedCustomerLeads.find((other) => {
       const isOpen =
         other.pipelineStatus === 'new_lead' ||
         other.pipelineStatus === 'quoting' ||
@@ -414,12 +433,12 @@ function evaluateLeadFraudCriteria(
     });
 
     // 2. Khách đã từng Chốt thành công (won) trước đây -> Chỉ trường hợp này mới hiện "KHÁCH CŨ QUAY LẠI"
-    const wonSameCustomerLead = sameCustomerLeads.find(
+    const wonSameCustomerLead = wonCustomerLead || allRelatedCustomerLeads.find(
       (other) => other.pipelineStatus === 'won',
     );
 
     // 3. Khách từng hỏi trước đây nhưng chưa chốt (đã đóng Thất bại HOẶC hồ sơ cũ > 14 ngày / vài tháng / năm trước chưa chốt) nay hỏi lại
-    const lostOrPriorUnclosedLead = sameCustomerLeads.find((other) => {
+    const lostOrPriorUnclosedLead = allRelatedCustomerLeads.find((other) => {
       if (other.pipelineStatus === 'lost') return true;
       const isOpen =
         other.pipelineStatus === 'new_lead' ||
@@ -432,21 +451,22 @@ function evaluateLeadFraudCriteria(
 
     if (openSameCustomerLead) {
       duplicateScenario = 'SCENARIO_1_ACTIVE_DUP';
-      matchedCustomerLead = openSameCustomerLead;
-    } else if (wonSameCustomerLead || lead.duplicateOfLeadStatus === 'won') {
+      matchedCustomerLead = explicitLinkedLead || openSameCustomerLead;
+    } else if (wonSameCustomerLead || lead.duplicateOfLeadStatus === 'won' || isCustomerWonVIP) {
       duplicateScenario = 'SCENARIO_2_WON_RETURNING';
-      matchedCustomerLead = wonSameCustomerLead || null;
+      matchedCustomerLead = wonSameCustomerLead || explicitLinkedLead || null;
     } else if (
       lostOrPriorUnclosedLead ||
       lead.duplicateOfLeadStatus === 'lost' ||
       lead.duplicateType === 'PRIOR_LEAD' ||
-      lead.isRepeatLead
+      lead.isRepeatLead ||
+      explicitLinkedLead
     ) {
       duplicateScenario = 'SCENARIO_2_LOST_RETURNING';
-      matchedCustomerLead = lostOrPriorUnclosedLead || sameCustomerLeads[0] || null;
+      matchedCustomerLead = explicitLinkedLead || lostOrPriorUnclosedLead || sameCustomerLeads[0] || allRelatedCustomerLeads[0] || null;
     } else if (lead.duplicateType === 'ACTIVE_RED') {
       duplicateScenario = 'SCENARIO_1_ACTIVE_DUP';
-      matchedCustomerLead = sameCustomerLeads[0] || null;
+      matchedCustomerLead = explicitLinkedLead || sameCustomerLeads[0] || allRelatedCustomerLeads[0] || null;
     } else if (projectContractors.length > 0) {
       duplicateScenario = 'SCENARIO_3_MULTI_CONTRACTOR';
     }
@@ -511,6 +531,7 @@ function evaluateLeadFraudCriteria(
     spamOrBurnerReason,
     duplicateScenario,
     matchedCustomerLead,
+    isCustomerWonVIP,
     projectContractors,
     transferredFromSalesName,
     transferCount,
@@ -778,7 +799,7 @@ export function LeadsWorkspace() {
       }
       setLoading(false);
     } else {
-      setLoading(true);
+      setLoading((prev) => (leads.length === 0 ? true : prev));
     }
     setErrorMsg(null);
     try {
@@ -807,11 +828,20 @@ export function LeadsWorkspace() {
         setLoading(false);
       }
     }
-  }, [debouncedSearchQuery, includeSpam]);
+  }, [debouncedSearchQuery, includeSpam, leads.length]);
 
   useEffect(() => {
     void fetchLeads();
-    return () => abortControllerRef.current?.abort();
+    // Silent background realtime refresh (every 20s) so user never has to press F5
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        void fetchLeads();
+      }
+    }, 20000);
+    return () => {
+      clearInterval(interval);
+      abortControllerRef.current?.abort();
+    };
   }, [fetchLeads]);
 
   useEffect(() => {
@@ -2975,12 +3005,12 @@ export function LeadsWorkspace() {
               >
                 <thead className="bg-slate-50/90 text-slate-600 border-b border-slate-200/80 text-xs font-bold uppercase tracking-wider">
                   <tr>
-                    <th className="py-3 px-3.5 w-[21%]">Khách hàng / Dự án</th>
-                    <th className="py-3 px-3 w-[15%]">Liên hệ &amp; Nguồn / Kênh</th>
-                    <th className="py-3 px-3 w-[14%]">Sản phẩm LED</th>
-                    <th className="py-3 px-3 w-[18%]">Trạng thái &amp; Lịch theo dõi</th>
-                    <th className="py-3 px-3 w-[10%]">Sales phụ trách</th>
-                    <th className="py-3 px-3 w-[8%]">Ngày nhận</th>
+                    <th className="py-3 px-3.5 w-[19%]">Khách hàng / Dự án</th>
+                    <th className="py-3 px-3 w-[13%]">Liên hệ &amp; Nguồn / Kênh</th>
+                    <th className="py-3 px-3 w-[12%]">Sản phẩm LED</th>
+                    <th className="py-3 px-3 w-[16%]">Trạng thái &amp; Lịch theo dõi</th>
+                    <th className="py-3 px-3 w-[17%]">Sales phụ trách</th>
+                    <th className="py-3 px-3 w-[11%]">Ngày nhận</th>
                     {showOptionalColumns && (
                       <>
                         <th className="py-3 px-3 w-[140px]">Khu vực / Địa chỉ</th>
@@ -2988,7 +3018,7 @@ export function LeadsWorkspace() {
                         <th className="py-3 px-3 w-[160px]">Ghi chú</th>
                       </>
                     )}
-                    <th className="py-3 px-3.5 text-right w-[14%]">Thao tác</th>
+                    <th className="py-3 px-3.5 text-right w-[12%]">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200/70">
@@ -3062,16 +3092,29 @@ export function LeadsWorkspace() {
                               ? 'bg-red-50/85 hover:bg-red-100/70 border-l-4 border-l-red-600'
                               : isActiveRedDuplicateRow
                                 ? 'bg-rose-50/75 hover:bg-rose-100/60 border-l-4 border-l-rose-500'
-                                : `${STATUS_ROW_ACCENTS[lead.pipelineStatus]} hover:bg-blue-50/35`
+                                : fraud.isCustomerWonVIP
+                                  ? 'bg-amber-50/45 hover:bg-amber-100/40 border-l-4 border-l-amber-500'
+                                  : `${STATUS_ROW_ACCENTS[lead.pipelineStatus]} hover:bg-blue-50/35`
                           }`}
                         >
                           {/* Col 1: Customer / Project */}
                           <td className="py-2.5 px-3.5 align-middle overflow-hidden">
-                            <div
-                              className="font-bold text-slate-900 text-sm truncate"
-                              title={primaryName}
-                            >
-                              {primaryName}
+                            <div className="flex items-center gap-1.5 truncate">
+                              <span
+                                className="font-bold text-slate-900 text-sm truncate"
+                                title={primaryName}
+                              >
+                                {primaryName}
+                              </span>
+                              {fraud.isCustomerWonVIP && (
+                                <span
+                                  className="px-1.5 py-0.2 rounded bg-amber-500 text-slate-950 font-extrabold text-[10px] inline-flex items-center gap-0.5 shrink-0 shadow-2xs"
+                                  title="Khách hàng thân thiết đã từng mua thành công hợp đồng (VIP)"
+                                >
+                                  <Crown className="w-2.5 h-2.5 fill-slate-950 text-slate-950" />
+                                  <span>VIP</span>
+                                </span>
+                              )}
                             </div>
                             <div
                               className="text-[13px] text-slate-600 truncate mt-0.5"
@@ -3244,10 +3287,11 @@ export function LeadsWorkspace() {
                                       <button
                                         type="button"
                                         onClick={() => setInvestigativeLead(lead)}
-                                        className="px-2 py-0.5 rounded-md bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 text-emerald-900 text-[11px] font-bold transition"
-                                        title="Khách hàng từng chốt thành công hợp đồng trước đây nay quay lại mua dự án mới"
+                                        className="px-2 py-0.5 rounded-md bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 text-[11px] font-extrabold inline-flex items-center gap-1 shadow-2xs transition"
+                                        title="Khách hàng từng chốt thành công hợp đồng trước đây nay quay lại mua dự án mới (VIP)"
                                       >
-                                        KHÁCH CŨ QUAY LẠI
+                                        <Crown className="w-3 h-3 fill-slate-950 text-slate-950" />
+                                        <span>👑 KHÁCH CŨ ĐÃ MUA (VIP)</span>
                                       </button>
                                       {fraud.matchedCustomerLead ? (
                                         <button
@@ -3262,9 +3306,17 @@ export function LeadsWorkspace() {
                                           🔗 Đã mua: {fraud.matchedCustomerLead.leadCode} →
                                         </button>
                                       ) : (
-                                        <span className="text-[11px] font-medium text-emerald-800 truncate max-w-[195px]">
-                                          💎 Đã từng chốt HĐ · Gộp 1 SĐT
-                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedLeadId(lead.id);
+                                            setLeadDetailTab('info');
+                                          }}
+                                          className="text-[11px] font-bold text-emerald-800 hover:underline text-left truncate max-w-[180px]"
+                                          title="Xem chi tiết hồ sơ đã từng chốt HĐ"
+                                        >
+                                          💎 Đã từng chốt HĐ · Xem hồ sơ →
+                                        </button>
                                       )}
                                     </div>
                                   )}
@@ -3292,12 +3344,17 @@ export function LeadsWorkspace() {
                                           🔗 Hồ sơ trước: {fraud.matchedCustomerLead.leadCode} →
                                         </button>
                                       ) : (
-                                        <span
-                                          className="text-[11px] font-medium text-[#1E3A8A] truncate max-w-[195px]"
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedLeadId(lead.id);
+                                            setLeadDetailTab('info');
+                                          }}
+                                          className="text-[11px] font-medium text-[#1E3A8A] hover:underline text-left truncate max-w-[195px]"
                                           title={`Lần trước chưa chốt: ${lead.reopenReason || lead.lostReason || 'Hỏi lại dự án'}`}
                                         >
-                                          🔄 Trước: {lead.reopenReason || lead.lostReason || 'Từng hỏi chưa chốt'}
-                                        </span>
+                                          🔄 Trước: {lead.reopenReason || lead.lostReason || 'Từng hỏi chưa chốt'} →
+                                        </button>
                                       )}
                                     </div>
                                   )}
@@ -3333,36 +3390,50 @@ export function LeadsWorkspace() {
                             </div>
                           </td>
 
-                          {/* Col 5: Assigned Sales */}
-                          <td className="py-2.5 px-3 align-middle whitespace-nowrap">
-                            <div className="font-semibold text-slate-900 text-sm">
-                              {lead.assignedSalesName || 'Chưa phân bổ'}
-                            </div>
-                            {fraud.transferredFromSalesName && (
-                              <div className="mt-0.5">
-                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-[11px] font-semibold text-indigo-800">
-                                  Chuyển từ {fraud.transferredFromSalesName}
-                                  {fraud.transferCount > 1 ? ` (${fraud.transferCount} lần)` : ''}
-                                </span>
+                          {/* Col 5: Assigned Sales (Clean Bounded Width, No Overflow into Col 6) */}
+                          <td className="py-2.5 px-3 align-middle min-w-0 max-w-0 overflow-hidden">
+                            <div className="flex flex-col min-w-0 max-w-full">
+                              <div
+                                className="font-semibold text-slate-900 text-sm truncate"
+                                title={lead.assignedSalesName || 'Chưa phân bổ'}
+                              >
+                                {lead.assignedSalesName || 'Chưa phân bổ'}
                               </div>
-                            )}
-                            <div className="mt-0.5">
-                              {lead.receivedConfirmedAt ? (
-                                <span className="inline-flex items-center gap-1 text-xs text-emerald-700 font-semibold">
-                                  <CheckCircle2 className="w-3.5 h-3.5" />
-                                  <span>Đã tiếp nhận</span>
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 text-xs text-amber-700 font-semibold">
-                                  <Clock className="w-3.5 h-3.5" />
-                                  <span>Chờ xác nhận</span>
-                                </span>
+                              {fraud.transferredFromSalesName && (
+                                <div className="mt-0.5 min-w-0 max-w-full">
+                                  <span
+                                    className="inline-flex items-center gap-1 max-w-full min-w-0 px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-[11px] font-semibold text-indigo-800"
+                                    title={`Chuyển từ ${fraud.transferredFromSalesName}${fraud.transferCount > 1 ? ` (${fraud.transferCount} lần)` : ''}`}
+                                  >
+                                    <span className="truncate min-w-0">
+                                      Chuyển từ {fraud.transferredFromSalesName}
+                                    </span>
+                                    {fraud.transferCount > 1 && (
+                                      <span className="shrink-0 text-[10px] font-bold text-indigo-600">
+                                        ({fraud.transferCount})
+                                      </span>
+                                    )}
+                                  </span>
+                                </div>
                               )}
+                              <div className="mt-0.5 min-w-0 truncate">
+                                {lead.receivedConfirmedAt ? (
+                                  <span className="inline-flex items-center gap-1 text-xs text-emerald-700 font-semibold truncate">
+                                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                                    <span className="truncate">Đã tiếp nhận</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-xs text-amber-700 font-semibold truncate">
+                                    <Clock className="w-3.5 h-3.5 shrink-0" />
+                                    <span className="truncate">Chờ xác nhận</span>
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </td>
 
                           {/* Col 6: Received Date */}
-                          <td className="py-2.5 px-3 align-middle whitespace-nowrap">
+                          <td className="py-2.5 px-3 align-middle whitespace-nowrap min-w-0">
                             <div className="text-sm font-semibold text-slate-800">
                               {new Date(lead.contactedAt).toLocaleDateString('vi-VN')}
                             </div>
@@ -3603,6 +3674,12 @@ export function LeadsWorkspace() {
 
                             {/* Card Region 3: Product + Warnings */}
                             <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                              {fraud.isCustomerWonVIP && (
+                                <span className="text-xs px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 font-extrabold inline-flex items-center gap-1 shadow-2xs">
+                                  <Crown className="w-3 h-3 fill-slate-950 text-slate-950" />
+                                  <span>VIP ĐÃ MUA</span>
+                                </span>
+                              )}
                               {primaryProduct && (
                                 <span className="text-xs px-2 py-0.5 rounded-md bg-blue-50 text-[#1E3A8A] border border-blue-200/80 font-semibold truncate max-w-[190px]">
                                   {primaryProduct.productName}
@@ -4490,6 +4567,12 @@ export function LeadsWorkspace() {
                       >
                         {PIPELINE_STATUS_LABELS[selectedLead.pipelineStatus]}
                       </span>
+                      {selectedFraud.isCustomerWonVIP && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 text-xs font-extrabold inline-flex items-center gap-1 shadow-2xs shrink-0">
+                          <Crown className="w-3.5 h-3.5 fill-slate-950 text-slate-950" />
+                          <span>👑 VIP · ĐÃ TỪNG MUA THÀNH CÔNG</span>
+                        </span>
+                      )}
                       {selectedLead.spamStatus !== 'NONE' && (
                         <span
                           title={selectedLead.spamReason ? `Lý do: ${selectedLead.spamReason}` : undefined}

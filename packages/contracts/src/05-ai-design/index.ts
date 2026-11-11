@@ -294,6 +294,8 @@ export const UpdateDesignProjectSchema = z.object({
   aspectLocked: z.boolean().optional(),
   placementQuad: QuadCoordinatesSchema.optional().nullable(),
   selectedPhotoId: z.string().trim().optional(),
+  cabinetModelCode: z.string().trim().max(60).optional().nullable(),
+  compositingMode: z.enum(['STRICT', 'REALISTIC']).optional(),
   renamePhotoId: z.string().trim().optional(),
   renamePhotoName: z.string().trim().min(1).max(120).optional(),
   renameVersionId: z.number().int().positive().optional(),
@@ -309,6 +311,13 @@ export const ChatDesignRequestSchema = z.object({
   expectedVersion: z.coerce.number().int().optional(),
   prompt: z.string().trim().min(1, 'Vui lòng nhập nội dung yêu cầu chat.').max(2000),
   chatMode: z.enum(['auto', 'consultant_free', 'image_generator']).optional(),
+  triggerSource: z
+    .enum(['user_input', 'user_button', 'ai_generated_text', 'uploaded_file_content'])
+    .optional(),
+  compositingMode: z.enum(['STRICT', 'REALISTIC']).optional(),
+  sourceVersionId: z.coerce.number().int().positive().optional().nullable(),
+  selectedPhotoId: z.string().trim().max(120).optional().nullable(),
+  cabinetModelCode: z.string().trim().max(60).optional().nullable(),
   quality: z.enum(['draft', 'high_quality']).default('draft'),
   providerId: z.string().trim().optional(),
   modelId: z.string().trim().max(120).optional(),
@@ -321,6 +330,7 @@ export const ChatDesignRequestSchema = z.object({
   bannerHeightPx: z.coerce.number().optional().nullable(),
   aspectRatio: z.string().trim().max(30).optional().nullable(),
   simulateAiTimeout: z.boolean().optional(),
+  disableLocalFallback: z.boolean().optional(),
   idempotencyKey: z.string().trim().max(120).optional(),
 });
 

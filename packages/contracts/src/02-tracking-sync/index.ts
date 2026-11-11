@@ -153,6 +153,7 @@ export interface TrackingDashboardDto {
     utmGclidMismatch: boolean;
     createdAt: string;
   }>;
+  googleAssetsHub?: any;
 }
 
 export const WebhookLeadIntakeSchema = z.object({
@@ -213,3 +214,68 @@ export const ResolveReconciliationSchema = z.object({
 });
 
 export type ResolveReconciliationDto = z.infer<typeof ResolveReconciliationSchema>;
+
+export interface GoogleAccessibleResourceItem {
+  id: string;
+  name: string;
+  type: 'GA4_PROPERTY' | 'SEARCH_CONSOLE_SITE' | 'GOOGLE_ADS_CUSTOMER';
+  permissionLevel?: string;
+  isAccessible: boolean;
+}
+
+export interface GoogleOAuthStatusDto {
+  connected: boolean;
+  connectedEmail: string | null;
+  connectedName: string | null;
+  connectedPicture: string | null;
+  connectedAt: string | null;
+  scopes: string[];
+  hasRefreshToken: boolean;
+  expiresAt: string | null;
+  isSandboxDemo?: boolean;
+  autoSyncSlots: Array<'02:00' | '11:00' | '17:00'>;
+  lastSyncAt: string | null;
+  lastSuccessfulSyncAt?: string | null;
+  lastAttemptAt?: string | null;
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
+  lastRequestId?: string | null;
+  connectionStatus: 'CONNECTED' | 'EXPIRED' | 'PERMISSION_ERROR' | 'SYNC_ERROR' | 'DISCONNECTED';
+  detectedGa4PropertyId?: string | null;
+  detectedGadsCustomerId?: string | null;
+  selectedGa4PropertyId?: string | null;
+  selectedGadsCustomerId?: string | null;
+  selectedGscSiteUrl?: string | null;
+  accessibleResources: GoogleAccessibleResourceItem[];
+}
+
+export interface GoogleTestConnectionResultDto {
+  success: boolean;
+  checkedAt: string;
+  connectionStatus: 'CONNECTED' | 'EXPIRED' | 'PERMISSION_ERROR' | 'SYNC_ERROR' | 'DISCONNECTED';
+  userEmail: string;
+  userName?: string | null;
+  canAccessGa4: boolean;
+  ga4PropertiesCount: number;
+  canAccessSearchConsole: boolean;
+  gscSitesCount: number;
+  canAccessGoogleAds: boolean;
+  adsAccessibleCustomersCount: number;
+  accessibleResources: GoogleAccessibleResourceItem[];
+  message: string;
+}
+
+export const SelectGoogleResourcesSchema = z.object({
+  selectedGa4PropertyId: z.string().trim().optional().nullable(),
+  selectedGadsCustomerId: z.string().trim().optional().nullable(),
+  selectedGscSiteUrl: z.string().trim().optional().nullable(),
+});
+
+export type SelectGoogleResourcesDto = z.infer<typeof SelectGoogleResourcesSchema>;
+
+export interface GoogleOAuthClientConfigDto {
+  hasClientId: boolean;
+  clientIdMasked: string | null;
+  hasClientSecret: boolean;
+}
+

@@ -1831,7 +1831,12 @@ export function AiDesignWorkspace() {
       );
 
       // Only run Toàn Trung 3D LED CAD frame overlay when user explicitly asks to graft an LED screen or poster,
-      // NEVER hijack general photo editing requests ("sửa ảnh", "thêm/bớt chi tiết trong ảnh")!
+      // AND when the project actually has a survey photo (for @taoanh), so missing-photo validation is handled by Command Router!
+      const hasSurveyPhotoOnProject = Boolean(
+        (activeProj.photos && activeProj.photos.length > 0) ||
+          activeProj.sitePhotoDownloadUrl ||
+          selectedPhoto
+      );
       const isExplicitLedComposite =
         isPosterTag ||
         /\b(ghép\s*(?:phối\s*cảnh|màn\s*hình|led)|lắp\s*màn\s*hình\s*led|đường\s*gióng\s*kích\s*thước)\b/i.test(
@@ -1841,6 +1846,7 @@ export function AiDesignWorkspace() {
       if (
         effectiveMode === 'image_generator' &&
         isExplicitLedComposite &&
+        (isPosterTag || hasSurveyPhotoOnProject) &&
         (taoAnhExecStrategy === 'smart_hybrid' || !hasExternalCloudApiKey)
       ) {
         const compositedB64 = await renderRealPhotoAiCompositeBase64(
@@ -1895,7 +1901,13 @@ export function AiDesignWorkspace() {
         bannerWidthPx: Math.round(Number(paramForm.bannerWidthPx) || 1920),
         bannerHeightPx: Math.round(Number(paramForm.bannerHeightPx) || 1080),
         aspectRatio: paramForm.aspectRatio || '16:9',
-        selectedPhotoUrl: sitePhotoUrl,
+        selectedPhotoUrl: hasSurveyPhotoOnProject ? sitePhotoUrl : undefined,
+        selectedPhotoId: selectedPhoto?.id ?? null,
+        sourceVersionId:
+          viewMode === 'result' && currentVersion ? currentVersion.id : null,
+        compositingMode:
+          paramForm.editActionMode === 'inpaint_keep_bg' ? 'STRICT' : 'REALISTIC',
+        triggerSource: forceImageMode ? 'user_button' : 'user_input',
         idempotencyKey: `chat-design-${activeProj.id}-${Date.now()}`,
       };
 
@@ -1935,6 +1947,8 @@ export function AiDesignWorkspace() {
         if (data.versionId) {
           setSelectedVersionId(data.versionId);
         }
+      } else {
+        await loadData(activeProj.id, true);
       }
     } catch (err) {
       setChatPrompt(rawText);

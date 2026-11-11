@@ -3,10 +3,17 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowRight,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Crown,
+  ExternalLink,
+  Eye,
+  FileText,
   FolderPlus,
+  History,
   Layers,
   MapPin,
   Phone,
@@ -56,6 +63,14 @@ const CATEGORY_META: Record<
     badge: 'Dịch vụ / Khác',
     badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
   },
+};
+
+const STATUS_BADGE_MAP: Record<string, string> = {
+  new_lead: 'bg-blue-100 text-blue-900 border border-blue-200',
+  quoting: 'bg-amber-100 text-amber-900 border border-amber-200',
+  quote_sent: 'bg-purple-100 text-purple-900 border border-purple-200',
+  won: 'bg-emerald-100 text-emerald-900 border border-emerald-300',
+  lost: 'bg-slate-100 text-slate-700 border border-slate-200',
 };
 
 const UNIFIED_LEAD_SOURCES: Array<{
@@ -339,11 +354,54 @@ export function ManualLeadModal({
   const [liveCompany, setLiveCompany] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [previewLeadId, setPreviewLeadId] = useState<number | null>(null);
+  const [leadActionChoice, setLeadActionChoice] = useState<'create_new' | 'work_on_existing'>('create_new');
+  const [targetExistingLeadId, setTargetExistingLeadId] = useState<number | null>(null);
+  const [feedbackNote, setFeedbackNote] = useState<string | null>(null);
+
+  const inheritCustomerInfo = useCallback((lead: LeadItemDto) => {
+    if (!formRef.current) return;
+    const form = formRef.current;
+    const elements = form.elements as unknown as Record<string, HTMLInputElement | HTMLSelectElement>;
+    if (lead.phone && elements.phone) {
+      elements.phone.value = lead.phone;
+      setLivePhone(lead.phone);
+    }
+    if (lead.contactName && elements.contactName) {
+      elements.contactName.value = lead.contactName;
+    }
+    if (lead.companyName && elements.companyName) {
+      elements.companyName.value = lead.companyName;
+      setLiveCompany(lead.companyName);
+    }
+    if (lead.email && elements.email) {
+      elements.email.value = lead.email;
+    }
+    if (lead.areaType) {
+      setAreaType(lead.areaType === 'hcm' ? 'hcm' : 'other_province');
+    }
+    if (lead.province) {
+      setProvince(lead.province);
+    }
+    if (lead.hcmDistrict) {
+      setDistrict(lead.hcmDistrict);
+    }
+    if (lead.installationAddress && elements.installationAddress) {
+      elements.installationAddress.value = lead.installationAddress;
+    }
+    if (lead.products && lead.products.length > 0) {
+      setSelectedProductIds(lead.products.map((p) => p.id));
+    }
+  }, []);
 
   useEffect(() => {
     if (!open) {
       setLivePhone('');
       setLiveCompany('');
+      setPreviewLeadId(null);
+      setLeadActionChoice('create_new');
+      setTargetExistingLeadId(null);
+      setFeedbackNote(null);
     }
   }, [open]);
 
@@ -434,6 +492,8 @@ export function ManualLeadModal({
       productIds: selectedProductIds,
       customProductNote: combinedCustomNote,
       initialNote,
+      existingLeadAction: leadActionChoice,
+      targetExistingLeadId: targetExistingLeadId || (liveMatches[0]?.id ?? undefined),
       reassignToSalesId:
         tickReassign && reassignSalesId ? Number(reassignSalesId) : undefined,
       reassignReason:
@@ -510,6 +570,22 @@ export function ManualLeadModal({
           {validationError && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-800 font-semibold">
               {validationError}
+            </div>
+          )}
+
+          {feedbackNote && (
+            <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 font-semibold flex items-center justify-between gap-2 animate-in fade-in">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                <span className="text-xs">{feedbackNote}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFeedbackNote(null)}
+                className="text-emerald-700 hover:text-emerald-950 font-bold px-1"
+              >
+                ×
+              </button>
             </div>
           )}
 
@@ -614,7 +690,7 @@ export function ManualLeadModal({
 
             {/* Phát cảnh báo lập tức khi nhập SĐT hoặc Công ty bị trùng */}
             {liveMatches.length > 0 && (
-              <div className="space-y-2 animate-in fade-in duration-150">
+              <div className="space-y-2.5 animate-in fade-in duration-150">
                 {liveMatches.slice(0, 3).map((m) => {
                   const isOpenLead =
                     m.pipelineStatus === 'new_lead' ||
@@ -622,58 +698,191 @@ export function ManualLeadModal({
                     m.pipelineStatus === 'quote_sent';
                   const isWonLead = m.pipelineStatus === 'won';
 
+                  // TRƯỜNG HỢP 1: KHÁCH CŨ ĐÃ MUA THÀNH CÔNG (VIP)
+                  if (isWonLead) {
+                    return (
+                      <div
+                        key={m.id}
+                        className="p-3.5 rounded-xl border border-amber-300 bg-gradient-to-r from-amber-50/90 via-yellow-50/70 to-emerald-50 text-slate-900 shadow-2xs space-y-2"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="px-2.5 py-1 rounded-md font-extrabold text-[11px] bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 inline-flex items-center gap-1 shadow-2xs">
+                              <Crown className="w-3.5 h-3.5 fill-slate-950 text-slate-950" />
+                              <span>👑 KHÁCH CŨ ĐÃ TỪNG MUA THÀNH CÔNG (VIP)</span>
+                            </span>
+                            <span className="font-mono font-bold text-[#1E3A8A]">
+                              {m.leadCode}
+                            </span>
+                            <span className="font-bold truncate">
+                              · {m.companyName || m.contactName || m.phone}
+                            </span>
+                          </div>
+                          <span className="text-[11px] font-bold text-emerald-800">
+                            Đã chốt hợp đồng · Hồ sơ cũ được bảo lưu 100%
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-slate-700">
+                          Khách hàng SĐT <strong className="font-mono">{m.phone}</strong> đã từng chốt hợp đồng thành công
+                          {m.projectName ? ` cho dự án: "${m.projectName}"` : ''} · NVKD phụ trách:{' '}
+                          <strong>{m.assignedSalesName || 'Kinh doanh'}</strong>.
+                        </p>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-amber-200/80">
+                          <span className="text-[11px] text-slate-500 font-medium">
+                            Khách đã mua quay lại: Xem hồ sơ đã chốt và kế thừa thông tin tạo Lead mới
+                          </span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setPreviewLeadId(m.id)}
+                              className="h-8 px-2.5 rounded-lg bg-white hover:bg-slate-50 border border-amber-300 text-amber-900 font-bold inline-flex items-center gap-1 shadow-2xs transition"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-amber-700" />
+                              <span>Xem hồ sơ ({m.leadCode})</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                inheritCustomerInfo(m);
+                                setTargetExistingLeadId(m.id);
+                                setLeadActionChoice('create_new');
+                                setFeedbackNote(
+                                  `Đã kế thừa thông tin khách hàng từ hồ sơ đã chốt ${m.leadCode}. Bạn có thể chỉnh sửa thông tin dự án mới và lưu hồ sơ.`,
+                                );
+                              }}
+                              className="h-8 px-3 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-bold inline-flex items-center gap-1 shadow-2xs transition"
+                            >
+                              <Sparkles className="w-3.5 h-3.5" />
+                              <span>Kế thừa &amp; Tạo mới</span>
+                            </button>
+                            {onOpenExistingLead && (
+                              <button
+                                type="button"
+                                onClick={() => onOpenExistingLead(m.id)}
+                                className="h-8 px-2.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-semibold inline-flex items-center gap-1 text-xs transition"
+                                title="Mở trực tiếp hồ sơ đã chốt trên màn hình chính"
+                              >
+                                <ExternalLink className="w-3 h-3 text-slate-500" />
+                                <span>Mở hồ sơ</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // TRƯỜNG HỢP 2: KHÁCH CHƯA CHỐT (Đang mở hoặc Từng thất bại quay lại)
                   const badgeText = isOpenLead
                     ? 'CẢNH BÁO TRÙNG LEAD ĐANG MỞ'
-                    : isWonLead
-                      ? 'KHÁCH CŨ QUAY LẠI'
-                      : 'KHÁCH QUAY LẠI';
-
+                    : 'KHÁCH QUAY LẠI HỎI MUA (CHƯA CHỐT TRƯỚC ĐÂY)';
                   const boxStyle = isOpenLead
                     ? 'bg-rose-50 border-rose-300 text-rose-950'
-                    : isWonLead
-                      ? 'bg-blue-50 border-blue-300 text-slate-900'
-                      : 'bg-amber-50 border-amber-300 text-amber-950';
-
+                    : 'bg-blue-50 border-blue-300 text-slate-900';
                   const pillStyle = isOpenLead
                     ? 'bg-rose-600 text-white'
-                    : isWonLead
-                      ? 'bg-[#1E3A8A] text-white'
-                      : 'bg-amber-600 text-white';
+                    : 'bg-[#1E3A8A] text-white';
+
+                  const isWorkingOnThis =
+                    leadActionChoice === 'work_on_existing' &&
+                    (targetExistingLeadId === m.id || (!targetExistingLeadId && m.id === liveMatches[0]?.id));
 
                   return (
                     <div
                       key={m.id}
-                      className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs ${boxStyle}`}
+                      className={`p-3.5 rounded-xl border flex flex-col gap-2.5 text-xs ${boxStyle}`}
                     >
-                      <div className="space-y-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className={`px-2 py-0.5 rounded font-bold text-[11px] ${pillStyle}`}>
-                            {badgeText}
-                          </span>
-                          <span className="font-mono font-bold text-[#1E3A8A]">
-                            {m.leadCode}
-                          </span>
-                          <span className="font-bold truncate">
-                            · {m.companyName || m.contactName || m.phone}
-                          </span>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="space-y-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className={`px-2 py-0.5 rounded font-bold text-[11px] ${pillStyle}`}>
+                              {badgeText}
+                            </span>
+                            <span className="font-mono font-bold text-[#1E3A8A]">
+                              {m.leadCode}
+                            </span>
+                            <span className="font-bold truncate">
+                              · {m.companyName || m.contactName || m.phone}
+                            </span>
+                          </div>
+                          <p className="text-[11px] opacity-90">
+                            SĐT: <strong className="font-mono">{m.phone}</strong> · Trạng thái:{' '}
+                            <strong>{PIPELINE_STATUS_LABELS[m.pipelineStatus]}</strong>
+                            {m.lostReason ? ` (${m.lostReason})` : ''} · Phụ trách:{' '}
+                            <strong>{m.assignedSalesName || 'Chưa phân bổ'}</strong>
+                          </p>
                         </div>
-                        <p className="text-[11px] opacity-90">
-                          SĐT: <strong className="font-mono">{m.phone}</strong> · Trạng thái:{' '}
-                          <strong>{PIPELINE_STATUS_LABELS[m.pipelineStatus]}</strong>
-                          {m.lostReason ? ` (${m.lostReason})` : ''} · Phụ trách:{' '}
-                          <strong>{m.assignedSalesName || 'Chưa phân bổ'}</strong>
-                        </p>
+
+                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setPreviewLeadId(m.id)}
+                            className="h-8 px-2.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-[#1E3A8A] font-bold inline-flex items-center gap-1 shadow-2xs transition"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-[#1E3A8A]" />
+                            <span>Xem hồ sơ ({m.leadCode})</span>
+                          </button>
+                          {onOpenExistingLead && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenExistingLead(m.id)}
+                              className="h-8 px-2.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-semibold inline-flex items-center gap-1 shadow-2xs transition"
+                              title="Chuyển ngay sang làm việc trên Lead này tại màn hình chính"
+                            >
+                              <ExternalLink className="w-3 h-3 text-slate-500" />
+                              <span>Mở làm việc ngay</span>
+                            </button>
+                          )}
+                        </div>
                       </div>
 
-                      {onOpenExistingLead && (
-                        <button
-                          type="button"
-                          onClick={() => onOpenExistingLead(m.id)}
-                          className="h-8 px-3 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-[#1E3A8A] font-bold shrink-0 shadow-2xs transition"
-                        >
-                          Xem hồ sơ này →
-                        </button>
-                      )}
+                      {/* Lựa chọn xử lý: Trực tiếp làm việc trên Lead đó HOẶC Tạo Lead mới riêng */}
+                      <div className="p-2 rounded-lg bg-white/80 border border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <span className="font-medium text-slate-700">
+                          Lựa chọn hành động cho hồ sơ chưa chốt này:
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLeadActionChoice('work_on_existing');
+                              setTargetExistingLeadId(m.id);
+                              inheritCustomerInfo(m);
+                              setFeedbackNote(
+                                `Đã chọn: Làm việc trực tiếp trên hồ sơ ${m.leadCode}. Khi lưu, hệ thống sẽ mở lại / cập nhật hồ sơ này.`,
+                              );
+                            }}
+                            className={`h-7 px-2.5 rounded-md text-xs font-bold transition inline-flex items-center gap-1 ${
+                              isWorkingOnThis
+                                ? 'bg-[#1E3A8A] text-white shadow-2xs'
+                                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                            }`}
+                          >
+                            <Check className={`w-3 h-3 ${isWorkingOnThis ? 'opacity-100' : 'opacity-0'}`} />
+                            <span>🎯 Trực tiếp làm việc trên Lead này</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLeadActionChoice('create_new');
+                              setTargetExistingLeadId(m.id);
+                              setFeedbackNote(
+                                `Đã chọn: Tạo Lead mới riêng cho khách hàng này (vẫn liên kết để xem hồ sơ cũ ${m.leadCode}).`,
+                              );
+                            }}
+                            className={`h-7 px-2.5 rounded-md text-xs font-bold transition inline-flex items-center gap-1 ${
+                              !isWorkingOnThis
+                                ? 'bg-[#1E3A8A] text-white shadow-2xs'
+                                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                            }`}
+                          >
+                            <Check className={`w-3 h-3 ${!isWorkingOnThis ? 'opacity-100' : 'opacity-0'}`} />
+                            <span>➕ Tạo Lead mới riêng</span>
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   );
                 })}
@@ -870,25 +1079,294 @@ export function ManualLeadModal({
         </form>
 
         {/* Fixed Footer Actions */}
-        <div className="shrink-0 px-6 py-3.5 border-t border-slate-200/80 bg-white flex items-center justify-end gap-2.5 text-xs">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-10 px-4 rounded-xl border border-slate-200 font-semibold text-slate-600 hover:bg-slate-50"
-          >
-            Hủy bỏ
-          </button>
-          <button
-            type="submit"
-            form="manual-lead-intake-form"
-            disabled={submitting || selectedProductIds.length === 0}
-            className="h-10 px-5 rounded-xl bg-[#1E3A8A] hover:bg-[#2563EB] text-white font-bold inline-flex items-center gap-1.5 shadow-sm disabled:opacity-50 transition"
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>{submitting ? 'Đang lưu & kiểm tra trùng...' : 'Lưu Hồ sơ Lead'}</span>
-          </button>
+        <div className="shrink-0 px-6 py-3.5 border-t border-slate-200/80 bg-white flex flex-wrap items-center justify-between gap-2.5 text-xs">
+          <div className="text-slate-500 font-medium">
+            {leadActionChoice === 'work_on_existing' && targetExistingLeadId && (
+              <span className="text-blue-800 font-semibold inline-flex items-center gap-1">
+                <Check className="w-3.5 h-3.5 text-blue-600" />
+                <span>Chế độ: Cập nhật &amp; Làm việc trực tiếp trên Lead cũ</span>
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-10 px-4 rounded-xl border border-slate-200 font-semibold text-slate-600 hover:bg-slate-50"
+            >
+              Hủy bỏ
+            </button>
+            <button
+              type="submit"
+              form="manual-lead-intake-form"
+              disabled={submitting || selectedProductIds.length === 0}
+              className="h-10 px-5 rounded-xl bg-[#1E3A8A] hover:bg-[#2563EB] text-white font-bold inline-flex items-center gap-1.5 shadow-sm disabled:opacity-50 transition"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>
+                {submitting
+                  ? 'Đang lưu & kiểm tra...'
+                  : leadActionChoice === 'work_on_existing'
+                    ? '🎯 Lưu & Làm việc trên Lead'
+                    : 'Lưu Hồ sơ Lead'}
+              </span>
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Xem Nhanh Hồ Sơ Lead (Preview Drawer / Modal) để người dùng không mất form nhập liệu */}
+      {previewLeadId && (() => {
+        const previewLead = existingLeads.find((l) => l.id === previewLeadId);
+        if (!previewLead) return null;
+        const isWon = previewLead.pipelineStatus === 'won';
+
+        return (
+          <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150">
+            <div className="bg-white w-full max-w-2xl max-h-[85vh] rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col">
+              {/* Header */}
+              <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-[#1E3A8A] text-white grid place-items-center shadow-xs">
+                    <Eye className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-[#1E3A8A] text-sm">
+                        {previewLead.leadCode}
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                          STATUS_BADGE_MAP[previewLead.pipelineStatus] || 'bg-slate-100 text-slate-800'
+                        }`}
+                      >
+                        {PIPELINE_STATUS_LABELS[previewLead.pipelineStatus]}
+                      </span>
+                      {isWon && (
+                        <span className="px-2 py-0.5 rounded bg-amber-500 text-slate-950 text-[11px] font-extrabold inline-flex items-center gap-1 shadow-2xs">
+                          <Crown className="w-3 h-3 fill-slate-950 text-slate-950" />
+                          <span>VIP ĐÃ MUA</span>
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      Xem nhanh hồ sơ để quyết định phương án làm việc mà không làm mất dữ liệu form đang tạo
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPreviewLeadId(null)}
+                  className="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 grid place-items-center"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3.5 text-xs text-slate-700 bg-slate-50/40">
+                {isWon && (
+                  <div className="p-3.5 rounded-xl bg-gradient-to-r from-amber-50/90 via-yellow-50/70 to-emerald-50 border border-amber-300 text-slate-900 space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold text-amber-900 text-sm">
+                      <Crown className="w-4 h-4 fill-amber-500 text-amber-600" />
+                      <span>Khách hàng thân thiết · Đã từng chốt thành công hợp đồng</span>
+                    </div>
+                    <p className="text-[11px] text-slate-700 leading-relaxed">
+                      Hồ sơ này đã chốt hợp đồng thành công. Khi bấm <strong>Kế thừa thông tin &amp; Tạo Lead mới</strong>, hệ thống sẽ bảo lưu 100% hồ sơ đã chốt và tự động điền sẵn các thông tin đơn vị, SĐT, địa chỉ vào form để bạn tiếp tục tạo hợp đồng cho dự án mới.
+                    </p>
+                  </div>
+                )}
+
+                {!isWon && (
+                  <div className="p-3.5 rounded-xl bg-blue-50 border border-blue-200 text-slate-800 space-y-1">
+                    <div className="font-bold text-[#1E3A8A] text-sm">
+                      Hồ sơ đang ở trạng thái: {PIPELINE_STATUS_LABELS[previewLead.pipelineStatus]}
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      Khách hàng đang có hồ sơ trong hệ thống. Bạn có thể chọn <strong>Làm việc trực tiếp trên Lead này</strong> để mở lại/chăm sóc tiếp, hoặc <strong>Tạo Lead mới riêng</strong> nếu đây là một dự án hoàn toàn độc lập.
+                    </p>
+                  </div>
+                )}
+
+                {/* Grid Chi tiết Khách hàng & Công trình */}
+                <div className="p-4 rounded-xl border border-slate-200 bg-white space-y-3 shadow-2xs">
+                  <span className="font-bold text-slate-900 text-xs block border-b border-slate-100 pb-1.5">
+                    1. Chi tiết Khách hàng &amp; Địa điểm Công trình
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <span className="text-slate-400 block text-[11px]">Đơn vị / Công ty:</span>
+                      <strong className="text-slate-900 font-semibold text-xs">
+                        {previewLead.companyName || '—'}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[11px]">Người liên hệ:</span>
+                      <strong className="text-slate-900 font-semibold text-xs">
+                        {previewLead.contactName || '—'}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[11px]">Số điện thoại:</span>
+                      <strong className="text-[#1E3A8A] font-mono font-bold text-xs">
+                        {previewLead.phone}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[11px]">Email:</span>
+                      <strong className="text-slate-900 font-semibold text-xs">
+                        {previewLead.email || '—'}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[11px]">Tên dự án trước:</span>
+                      <strong className="text-slate-900 font-semibold text-xs">
+                        {previewLead.projectName || '—'}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[11px]">Địa chỉ công trình:</span>
+                      <strong className="text-slate-900 font-semibold text-xs">
+                        {previewLead.installationAddress || previewLead.province || '—'}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sản phẩm & Ghi chú */}
+                <div className="p-4 rounded-xl border border-slate-200 bg-white space-y-2.5 shadow-2xs">
+                  <span className="font-bold text-slate-900 text-xs block border-b border-slate-100 pb-1.5">
+                    2. Sản phẩm LED &amp; Ghi chú kỹ thuật
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {previewLead.products.length > 0 ? (
+                      previewLead.products.map((p) => (
+                        <span
+                          key={p.id}
+                          className="px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-[#1E3A8A] font-semibold text-xs"
+                        >
+                          {p.productName}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-slate-400">Chưa chọn sản phẩm</span>
+                    )}
+                  </div>
+                  {previewLead.customProductNote && (
+                    <p className="text-slate-600 text-[11px] pt-1 border-t border-slate-100">
+                      Ghi chú cấu hình: <strong>{previewLead.customProductNote}</strong>
+                    </p>
+                  )}
+                  {previewLead.initialNote && (
+                    <p className="text-slate-600 text-[11px]">
+                      Ghi chú ban đầu: <strong>{previewLead.initialNote}</strong>
+                    </p>
+                  )}
+                  {previewLead.lostReason && (
+                    <p className="text-rose-700 text-[11px]">
+                      Lý do thất bại lần trước: <strong>{previewLead.lostReason}</strong>
+                    </p>
+                  )}
+                </div>
+
+                {/* Thông tin phụ trách */}
+                <div className="flex items-center justify-between text-[11px] text-slate-500 px-2 py-1 bg-white rounded-lg border border-slate-200/80">
+                  <span>Sales phụ trách: <strong className="text-slate-800">{previewLead.assignedSalesName || 'Chưa phân bổ'}</strong></span>
+                  <span>Ngày liên hệ: <strong className="text-slate-800">{new Date(previewLead.contactedAt).toLocaleDateString('vi-VN')}</strong></span>
+                </div>
+              </div>
+
+              {/* Footer Actions của Preview Modal */}
+              <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setPreviewLeadId(null)}
+                  className="h-9 px-3.5 rounded-xl border border-slate-200 bg-white text-slate-600 font-semibold hover:bg-slate-100 text-xs"
+                >
+                  Đóng xem nhanh
+                </button>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {isWon ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          inheritCustomerInfo(previewLead);
+                          setTargetExistingLeadId(previewLead.id);
+                          setLeadActionChoice('create_new');
+                          setFeedbackNote(
+                            `Đã kế thừa thông tin từ hồ sơ đã chốt ${previewLead.leadCode}. Bạn hãy nhập tên dự án mới và lưu hồ sơ.`,
+                          );
+                          setPreviewLeadId(null);
+                        }}
+                        className="h-9 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold inline-flex items-center gap-1.5 text-xs shadow-2xs transition"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Kế thừa thông tin &amp; Tạo Lead mới</span>
+                      </button>
+                      {onOpenExistingLead && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPreviewLeadId(null);
+                            onOpenExistingLead(previewLead.id);
+                          }}
+                          className="h-9 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-semibold text-xs transition"
+                        >
+                          Mở hồ sơ trên Workspace →
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLeadActionChoice('work_on_existing');
+                          setTargetExistingLeadId(previewLead.id);
+                          inheritCustomerInfo(previewLead);
+                          setFeedbackNote(`Đã chọn làm việc trực tiếp trên hồ sơ ${previewLead.leadCode}.`);
+                          setPreviewLeadId(null);
+                        }}
+                        className="h-9 px-3.5 rounded-xl bg-[#1E3A8A] hover:bg-blue-900 text-white font-bold inline-flex items-center gap-1.5 text-xs shadow-2xs transition"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Làm việc trực tiếp trên Lead này</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLeadActionChoice('create_new');
+                          setTargetExistingLeadId(previewLead.id);
+                          setFeedbackNote(`Đã chọn tạo Lead mới riêng cho khách này.`);
+                          setPreviewLeadId(null);
+                        }}
+                        className="h-9 px-3.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 font-semibold text-xs transition"
+                      >
+                        <span>➕ Tạo Lead mới riêng</span>
+                      </button>
+                      {onOpenExistingLead && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPreviewLeadId(null);
+                            onOpenExistingLead(previewLead.id);
+                          }}
+                          className="h-9 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition"
+                          title="Chuyển ngay sang làm việc trên Lead này tại màn hình chính"
+                        >
+                          Mở ngay →
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

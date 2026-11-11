@@ -7,6 +7,10 @@ import { requireAuthenticatedSession } from '../../../../../../core/permissions'
 import { ZipArchive } from '../../../../../../core/export/xlsx-builder';
 import { readPrivateBusinessFile } from '../../../../../../core/storage/private-files.service';
 import { renderSyntheticLedPngBuffer } from '../../../../../../modules/05-ai-design/providers';
+import {
+  assertCanAccessDesignProject,
+  ForbiddenDesignProjectAccessError,
+} from '../../../../../../modules/05-ai-design/service';
 
 export async function GET(
   req: Request,
@@ -45,6 +49,15 @@ export async function GET(
 
   if (!row) {
     return jsonError('NOT_FOUND', 'Không tìm thấy dự án thiết kế yêu cầu.', 404);
+  }
+
+  try {
+    await assertCanAccessDesignProject(auth.user, requestId);
+  } catch (err) {
+    if (err instanceof ForbiddenDesignProjectAccessError) {
+      return jsonError('FORBIDDEN_PROJECT_ACCESS', err.message, 403);
+    }
+    return jsonError('FORBIDDEN', 'Không có quyền tải xuống dự án này.', 403);
   }
 
   const url = new URL(req.url);

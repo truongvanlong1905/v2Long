@@ -4,6 +4,10 @@ import { jsonError } from '../../../../../../core/http';
 import { requireAuthenticatedSession } from '../../../../../../core/permissions';
 import { readPrivateBusinessFile } from '../../../../../../core/storage/private-files.service';
 import { renderSyntheticLedPngBuffer } from '../../../../../../modules/05-ai-design/providers';
+import {
+  assertCanAccessDesignProject,
+  ForbiddenDesignProjectAccessError,
+} from '../../../../../../modules/05-ai-design/service';
 
 export async function GET(
   req: Request,
@@ -37,6 +41,15 @@ export async function GET(
 
   if (!versionRow) {
     return jsonError('NOT_FOUND', 'Không tìm thấy phiên bản thiết kế yêu cầu.', 404);
+  }
+
+  try {
+    await assertCanAccessDesignProject(auth.user, versionRow.designRequestId);
+  } catch (err) {
+    if (err instanceof ForbiddenDesignProjectAccessError) {
+      return jsonError('FORBIDDEN_PROJECT_ACCESS', err.message, 403);
+    }
+    return jsonError('FORBIDDEN', 'Không có quyền truy cập tài sản dự án này.', 403);
   }
 
   const fileData = readPrivateBusinessFile(versionRow.storageObjectKey);

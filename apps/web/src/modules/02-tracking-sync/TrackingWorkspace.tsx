@@ -16,6 +16,8 @@ import {
 import type { TrackingDashboardDto } from '@toantrung/contracts';
 import { apiRequest } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
+import { GoogleOAuthManager } from '@/components/google-oauth/GoogleOAuthManager';
+import { GoogleAssetsHubSection, type GoogleAssetsHubDto } from '@/components/google-oauth/GoogleAssetsHubSection';
 
 interface AdapterStatusItem {
   code: string;
@@ -37,6 +39,7 @@ interface WorkerHistoryItem {
 type ExtendedTrackingDashboardDto = TrackingDashboardDto & {
   adapterMatrix?: AdapterStatusItem[];
   workerHistory?: WorkerHistoryItem[];
+  googleAssetsHub?: GoogleAssetsHubDto;
 };
 
 export function TrackingWorkspace() {
@@ -69,7 +72,7 @@ export function TrackingWorkspace() {
   const [reconcileNotes, setReconcileNotes] = useState<Record<number, string>>({});
 
   const fetchDashboard = useCallback(async () => {
-    setLoading(true);
+    setLoading((prev) => (data ? false : true));
     setErrorMsg(null);
     try {
       const res = await apiRequest<ExtendedTrackingDashboardDto>(
@@ -81,10 +84,17 @@ export function TrackingWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [periodDays]);
+  }, [periodDays, data]);
 
   useEffect(() => {
     void fetchDashboard();
+    // Silent background realtime refresh (every 25s) without manual F5
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        void fetchDashboard();
+      }
+    }, 25000);
+    return () => clearInterval(interval);
   }, [fetchDashboard]);
 
   const handleTriggerSync = async (slot: 'FULL_0200' | 'LIGHT_1100' | 'MANUAL_RETRY') => {
@@ -358,16 +368,29 @@ export function TrackingWorkspace() {
             <span>Xuất Excel (.xlsx)</span>
           </a>
 
+          <div className="h-9 px-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Realtime Live</span>
+          </div>
+
           <button
             type="button"
             onClick={() => void fetchDashboard()}
-            className="h-9 px-3.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-sm font-semibold inline-flex items-center gap-1.5"
+            className="h-9 px-3.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-sm font-semibold inline-flex items-center gap-1.5 hover:bg-slate-50 transition"
           >
             <RefreshCw className="w-4 h-4" />
             <span>Làm mới</span>
           </button>
         </div>
       </div>
+
+      {/* Google OAuth 2.0 Fast Connect Banner (One-Click Connect for Module 02 & All Modules) */}
+      <GoogleOAuthManager compact returnPath="/tracking" onSyncCompleted={() => void fetchDashboard()} />
+
+      {/* 4-Pillars Google Live Hub: GA4 (4 Sites), Search Console, Google Trends, Google Ads */}
+      {data?.googleAssetsHub && (
+        <GoogleAssetsHubSection hub={data.googleAssetsHub} />
+      )}
 
       {/* Adapter Mode & Freshness Notice */}
       {data && (
@@ -376,7 +399,7 @@ export function TrackingWorkspace() {
             <Info className="w-4 h-4 text-brand shrink-0 mt-0.5" />
             <div>
               <strong>
-                Trạng thái kết nối ({data.liveIntegrationMode === 'FIXTURE_SIMULATION' ? 'Dữ liệu mô phỏng — Chưa cấu hình khóa API thật' : 'Live API'}):
+                Trạng thái kết nối ({data.liveIntegrationMode === 'LIVE_CONFIGURED' ? '100% Live Google OAuth 2.0' : 'Dữ liệu mô phỏng'}):
               </strong>{' '}
               Cập nhật lần cuối lúc{' '}
               <strong>
@@ -504,55 +527,66 @@ export function TrackingWorkspace() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {data.reconciliations.map((rec) => (
-                    <tr
-                      key={rec.id}
-                      className={rec.status === 'ALERT_OPEN' ? 'bg-red-50/70' : ''}
-                    >
-                      <td className="py-2.5 px-3 font-mono font-bold">{rec.reconcileDate}</td>
-                      <td className="py-2.5 px-3 font-mono">{rec.accountPropertyId}</td>
-                      <td className="py-2.5 px-3 font-bold">{rec.crmLeadCount}</td>
-                      <td className="py-2.5 px-3">{rec.errorIntakeCount}</td>
-                      <td className="py-2.5 px-3 font-bold">{rec.platformReportedCount}</td>
-                      <td className="py-2.5 px-3 font-bold text-red-600">
-                        {rec.discrepancyCount} Lead
-                      </td>
-                      <td className="py-2.5 px-3">
-                        {rec.status === 'ALERT_OPEN' ? (
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="text"
-                              value={reconcileNotes[rec.id] || ''}
-                              onChange={(e) =>
-                                setReconcileNotes((prev) => ({
-                                  ...prev,
-                                  [rec.id]: e.target.value,
-                                }))
-                              }
-                              placeholder="Nhập ghi chú đối chiếu danh sách Google Ads..."
-                              className="h-9 px-3 rounded-lg border border-red-200 bg-white text-sm flex-1"
-                            />
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => void handleResolveReconciliation(rec.id)}
-                              className="h-9 px-3.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-bold shrink-0"
-                            >
-                              Xác nhận Đã xử lý
-                            </button>
-                          </div>
-                        ) : rec.status === 'RESOLVED' ? (
-                          <span className="text-emerald-700 font-semibold">
-                            Đã xử lý ({rec.resolvedByName}): {rec.resolutionNote}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold">
-                            <CheckCircle2 className="w-4 h-4" /> Khớp 100%
-                          </span>
-                        )}
+                  {data.reconciliations.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-6 text-center text-xs text-slate-500">
+                        <span className="inline-flex items-center gap-1.5 text-emerald-700 font-semibold text-sm">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          Không có cảnh báo lệch Lead — Toàn bộ Lead CRM và Google Form khớp 100%.
+                        </span>
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    data.reconciliations.map((rec) => (
+                      <tr
+                        key={rec.id}
+                        className={rec.status === 'ALERT_OPEN' ? 'bg-red-50/70' : ''}
+                      >
+                        <td className="py-2.5 px-3 font-mono font-bold">{rec.reconcileDate}</td>
+                        <td className="py-2.5 px-3 font-mono">{rec.accountPropertyId}</td>
+                        <td className="py-2.5 px-3 font-bold">{rec.crmLeadCount}</td>
+                        <td className="py-2.5 px-3">{rec.errorIntakeCount}</td>
+                        <td className="py-2.5 px-3 font-bold">{rec.platformReportedCount}</td>
+                        <td className="py-2.5 px-3 font-bold text-red-600">
+                          {rec.discrepancyCount} Lead
+                        </td>
+                        <td className="py-2.5 px-3">
+                          {rec.status === 'ALERT_OPEN' ? (
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                value={reconcileNotes[rec.id] || ''}
+                                onChange={(e) =>
+                                  setReconcileNotes((prev) => ({
+                                    ...prev,
+                                    [rec.id]: e.target.value,
+                                  }))
+                                }
+                                placeholder="Nhập ghi chú đối chiếu danh sách Google Ads..."
+                                className="h-9 px-3 rounded-lg border border-red-200 bg-white text-sm flex-1"
+                              />
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void handleResolveReconciliation(rec.id)}
+                                className="h-9 px-3.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-bold shrink-0"
+                              >
+                                Xác nhận Đã xử lý
+                              </button>
+                            </div>
+                          ) : rec.status === 'RESOLVED' ? (
+                            <span className="text-emerald-700 font-semibold">
+                              Đã xử lý ({rec.resolvedByName}): {rec.resolutionNote}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold">
+                              <CheckCircle2 className="w-4 h-4" /> Khớp 100%
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -663,7 +697,17 @@ export function TrackingWorkspace() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {data.campaigns.map((camp) => (
+                  {data.campaigns.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-8 text-center text-xs text-slate-500">
+                        <div className="space-y-1">
+                          <p className="font-bold text-slate-700 text-sm">Chưa có chiến dịch quảng cáo trả phí Google Ads</p>
+                          <p className="text-slate-500">Tài khoản Google của bạn hiện chưa kích hoạt chiến dịch cắn tiền (Chi phí: 0 đ). Khi doanh nghiệp bắt đầu chạy quảng cáo Google Ads, các chiến dịch, chi phí và tỷ lệ CPL sẽ tự động được ghi nhận tại đây.</p>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    data.campaigns.map((camp) => (
                     <tr key={camp.id}>
                       <td className="py-2.5 px-3">
                         <div className="font-bold text-ink">{camp.campaignName}</div>
@@ -703,7 +747,7 @@ export function TrackingWorkspace() {
                           : '—'}
                       </td>
                     </tr>
-                  ))}
+                  )))}
                 </tbody>
               </table>
             </div>

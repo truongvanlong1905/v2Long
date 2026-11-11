@@ -153,14 +153,22 @@ export async function inspectDuplicateAndPriceCheck(params: {
     let matchedOldLead: (typeof candidateLeads)[number] | null = null;
 
     if (candidateLeads.length > 0) {
-      // Ưu tiên Lead cũ đang mở ('new_lead', 'quoting', 'quote_sent') để cảnh báo trùng theo UC01 1.5 Kịch bản 1
+      // Ưu tiên phát hiện Khách cũ đã từng mua thành công (won) để nhấn mạnh VIP, hoặc Lead cũ đang mở ('new_lead', 'quoting', 'quote_sent')
+      const wonLead = candidateLeads.find((l) => l.pipelineStatus === 'won' && !l.isSpam);
       const activeOpenLead = candidateLeads.find(
         (l) => (l.pipelineStatus === 'new_lead' || l.pipelineStatus === 'quoting' || l.pipelineStatus === 'quote_sent') && !l.isSpam,
       );
       const activeNewLead = candidateLeads.find((l) => l.pipelineStatus === 'new_lead' && !l.isSpam);
-      matchedOldLead = activeNewLead || activeOpenLead || candidateLeads[0];
+      const lostLead = candidateLeads.find((l) => l.pipelineStatus === 'lost' && !l.isSpam);
+      matchedOldLead = wonLead || activeNewLead || activeOpenLead || lostLead || candidateLeads[0];
       isDuplicateAlert = true;
-      duplicateStatus = activeNewLead ? 'duplicate_red' : 'has_old_lead';
+      duplicateStatus = wonLead
+        ? 'won_returning'
+        : activeNewLead || activeOpenLead
+          ? 'duplicate_red'
+          : lostLead
+            ? 'lost_returning'
+            : 'has_old_lead';
     }
 
   const priceAlerts = await prisma.priceCheckAlert.findMany({
@@ -774,6 +782,8 @@ export async function createManualLead(actor: SessionUserDto, input: CreateManua
     assignedSalesId: targetSalesId,
     marketingSource: resolvedSourceLabel,
     sourceResolutionMethod: 'manual',
+    existingLeadAction: input.existingLeadAction || 'create_new',
+    targetExistingLeadId: input.targetExistingLeadId ?? null,
   });
 
   await prisma.$transaction(async (tx) => {

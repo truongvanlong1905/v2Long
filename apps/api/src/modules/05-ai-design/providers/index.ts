@@ -29,6 +29,7 @@ import {
   type ProviderGenerationResult,
   type ProviderStatusInfo,
 } from './types';
+import { validateGeneratedImageBuffer } from '../perspective-compositor';
 
 interface StoredProviderEntry {
   apiKey?: string | null;
@@ -428,12 +429,67 @@ export class AiDesignProviderFactory {
     return new LocalSandboxAiProvider(activeModel);
   }
 
+  /**
+   * Checks whether a model ID belongs to the CHAT MODEL group (text/vision consultation only)
+   * rather than an IMAGE MODEL capable of binary image generation.
+   */
+  static isChatOnlyModel(modelId?: string | null): boolean {
+    if (!modelId) return false;
+    const clean = modelId.trim().toLowerCase();
+    if (
+      clean.includes('image') ||
+      clean.includes('imagen') ||
+      clean.includes('dall-e') ||
+      clean.includes('flux') ||
+      clean.includes('sd3') ||
+      clean.includes('sdxl') ||
+      clean.includes('diffusion') ||
+      clean === 'toantrung-studio-v3'
+    ) {
+      return false;
+    }
+    if (
+      clean === 'toantrung-rules-v3' ||
+      clean.startsWith('gemini-3.5-flash-lite') ||
+      clean.startsWith('gemini-3.1-flash-lite') ||
+      clean === 'gemini-flash-lite-latest' ||
+      clean.startsWith('gemma-') ||
+      clean.startsWith('gpt-4') ||
+      clean.startsWith('gpt-3.5') ||
+      clean.startsWith('llama-') ||
+      clean.startsWith('claude-')
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   static async executePerspectiveWithFallback(
     input: PerspectiveGenerationInput,
     requestedProviderId?: AiProviderId
   ): Promise<ProviderGenerationResult> {
     const { config } = this.getCatalog();
     const targetProviderId = requestedProviderId || config.defaultProviderId || 'google_imagen';
+    const allowFallback = !input.disableLocalFallback && config.autoFallbackToLocal;
+
+    if (this.isChatOnlyModel(input.modelId) && !allowFallback) {
+      return {
+        imageBuffer: Buffer.alloc(0),
+        mimeType: 'image/png',
+        durationMs: 0,
+        modelUsed: input.modelId || 'chat-model',
+        provider: targetProviderId,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        costMicros: 0n,
+        costCurrency: 'USD',
+        status: 'failed',
+        errorCode: 'CHAT_MODEL_NO_IMAGE_OUTPUT',
+        errorMessage: `Model "${input.modelId}" thuộc nhóm CHAT MODEL (chỉ tư vấn văn bản, không hỗ trợ xuất ảnh). Vui lòng chọn IMAGE MODEL (Google Imagen 3, Gemini Flash Image, OpenAI GPT-Image-1, FLUX.1 Pro hoặc Toàn Trung Studio Compositor).`,
+      };
+    }
+
     const provider = this.getProvider(targetProviderId, input.modelId);
 
     if (input.simulateTimeout) {
@@ -442,12 +498,19 @@ export class AiDesignProviderFactory {
 
     const res = await provider.generatePerspectiveDraft(input);
     if (res.status === 'success') {
-      return res;
+      const check = validateGeneratedImageBuffer(res.imageBuffer);
+      if (check.isValid) {
+        return res;
+      }
+      res.status = 'failed';
+      res.errorCode = check.errorCode || 'INVALID_IMAGE_BINARY';
+      res.errorMessage =
+        check.errorMessage || 'Provider chỉ trả về văn bản hoặc thiếu dữ liệu ảnh hợp lệ.';
     }
 
     if (
       !res.errorMessage?.startsWith('FREE_TIER_IMAGE_LIMIT_0') &&
-      config.autoFallbackToLocal &&
+      allowFallback &&
       targetProviderId !== 'local_sandbox'
     ) {
       const fallback = new LocalSandboxAiProvider(input.modelId || provider.getStatusInfo().activeModel);
@@ -470,6 +533,26 @@ export class AiDesignProviderFactory {
   ): Promise<ProviderGenerationResult> {
     const { config } = this.getCatalog();
     const targetProviderId = requestedProviderId || config.defaultProviderId || 'google_imagen';
+    const allowFallback = !input.disableLocalFallback && config.autoFallbackToLocal;
+
+    if (this.isChatOnlyModel(input.modelId) && !allowFallback) {
+      return {
+        imageBuffer: Buffer.alloc(0),
+        mimeType: 'image/png',
+        durationMs: 0,
+        modelUsed: input.modelId || 'chat-model',
+        provider: targetProviderId,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        costMicros: 0n,
+        costCurrency: 'USD',
+        status: 'failed',
+        errorCode: 'CHAT_MODEL_NO_IMAGE_OUTPUT',
+        errorMessage: `Model "${input.modelId}" thuộc nhóm CHAT MODEL (chỉ tư vấn văn bản, không hỗ trợ xuất ảnh Banner). Vui lòng chọn IMAGE MODEL (Google Imagen 3, OpenAI GPT-Image-1, FLUX.1 Pro hoặc Toàn Trung Studio Compositor).`,
+      };
+    }
+
     const provider = this.getProvider(targetProviderId, input.modelId);
 
     if (input.simulateTimeout) {
@@ -478,12 +561,19 @@ export class AiDesignProviderFactory {
 
     const res = await provider.generateBannerDraft(input);
     if (res.status === 'success') {
-      return res;
+      const check = validateGeneratedImageBuffer(res.imageBuffer);
+      if (check.isValid) {
+        return res;
+      }
+      res.status = 'failed';
+      res.errorCode = check.errorCode || 'INVALID_IMAGE_BINARY';
+      res.errorMessage =
+        check.errorMessage || 'Provider chỉ trả về văn bản hoặc thiếu dữ liệu ảnh Banner hợp lệ.';
     }
 
     if (
       !res.errorMessage?.startsWith('FREE_TIER_IMAGE_LIMIT_0') &&
-      config.autoFallbackToLocal &&
+      allowFallback &&
       targetProviderId !== 'local_sandbox'
     ) {
       const fallback = new LocalSandboxAiProvider(input.modelId || provider.getStatusInfo().activeModel);
@@ -757,10 +847,15 @@ export class AiDesignProviderFactory {
           })
         );
 
-        // Keep ONLY models that actually responded 200 OK, sorted from fastest to slowest!
+        // Keep ONLY models that actually responded 200 OK, prioritizing full Gemini models before Gemma models, then fastest to slowest!
         const verifiedWorking = probeResults
           .filter((r) => r.usable)
-          .sort((a, b) => a.ms - b.ms);
+          .sort((a, b) => {
+            const aIsGemini = a.id.startsWith('gemini-') ? 0 : 1;
+            const bIsGemini = b.id.startsWith('gemini-') ? 0 : 1;
+            if (aIsGemini !== bIsGemini) return aIsGemini - bIsGemini;
+            return a.ms - b.ms;
+          });
 
         const discoveredModels: AiModelOptionDto[] = verifiedWorking.map((item) => {
           const cleanTitle = item.raw.displayName ? item.raw.displayName.trim() : item.id;

@@ -14,6 +14,7 @@ import {
   type ProviderGenerationResult,
   type ProviderStatusInfo,
 } from './types';
+import { renderPerspectiveCompositeWithProtection } from '../perspective-compositor';
 
 const CRC_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -276,12 +277,27 @@ export class LocalSandboxAiProvider implements AiDesignProvider {
     const totalTokens = promptTokens + completionTokens;
     const costMicros = input.quality === 'high_quality' ? 40_000n : 30_000n;
 
-    const imageBuffer = renderSyntheticLedPngBuffer({
-      mode: 'perspective_3d',
-      prompt: input.prompt,
-      seedKey: `${modelUsed}:${input.idempotencyKey}`,
-      quad: input.placementQuad,
-    });
+    const imageBuffer =
+      input.referenceImageBuffer && input.referenceImageBuffer.length > 0
+        ? renderPerspectiveCompositeWithProtection({
+            referenceImageBuffer: input.referenceImageBuffer,
+            placementQuad: input.placementQuad || {
+              topLeft: { x: 58, y: 26 },
+              topRight: { x: 93, y: 29 },
+              bottomRight: { x: 94, y: 74 },
+              bottomLeft: { x: 58, y: 70 },
+            },
+            prompt: input.prompt,
+            compositingMode: input.compositingMode || 'STRICT',
+            screenStyle:
+              (input.productSpec?.screenStyle as 'flat' | 'curved' | 'corner_90') || 'flat',
+          }).imageBuffer
+        : renderSyntheticLedPngBuffer({
+            mode: 'perspective_3d',
+            prompt: input.prompt,
+            seedKey: `${modelUsed}:${input.idempotencyKey}`,
+            quad: input.placementQuad,
+          });
 
     return {
       imageBuffer,
@@ -294,6 +310,7 @@ export class LocalSandboxAiProvider implements AiDesignProvider {
       totalTokens,
       costMicros,
       costCurrency: 'USD',
+      isCostEstimated: true,
       status: 'success',
     };
   }

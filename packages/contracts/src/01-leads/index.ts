@@ -333,6 +333,8 @@ export const CreateManualLeadSchema = z.object({
   contactedAt: z.string().datetime().optional(),
   reassignToSalesId: z.number().int().positive().optional().nullable(),
   reassignReason: z.string().trim().max(300).optional().nullable(),
+  existingLeadAction: z.enum(['create_new', 'work_on_existing']).optional(),
+  targetExistingLeadId: z.number().int().positive().optional().nullable(),
 });
 
 export type CreateManualLeadDto = z.infer<typeof CreateManualLeadSchema>;

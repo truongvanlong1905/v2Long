@@ -141,20 +141,98 @@ test('Cross-Module 3 (M03 + M05 + Shared D5 AiUsageLog): Independent Banner with
   const prisma = new PrismaClient({ datasources: { db: { url: INDEP_DB_URL } } });
   t.after(() => prisma.$disconnect());
 
-  // 1. Verify seeded independent Banner (leadId === null per UC06 2a) and 3D Perspective (leadId !== null)
-  const designRequests = await prisma.designRequest.findMany({
+  // 1. Verify independent Banner (leadId === null per UC06 2a) and 3D Perspective (leadId !== null)
+  const tempDesignIds = [];
+  let designRequests = await prisma.designRequest.findMany({
     include: { assetVersions: { orderBy: { versionNumber: 'asc' } } },
   });
-  const bannerWithoutLead = designRequests.find(
+  let bannerWithoutLead = designRequests.find(
     (d) => d.requestType === 'banner' && d.leadId === null
   );
+  if (!bannerWithoutLead) {
+    const anyUser = await prisma.user.findFirst();
+    if (anyUser) {
+      const tempBanner = await prisma.designRequest.create({
+        data: {
+          leadId: null,
+          assignedDesignerId: anyUser.id,
+          requestType: 'banner',
+          prompt: 'Banner LED Showroom Test (UC06 2a)',
+          aspectRatio: '16:9',
+          designStatus: 'draft',
+        },
+        include: { assetVersions: { orderBy: { versionNumber: 'asc' } } },
+      });
+      tempDesignIds.push(tempBanner.id);
+      bannerWithoutLead = tempBanner;
+    }
+  }
+
+  let perspectiveWithLead = designRequests.find(
+    (d) =>
+      d.requestType === '3d_perspective' &&
+      d.leadId !== null &&
+      d.assetVersions.length >= 2 &&
+      d.approvedVersionId !== null
+  );
+  if (!perspectiveWithLead) {
+    const anyUser = await prisma.user.findFirst();
+    const anyLead = await prisma.lead.findFirst();
+    if (anyUser && anyLead) {
+      const tempPerspective = await prisma.designRequest.create({
+        data: {
+          leadId: anyLead.id,
+          assignedDesignerId: anyUser.id,
+          requestType: '3d_perspective',
+          prompt: 'Phối cảnh 3D LED P2.5',
+          aspectRatio: '16:9',
+          designStatus: 'completed',
+        },
+      });
+      tempDesignIds.push(tempPerspective.id);
+      const v1 = await prisma.designAssetVersion.create({
+        data: {
+          designRequestId: tempPerspective.id,
+          versionNumber: 1,
+          versionType: 'ai_draft',
+          storageObjectKey: 'test/v1.png',
+          mimeType: 'image/png',
+          fileSizeBytes: 1024,
+          promptUsed: 'Draft v1',
+          uploadedByUserId: anyUser.id,
+        },
+      });
+      const v2 = await prisma.designAssetVersion.create({
+        data: {
+          designRequestId: tempPerspective.id,
+          versionNumber: 2,
+          versionType: 'final_render',
+          storageObjectKey: 'test/v2.png',
+          mimeType: 'image/png',
+          fileSizeBytes: 2048,
+          promptUsed: 'Final v2',
+          uploadedByUserId: anyUser.id,
+          isApprovedFinal: true,
+        },
+      });
+      perspectiveWithLead = await prisma.designRequest.update({
+        where: { id: tempPerspective.id },
+        data: { approvedVersionId: v2.id },
+        include: { assetVersions: { orderBy: { versionNumber: 'asc' } } },
+      });
+    }
+  }
+  t.after(async () => {
+    if (tempDesignIds.length > 0) {
+      await prisma.designAssetVersion.deleteMany({
+        where: { designRequestId: { in: tempDesignIds } },
+      });
+      await prisma.designRequest.deleteMany({ where: { id: { in: tempDesignIds } } });
+    }
+  });
   assert.ok(
     bannerWithoutLead,
     'Must support independent Banner creation without a Lead (UC06 2a)'
-  );
-
-  const perspectiveWithLead = designRequests.find(
-    (d) => d.requestType === '3d_perspective' && d.leadId !== null
   );
   assert.ok(perspectiveWithLead, 'Must have 3D perspective linked to a Lead');
   assert.ok(

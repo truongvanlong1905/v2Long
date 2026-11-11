@@ -37,6 +37,26 @@ import {
   AiDesignProviderFactory,
   type ProviderStatusInfo,
 } from './providers';
+import {
+  routeDesignCommand,
+  validateCommandReadiness,
+} from './command-router';
+import {
+  createInitialDesignContext,
+  extractAndMergeUserChatContext,
+  summarizeDesignContextForAssistant,
+  type CompositingProtectionMode,
+  type ProjectDesignContext,
+} from './design-context';
+import {
+  buildVerifiedLedProductSpecDto,
+  evaluateLedTechnicalConfig,
+} from './led-technical.engine';
+import {
+  processBannerToTargetResolution,
+  renderPerspectiveCompositeWithProtection,
+  validateGeneratedImageBuffer,
+} from './perspective-compositor';
 
 // Default fallback image only when required by internal provider execution
 const DEFAULT_SHOWROOM_PHOTO = '/brand/toantrung-led-wall.png';
@@ -101,6 +121,7 @@ function parseDimensions(dimStr: string | null): {
 }
 
 export function computeLedProductSpec(params: {
+  productId?: number;
   productCode?: string;
   productName?: string;
   categoryGroup?: string;
@@ -108,47 +129,9 @@ export function computeLedProductSpec(params: {
   heightM?: number;
   pitch?: string;
   screenStyle?: 'flat' | 'curved' | 'corner_90';
+  cabinetModelCode?: string | null;
 }): LedProductSpecDto {
-  const w = params.widthM && params.widthM > 0 ? params.widthM : 4.8;
-  const h = params.heightM && params.heightM > 0 ? params.heightM : 2.7;
-  const areaM2 = Number((w * h).toFixed(2));
-  const pitch = params.pitch || 'P2.5';
-  const pitchMm = Number(pitch.replace(/[^0-9.]/g, '')) || 2.5;
-
-  const resW = Math.round((w * 1000) / pitchMm);
-  const resH = Math.round((h * 1000) / pitchMm);
-
-  // Module standard: 320 x 160 mm
-  // Cabinet standard: 640 x 480 mm
-  const cabinetCols = Math.max(1, Math.round((w * 1000) / 640));
-  const cabinetRows = Math.max(1, Math.round((h * 1000) / 480));
-  const cabinetCount = cabinetCols * cabinetRows;
-  const moduleCount = cabinetCount * 6; // 6 modules per 640x480 cabinet
-
-  return {
-    productId: 1,
-    productCode: params.productCode || 'LED_INDOOR',
-    productName: params.productName || 'Màn hình LED Indoor',
-    categoryGroup: params.categoryGroup || 'led_screen',
-    screenStyle: params.screenStyle || 'flat',
-    pixelPitch: pitch,
-    physicalWidthM: w,
-    physicalHeightM: h,
-    areaM2,
-    resolutionWidthPx: resW,
-    resolutionHeightPx: resH,
-    moduleDimensionsMm: '320 x 160 mm',
-    cabinetDimensionsMm: '640 x 480 mm (Nhôm đúc định hình)',
-    cabinetCount,
-    moduleCount,
-    controller: 'Novastar TB60 / VX600 chuyên dụng',
-    receivingCard: 'Novastar MRV328',
-    powerSupply: 'Meanwell / G-Energy 5V-40A công nghiệp',
-    avgPowerWatts: Math.round(areaM2 * 250),
-    maxPowerWatts: Math.round(areaM2 * 600),
-    technicalNotes:
-      'Lắp âm vách tường showroom, khung xương sắt hộp mạ kẽm 40x40cm, viền nhôm anot đen chống lóa, tiếp địa an toàn < 4Ω.',
-  };
+  return buildVerifiedLedProductSpecDto(params);
 }
 
 interface StoredMetadata {
@@ -157,6 +140,8 @@ interface StoredMetadata {
   installationInfo?: string | null;
   productId?: number | null;
   pixelPitch?: string;
+  cabinetModelCode?: string | null;
+  compositingMode?: CompositingProtectionMode;
   screenStyle?: 'flat' | 'curved' | 'corner_90';
   screenWidthM?: number;
   screenHeightM?: number;
@@ -168,6 +153,11 @@ interface StoredMetadata {
   placementQuad?: QuadCoordinatesDto;
   chatMessages?: DesignChatMessageDto[];
   productSpec?: LedProductSpecDto;
+  designContext?: ProjectDesignContext;
+  processedIdempotencyKeys?: Record<
+    string,
+    { versionId: number; versionNumber: number; timestamp: string }
+  >;
 }
 
 function parseProjectMetadata(jsonStr: string | null): StoredMetadata {
@@ -177,6 +167,145 @@ function parseProjectMetadata(jsonStr: string | null): StoredMetadata {
   } catch {
     return {};
   }
+}
+
+export class ForbiddenDesignProjectAccessError extends Error {
+  public readonly code = 'FORBIDDEN_PROJECT_ACCESS';
+  constructor(message = 'Tài khoản của bạn không có quyền truy cập dự án thiết kế này.') {
+    super(message);
+    this.name = 'ForbiddenDesignProjectAccessError';
+  }
+}
+
+export function canUserAccessDesignProject(
+  user: SessionUserDto,
+  project: {
+    id: number;
+    requestedBySalesId: number | null;
+    assignedDesignerId: number;
+    lead?: { assignedSalesId?: number | null; createdByUserId?: number | null } | null;
+  }
+): boolean {
+  if (['ADMIN', 'CEO', 'MKT_LEAD', 'SALES_LEAD'].includes(user.roleCode)) {
+    return true;
+  }
+  if (user.roleCode === 'DESIGNER') {
+    return !project.assignedDesignerId || project.assignedDesignerId === user.id;
+  }
+  if (user.roleCode === 'SALES') {
+    return (
+      project.requestedBySalesId === user.id ||
+      project.lead?.assignedSalesId === user.id ||
+      project.lead?.createdByUserId === user.id
+    );
+  }
+  return false;
+}
+
+export async function assertCanAccessDesignProject(
+  user: SessionUserDto,
+  requestId: number
+): Promise<void> {
+  const row = await prisma.designRequest.findUnique({
+    where: { id: requestId },
+    include: {
+      lead: {
+        select: { assignedSalesId: true, createdByUserId: true },
+      },
+    },
+  });
+  if (!row) {
+    throw new Error('Không tìm thấy yêu cầu thiết kế.');
+  }
+  if (!canUserAccessDesignProject(user, row)) {
+    throw new ForbiddenDesignProjectAccessError();
+  }
+}
+
+export async function assertCanAccessStorageObjectKey(
+  user: SessionUserDto,
+  storageObjectKey: string
+): Promise<void> {
+  if (['ADMIN', 'CEO', 'MKT_LEAD', 'SALES_LEAD'].includes(user.roleCode)) {
+    return;
+  }
+
+  const versionMatch = await prisma.designAssetVersion.findFirst({
+    where: { storageObjectKey },
+    include: {
+      designRequest: {
+        include: {
+          lead: { select: { assignedSalesId: true, createdByUserId: true } },
+        },
+      },
+    },
+  });
+  if (versionMatch?.designRequest) {
+    if (!canUserAccessDesignProject(user, versionMatch.designRequest)) {
+      throw new ForbiddenDesignProjectAccessError();
+    }
+    return;
+  }
+
+  const reqIdMatch = storageObjectKey.match(/req-(\d+)/i);
+  if (reqIdMatch) {
+    await assertCanAccessDesignProject(user, Number(reqIdMatch[1]));
+    return;
+  }
+
+  const candidateRequests = await prisma.designRequest.findMany({
+    where: {
+      OR: [
+        { sitePhotoUrl: storageObjectKey },
+        { aiDraftImageUrl: storageObjectKey },
+        { finalRenderUrl: storageObjectKey },
+        { installPositionJson: { contains: storageObjectKey } },
+      ],
+    },
+    include: {
+      lead: { select: { assignedSalesId: true, createdByUserId: true } },
+    },
+    take: 5,
+  });
+
+  if (candidateRequests.length > 0) {
+    const allowed = candidateRequests.some((r) => canUserAccessDesignProject(user, r));
+    if (!allowed) {
+      throw new ForbiddenDesignProjectAccessError();
+    }
+  }
+}
+
+export async function getDesignProjectForUser(
+  user: SessionUserDto,
+  requestId: number
+): Promise<{
+  project: DesignRequestItemDto;
+  designContext: ProjectDesignContext;
+}> {
+  await assertCanAccessDesignProject(user, requestId);
+  const { requests } = await listDesignRequestsForUser(user);
+  const project = requests.find((r) => r.id === requestId);
+  if (!project) {
+    throw new ForbiddenDesignProjectAccessError();
+  }
+  const rawRow = await prisma.designRequest.findUnique({ where: { id: requestId } });
+  const meta = parseProjectMetadata(rawRow?.installPositionJson ?? null);
+  const designContext =
+    meta.designContext ||
+    createInitialDesignContext({
+      projectId: project.id,
+      leadId: project.leadId,
+      widthMm: Math.round((project.screenWidthM ?? 4.8) * 1000),
+      heightMm: Math.round((project.screenHeightM ?? 2.7) * 1000),
+      pixelPitch: project.productSpec?.pixelPitch || 'P2.5',
+      placementQuad: project.placementQuad || null,
+      selectedPhotoId: project.photos.find((p) => p.selected)?.id || null,
+      activeVersionId: project.assetVersions[project.assetVersions.length - 1]?.id || null,
+      screenStyle: project.productSpec?.screenStyle || 'flat',
+      compositingMode: meta.compositingMode || 'STRICT',
+    });
+  return { project, designContext };
 }
 
 export async function getAiDesignStatus(): Promise<ProviderStatusInfo> {
@@ -1091,6 +1220,8 @@ export async function processChatDesignRequest(
   requestId: number,
   input: ChatDesignRequestDto
 ) {
+  await assertCanAccessDesignProject(actor, requestId);
+
   const piiCheck = containsCustomerPiiInPrompt(input.prompt);
   if (piiCheck.hasPii) {
     throw new Error(piiCheck.reason);
@@ -1101,7 +1232,6 @@ export async function processChatDesignRequest(
     include: {
       assetVersions: {
         orderBy: { versionNumber: 'desc' },
-        take: 1,
       },
     },
   });
@@ -1118,43 +1248,215 @@ export async function processChatDesignRequest(
     throw new ConcurrencyConflictError('DesignRequest', requestId, input.expectedVersion);
   }
 
-  const nextVersionNumber = (existing.assetVersions[0]?.versionNumber ?? 0) + 1;
   const currentMeta = parseProjectMetadata(existing.installPositionJson);
 
-  // Resolve the currently selected photo's binary buffer so both Vision Chat and Multimodal Image Editing see the exact photo!
+  // 0. Idempotency check: prevent duplicate billable jobs or duplicate versions on retry
+  if (input.idempotencyKey && currentMeta.processedIdempotencyKeys?.[input.idempotencyKey]) {
+    const prevRecord = currentMeta.processedIdempotencyKeys[input.idempotencyKey];
+    return {
+      requestId,
+      idempotentReplay: true,
+      versionNumber: prevRecord.versionNumber,
+      versionId: prevRecord.versionId,
+      downloadUrl: `/api/v1/design/asset/${prevRecord.versionId}`,
+      chatMessages: currentMeta.chatMessages || [],
+      designContext: currentMeta.designContext,
+    };
+  }
+
+  const nextVersionNumber = (existing.assetVersions[0]?.versionNumber ?? 0) + 1;
+
+  // 1. Initialize or load per-project DesignContext
+  let designContext: ProjectDesignContext =
+    currentMeta.designContext ||
+    createInitialDesignContext({
+      projectId: requestId,
+      leadId: existing.leadId,
+      widthMm: Math.round((currentMeta.screenWidthM ?? 4.8) * 1000),
+      heightMm: Math.round((currentMeta.screenHeightM ?? 2.7) * 1000),
+      pixelPitch: currentMeta.pixelPitch || 'P2.5',
+      cabinetModel: currentMeta.cabinetModelCode || 'CAB-640x480-DIE',
+      placementQuad: input.placementQuad || currentMeta.placementQuad || null,
+      selectedPhotoId:
+        input.selectedPhotoId || (currentMeta.photos || []).find((p) => p.selected)?.id || null,
+      activeVersionId: input.sourceVersionId ?? existing.assetVersions[0]?.id ?? null,
+      screenStyle: currentMeta.screenStyle || 'flat',
+      compositingMode: input.compositingMode || currentMeta.compositingMode || 'STRICT',
+    });
+
+  if (input.placementQuad) {
+    designContext.fields.placementQuad = input.placementQuad;
+    designContext.provenance.placementQuad = 'user_confirmed';
+  }
+  if (input.selectedPhotoId) {
+    designContext.fields.selectedPhotoId = input.selectedPhotoId;
+  }
+  if (input.sourceVersionId !== undefined) {
+    designContext.fields.activeVersionId = input.sourceVersionId;
+  }
+  if (input.compositingMode) {
+    designContext.fields.compositingMode = input.compositingMode;
+  }
+
+  // 2. Deterministic Command Router (never relies solely on LLM prompt instructions)
+  const routeDecision = routeDesignCommand({
+    rawMessage: input.prompt,
+    source: input.triggerSource || 'user_input',
+    explicitButtonAction:
+      input.chatMode === 'image_generator' &&
+      !DAO_TAO_ANH_REGEX.test(input.prompt) &&
+      input.triggerSource === 'user_button'
+        ? existing.requestType === 'banner'
+          ? 'GENERATE_BANNER'
+          : 'GENERATE_SCENE'
+        : null,
+  });
+
+  // Extract multi-turn user-confirmed specifications from chat text
+  const extraction = extractAndMergeUserChatContext(designContext, input.prompt);
+  designContext = extraction.updatedContext;
+
+  // Sync user-confirmed DesignContext parameters into StoredMetadata without overwriting confirmed fields with defaults
+  if (designContext.provenance.widthMm === 'user_confirmed' && designContext.fields.widthMm) {
+    currentMeta.screenWidthM = Number((designContext.fields.widthMm / 1000).toFixed(3));
+  } else if (input.screenWidthM && designContext.provenance.widthMm !== 'user_confirmed') {
+    currentMeta.screenWidthM = input.screenWidthM;
+  }
+  if (designContext.provenance.heightMm === 'user_confirmed' && designContext.fields.heightMm) {
+    currentMeta.screenHeightM = Number((designContext.fields.heightMm / 1000).toFixed(3));
+  } else if (input.screenHeightM && designContext.provenance.heightMm !== 'user_confirmed') {
+    currentMeta.screenHeightM = input.screenHeightM;
+  }
+  if (designContext.provenance.pixelPitch === 'user_confirmed' && designContext.fields.pixelPitch) {
+    currentMeta.pixelPitch = designContext.fields.pixelPitch;
+  }
+  if (
+    designContext.provenance.installPosition === 'user_confirmed' &&
+    designContext.fields.installPosition
+  ) {
+    currentMeta.installationInfo = designContext.fields.installPosition;
+  }
+  if (
+    designContext.provenance.screenStyle === 'user_confirmed' &&
+    designContext.fields.screenStyle
+  ) {
+    currentMeta.screenStyle = designContext.fields.screenStyle;
+  }
+  if (
+    designContext.provenance.targetResolution === 'user_confirmed' &&
+    designContext.fields.targetResolution
+  ) {
+    currentMeta.bannerWidthPx = designContext.fields.targetResolution.widthPx;
+    currentMeta.bannerHeightPx = designContext.fields.targetResolution.heightPx;
+  }
+  currentMeta.compositingMode = designContext.fields.compositingMode;
+
+  // 3. Resolve exact source image (either a selected survey photo OR a specific source version for iterative editing)
+  const photosList = currentMeta.photos || [];
+  if (input.selectedPhotoId && photosList.length > 0) {
+    for (const p of photosList) {
+      p.selected = p.id === input.selectedPhotoId;
+    }
+    currentMeta.photos = photosList;
+  }
   const activePhotoObj =
-    (currentMeta.photos || []).find((p) => p.selected) || (currentMeta.photos || [])[0];
-  let storageKeyToRead = activePhotoObj?.storageObjectKey || null;
-  if (!storageKeyToRead && input.selectedPhotoUrl?.includes('key=')) {
+    (input.selectedPhotoId
+      ? photosList.find((p) => p.id === input.selectedPhotoId)
+      : undefined) ||
+    photosList.find((p) => p.selected) ||
+    photosList[0];
+
+  const sourceVersionObj = input.sourceVersionId
+    ? existing.assetVersions.find((v) => v.id === input.sourceVersionId)
+    : null;
+
+  let storageKeyToRead: string | null = null;
+  let sourceImageOrigin: 'version' | 'survey_photo' | 'none' = 'none';
+  if (sourceVersionObj?.storageObjectKey) {
+    storageKeyToRead = sourceVersionObj.storageObjectKey;
+    sourceImageOrigin = 'version';
+  } else if (activePhotoObj?.storageObjectKey) {
+    storageKeyToRead = activePhotoObj.storageObjectKey;
+    sourceImageOrigin = 'survey_photo';
+  } else if (input.selectedPhotoUrl?.includes('key=')) {
     try {
       const q = input.selectedPhotoUrl.split('?')[1] || '';
       storageKeyToRead = new URLSearchParams(q).get('key');
+      if (storageKeyToRead) sourceImageOrigin = 'survey_photo';
     } catch {
       storageKeyToRead = null;
     }
-  }
-  if (!storageKeyToRead && existing.sitePhotoUrl && !existing.sitePhotoUrl.startsWith('/')) {
+  } else if (existing.sitePhotoUrl && !existing.sitePhotoUrl.startsWith('/')) {
     storageKeyToRead = existing.sitePhotoUrl;
+    sourceImageOrigin = 'survey_photo';
   }
+
   const activePhotoFileData = storageKeyToRead ? readPrivateBusinessFile(storageKeyToRead) : null;
 
-  const isPosterCommand = DAO_TAO_ANH_POSTER_REGEX.test(input.prompt);
+  const effectiveWidthM =
+    (designContext.fields.widthMm ? designContext.fields.widthMm / 1000 : null) ||
+    input.screenWidthM ||
+    currentMeta.screenWidthM ||
+    4.8;
+  const effectiveHeightM =
+    (designContext.fields.heightMm ? designContext.fields.heightMm / 1000 : null) ||
+    input.screenHeightM ||
+    currentMeta.screenHeightM ||
+    2.7;
+  const effectiveBannerW =
+    designContext.fields.targetResolution?.widthPx ||
+    input.bannerWidthPx ||
+    currentMeta.bannerWidthPx ||
+    1920;
+  const effectiveBannerH =
+    designContext.fields.targetResolution?.heightPx ||
+    input.bannerHeightPx ||
+    currentMeta.bannerHeightPx ||
+    1080;
+  const effectivePitch =
+    designContext.fields.pixelPitch ||
+    currentMeta.pixelPitch ||
+    currentMeta.productSpec?.pixelPitch ||
+    'P2.5';
+  const effectiveStyle =
+    designContext.fields.screenStyle ||
+    currentMeta.screenStyle ||
+    currentMeta.productSpec?.screenStyle ||
+    'flat';
+
+  // Recompute independent LED technical spec & BOM
+  currentMeta.productSpec = computeLedProductSpec({
+    productCode: currentMeta.productSpec?.productCode,
+    productName: existing.ledCategory || 'Màn hình LED Indoor',
+    categoryGroup: currentMeta.productSpec?.categoryGroup,
+    widthM: effectiveWidthM,
+    heightM: effectiveHeightM,
+    pitch: effectivePitch,
+    screenStyle: effectiveStyle,
+    cabinetModelCode: currentMeta.cabinetModelCode,
+  });
+
   const dbType: 'banner' | '3d_perspective' =
-    isPosterCommand || existing.requestType === 'banner' ? 'banner' : '3d_perspective';
+    routeDecision.action === 'GENERATE_BANNER'
+      ? 'banner'
+      : routeDecision.action === 'GENERATE_SCENE'
+        ? '3d_perspective'
+        : existing.requestType === 'banner'
+          ? 'banner'
+          : '3d_perspective';
 
-  const hasTaoAnhPrefix = DAO_TAO_ANH_REGEX.test(input.prompt);
   const isImageGenerationMode =
-    input.chatMode === 'image_generator' || (input.chatMode !== 'consultant_free' && hasTaoAnhPrefix);
+    routeDecision.action === 'GENERATE_SCENE' || routeDecision.action === 'GENERATE_BANNER';
 
-  // MODE 1: FREE AI CONSULTANT CHAT ($0.00 - No paid image generation until @TaoAnh is called)
+  // MODE 1: CHAT MODEL ONLY ($0.00 - Never auto-creates an AI Image Job on normal chat messages)
   if (!isImageGenerationMode) {
-    const wM = input.screenWidthM || currentMeta.screenWidthM || 4.8;
-    const hM = input.screenHeightM || currentMeta.screenHeightM || 2.7;
-    const bW = input.bannerWidthPx || currentMeta.bannerWidthPx || 1920;
-    const bH = input.bannerHeightPx || currentMeta.bannerHeightPx || 1080;
+    const wM = effectiveWidthM;
+    const hM = effectiveHeightM;
+    const bW = effectiveBannerW;
+    const bH = effectiveBannerH;
     const ratio = input.aspectRatio || existing.aspectRatio || '16:9';
-    const pitch = currentMeta.pixelPitch || currentMeta.productSpec?.pixelPitch || 'P2.5';
-    const style = currentMeta.screenStyle || currentMeta.productSpec?.screenStyle || 'flat';
+    const pitch = effectivePitch;
+    const style = effectiveStyle;
 
     const fallbackConsult = buildConsultantReplyAndSuggestedPrompt({
       userText: input.prompt,
@@ -1170,24 +1472,50 @@ export async function processChatDesignRequest(
     });
 
     let replyText = fallbackConsult.replyText;
-    let suggestedTaoAnhPrompt: string | undefined = fallbackConsult.suggestedTaoAnhPrompt;
-    let consultModelUsed = 'Google Gemini 3.5 Flash-Lite (Trợ lý AI)';
+    if (routeDecision.isMetaQuestionAboutCommand) {
+      replyText = [
+        `Mình giải thích nhanh về 2 lệnh tạo ảnh trong Studio nhé:`,
+        `• **\`@taoanh <mô tả>\`** (hoặc \`@TaoAnh\`): Dùng khi bạn muốn AI ghép phối cảnh màn hình LED vào đúng 4 góc đã chấm trên ảnh khảo sát.`,
+        `• **\`@taobanner <nội dung>\`** (hoặc \`@TaoAnhPoster\`): Dùng khi bạn muốn AI thiết kế hình ảnh Banner/Poster trình chiếu trên màn hình LED.`,
+        `• Còn khi bạn nhắn tin bình thường như thế này thì mình sẽ trò chuyện, giải đáp và tư vấn hoàn toàn tự nhiên như một AI thông thường (không tự động tạo ảnh hay tốn phí)! 😊`,
+      ].join('\n');
+    } else if (extraction.newlyConfirmedLabels.length > 0) {
+      const techEval = evaluateLedTechnicalConfig({
+        widthMm: Math.round(wM * 1000),
+        heightMm: Math.round(hM * 1000),
+        pixelPitch: pitch,
+        cabinetModelCode: currentMeta.cabinetModelCode,
+        screenStyle: style,
+      });
+      replyText = [
+        `Mình đã nắm được thông tin bạn vừa chia sẻ (**${extraction.newlyConfirmedLabels.join(', ')}**) nhé! 👍`,
+        `• Cấu hình hiện tại của dự án: **${Math.round(wM * 1000)} × ${Math.round(hM * 1000)} mm** (${wM}m × ${hM}m), dòng **${pitch}** (${techEval.theoreticalResolutionWidthPx} × ${techEval.theoreticalResolutionHeightPx} px).`,
+        ...(techEval.warnings.length > 0 ? [`• Lưu ý kỹ thuật nhẹ: ${techEval.warnings[0]}`] : []),
+        `Bạn muốn trao đổi thêm về phương án thiết kế hay cần mình hỗ trợ nội dung gì tiếp cứ nhắn tự nhiên nhé!`,
+      ].join('\n');
+    }
 
-    // If a real Google Gemini API Key (e.g., from user's Gmail / Google AI Studio / Vertex Express) is configured, call Gemini live!
+    let suggestedTaoAnhPrompt: string | undefined = fallbackConsult.suggestedTaoAnhPrompt;
+    let consultModelUsed = 'Google Gemini 3 Flash (Trợ lý AI)';
+
+    // If a real Google Gemini API Key (e.g., from user's Gmail / Google AI Studio / Vertex Express) is configured, call Gemini live for ALL chat turns!
     const { config: aiCfg } = AiDesignProviderFactory.getCatalog();
     const geminiApiKey =
       aiCfg.providers.google_imagen?.apiKey ||
       process.env.GEMINI_API_KEY ||
       process.env.IMAGEN_API_KEY;
-    if (geminiApiKey && !input.simulateAiTimeout) {
+    const isOfflineUnitTest = Boolean(process.env.NODE_TEST_CONTEXT);
+
+    if (geminiApiKey && !input.simulateAiTimeout && !isOfflineUnitTest) {
       try {
         const quadInfo = input.placementQuad || currentMeta.placementQuad || DEFAULT_PLACEMENT_QUAD;
-        const isPureShortGreeting =
-          /^(xin\s*chào|chào|hi|hello|hey|alo|ok|oke|cảm\s*ơn|thank)\s*[!?.]*$/i.test(
-            input.prompt.trim()
+        // Only attach the heavy survey photo when the user actually asks about the photo/room/image/wall
+        const asksAboutVisualImage =
+          /ảnh|hình|nhìn|xem|phân tích|trong phòng|vách|tường|vị trí|showroom|công trình|mặt tiền|ghép|sửa|thêm|xóa|bỏ/i.test(
+            input.prompt
           );
         const wantsImageAttachment =
-          !isPureShortGreeting &&
+          asksAboutVisualImage &&
           Boolean(
             activePhotoFileData &&
               activePhotoFileData.buffer.length > 0 &&
@@ -1195,84 +1523,123 @@ export async function processChatDesignRequest(
           );
 
         const sysInstruction = [
-          'Bạn là trợ lý AI thông minh Google Gemini (kết nối trực tiếp từ API Key của người dùng).',
-          'NGUYÊN TẮC QUAN TRỌNG NHẤT: Hãy trò chuyện tự nhiên, thân thiện, linh hoạt giống hệt một con AI bình thường (như ChatGPT / Gemini). Người dùng hỏi gì thì trả lời trực tiếp cái đó.',
-          'Nếu trong tin nhắn có đính kèm bức ảnh mà người dùng đang chọn trên màn hình: hãy nhìn trực tiếp vào bức ảnh đó để trả lời đúng nội dung thực tế trong ảnh.',
-          'TUYỆT ĐỐI KHÔNG tự ý liệt kê bảng thông số kỹ thuật LED hay tọa độ điểm chạm nếu người dùng chỉ đang hỏi đáp hoặc nói chuyện bình thường.',
-          `Thông tin ngữ cảnh dự án (chỉ dùng khi người dùng hỏi về lắp đặt màn hình LED): LED ${pitch}, kích thước ${Math.round(wM * 1000)}x${Math.round(hM * 1000)}mm (${wM}m x ${hM}m), tỷ lệ ${ratio}, vùng chấm điểm TL(${quadInfo.topLeft.x}%,${quadInfo.topLeft.y}%) -> BR(${quadInfo.bottomRight.x}%,${quadInfo.bottomRight.y}%).`,
-          'Nếu người dùng yêu cầu sửa ảnh (thêm/bớt vật thể, chỉnh sửa chi tiết trong ảnh) hoặc yêu cầu ghép phối cảnh 3D LED, hãy tư vấn ngắn gọn dựa trên bức ảnh đính kèm và ở dòng cuối cùng viết câu lệnh bắt đầu bằng @TaoAnh: <mô tả chính xác yêu cầu sửa ảnh của người dùng>.',
+          'Bạn là một trợ lý AI thông minh, thân thiện và tự nhiên (giống hệt ChatGPT / Google Gemini).',
+          'NGUYÊN TẮC QUAN TRỌNG NHẤT:',
+          '1. Hãy trò chuyện tự nhiên, mạch lạc, gần gũi như một người bạn / trợ lý AI bình thường. Người dùng hỏi chủ đề gì (đời sống, kiến thức chung, viết content, dịch thuật, tính toán, ý tưởng, hay thiết kế LED) thì trả lời trực tiếp, thông minh và đúng trọng tâm câu hỏi đó.',
+          '2. TUYỆT ĐỐI KHÔNG trả lời máy móc kiểu rập khuôn, KHÔNG tự ý liệt kê bảng thông số kỹ thuật LED hay hướng dẫn bấm nút nếu người dùng chỉ đang trò chuyện hoặc hỏi việc khác.',
+          '3. Nếu người dùng đang trao đổi về dự án màn hình LED của họ, hãy phản hồi tự nhiên và khéo léo ghi nhận thông số họ vừa nói. Ngữ cảnh dự án hiện tại (chỉ tham khảo khi nói về LED): ' +
+            `LED ${pitch}, kích thước ${Math.round(wM * 1000)}x${Math.round(hM * 1000)}mm (${wM}m x ${hM}m), tỷ lệ ${ratio}, vùng lắp TL(${quadInfo.topLeft.x}%,${quadInfo.topLeft.y}%) -> BR(${quadInfo.bottomRight.x}%,${quadInfo.bottomRight.y}%).`,
+          '4. Nếu tin nhắn có đính kèm bức ảnh và người dùng hỏi về bức ảnh đó, hãy quan sát ảnh thật kỹ để trả lời.',
+          '5. Chỉ khi người dùng chủ động yêu cầu tạo/sửa ảnh hoặc ghép màn hình LED vào ảnh thì ở dòng cuối cùng mới gợi ý câu lệnh @TaoAnh: <mô tả>. Còn lại tuyệt đối không chèn @TaoAnh.',
         ].join('\n');
 
         // Build multi-turn conversation history so Gemini remembers previous messages naturally
-        const historyTurns = (currentMeta.chatMessages || [])
+        const rawHistory = (currentMeta.chatMessages || [])
           .filter((m) => m.text && !m.id.startsWith('msg-ai-welcome-'))
-          .slice(-6)
-          .map((m) => ({
-            role: m.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: m.text }],
-          }));
+          .slice(-8);
 
-        const userParts: Array<
-          | { text: string }
-          | { inlineData: { mimeType: string; data: string } }
-        > = [{ text: input.prompt }];
-
-        if (wantsImageAttachment && activePhotoFileData) {
-          userParts.push({
-            inlineData: {
-              mimeType: activePhotoFileData.mimeType.startsWith('image/')
-                ? activePhotoFileData.mimeType
-                : 'image/jpeg',
-              data: activePhotoFileData.buffer.toString('base64'),
-            },
-          });
+        // Normalize alternating user/model turns for Google generateContent API
+        const historyTurns: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+        for (const msg of rawHistory) {
+          const role: 'user' | 'model' = msg.role === 'assistant' ? 'model' : 'user';
+          const cleanText = msg.text.trim();
+          if (!cleanText) continue;
+          if (historyTurns.length === 0 && role === 'model') {
+            // Google API requires the first turn in `contents` to have role 'user'
+            continue;
+          }
+          const prev = historyTurns[historyTurns.length - 1];
+          if (prev && prev.role === role) {
+            prev.parts[0].text += `\n${cleanText}`;
+          } else {
+            historyTurns.push({ role, parts: [{ text: cleanText }] });
+          }
+        }
+        // If last history turn was 'user', pop it so it doesn't collide with the current 'user' turn
+        if (historyTurns.length > 0 && historyTurns[historyTurns.length - 1].role === 'user') {
+          historyTurns.pop();
         }
 
-        // Respect user-selected model from discovered models list, followed by reliable fast models
+        // Prioritize verified discoveredModels from the user's API key (putting full Gemini models before Gemma models)
+        const discoveredIds = (aiCfg.providers.google_imagen?.discoveredModels || [])
+          .map((m) => m.id.replace(/^models\//, '').trim())
+          .filter(Boolean);
+        const discoveredGeminiFirst = [
+          ...discoveredIds.filter((id) => id.startsWith('gemini-')),
+          ...discoveredIds.filter((id) => !id.startsWith('gemini-')),
+        ];
+
         const rawRequestedModel =
-          input.modelId && input.modelId !== 'toantrung-rules-v3' && !input.modelId.includes('image')
-            ? input.modelId.replace(/^models\//, '')
-            : '';
-        const nonDeprecatedRequested =
-          rawRequestedModel &&
-          !rawRequestedModel.startsWith('gemini-2.5') &&
-          !rawRequestedModel.startsWith('gemini-2.0') &&
-          !rawRequestedModel.startsWith('gemini-1.5')
-            ? rawRequestedModel
+          input.modelId &&
+          input.modelId !== 'toantrung-rules-v3' &&
+          input.modelId !== 'toantrung-studio-v3' &&
+          !input.modelId.includes('image') &&
+          !input.modelId.includes('imagen')
+            ? input.modelId.replace(/^models\//, '').trim()
             : '';
 
-        // Keep at most 2 fast candidates so we never chain multiple slow HTTP timeouts or trigger 429 rate limits
         const candidateModels = Array.from(
           new Set(
             [
-              nonDeprecatedRequested,
-              'gemini-3.5-flash-lite',
+              // If user specifically chose a gemini-* model, try it first; if activeModel was gemma-*, try discovered gemini-* first for richer chat/vision
+              rawRequestedModel.startsWith('gemini-') ? rawRequestedModel : '',
+              ...discoveredGeminiFirst,
+              rawRequestedModel,
+              'gemini-3-flash-preview',
+              'gemma-4-26b-a4b-it',
               'gemini-flash-lite-latest',
             ].filter(Boolean)
           )
-        ).slice(0, 2);
-
-        const requestBody = JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: sysInstruction }],
-          },
-          contents: [
-            ...historyTurns.slice(-4),
-            {
-              role: 'user',
-              parts: userParts,
-            },
-          ],
-          generationConfig: {
-            maxOutputTokens: 600,
-            temperature: 0.7,
-          },
-        });
+        ).slice(0, 3);
 
         let rawAiText = '';
-        let usedModelName = candidateModels[0] || 'gemini-3.5-flash-lite';
+        let usedModelName = candidateModels[0] || 'gemini-3-flash-preview';
 
         for (const modelCandidate of candidateModels) {
+          const isGemmaModel = modelCandidate.toLowerCase().startsWith('gemma-');
+          const userPartsForModel: Array<
+            | { text: string }
+            | { inlineData: { mimeType: string; data: string } }
+          > = [
+            {
+              text: isGemmaModel
+                ? `[Hướng dẫn hệ thống: ${sysInstruction}]\n\nNgười dùng: ${input.prompt}`
+                : input.prompt,
+            },
+          ];
+
+          if (!isGemmaModel && wantsImageAttachment && activePhotoFileData) {
+            userPartsForModel.push({
+              inlineData: {
+                mimeType: activePhotoFileData.mimeType.startsWith('image/')
+                  ? activePhotoFileData.mimeType
+                  : 'image/jpeg',
+                data: activePhotoFileData.buffer.toString('base64'),
+              },
+            });
+          }
+
+          const payloadObj: Record<string, unknown> = {
+            contents: [
+              ...historyTurns,
+              {
+                role: 'user',
+                parts: userPartsForModel,
+              },
+            ],
+            generationConfig: {
+              maxOutputTokens: 800,
+              temperature: 0.7,
+            },
+          };
+
+          // Gemma models reject `systemInstruction` with HTTP 400; only attach `systemInstruction` on Gemini models
+          if (!isGemmaModel) {
+            payloadObj.systemInstruction = {
+              parts: [{ text: sysInstruction }],
+            };
+          }
+
           const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
             modelCandidate
           )}:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
@@ -1280,8 +1647,8 @@ export async function processChatDesignRequest(
             const gemRes = await fetch(url, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: requestBody,
-              signal: AbortSignal.timeout(4800),
+              body: JSON.stringify(payloadObj),
+              signal: AbortSignal.timeout(8000),
             });
             if (gemRes.ok) {
               const gemJson = (await gemRes.json()) as {
@@ -1297,16 +1664,16 @@ export async function processChatDesignRequest(
                 break;
               }
             } else if (gemRes.status === 429) {
-              // Rate limit reached on this key — do not hammer more models in the same second
-              break;
+              // Try next model in candidateModels (each model has its own RPM quota bucket!)
+              continue;
             }
           } catch {
-            // Try fallback candidate
+            // Try next candidate
           }
         }
 
         if (rawAiText) {
-          const cmdMatch = rawAiText.match(/(@(?:TaoAnhPoster|TaoAnh)\s*:[^\n]+)/i);
+          const cmdMatch = rawAiText.match(/(@(?:TaoAnhPoster|TaoAnh|taobanner|taoanh)\s*:?[^\n]+)/i);
           if (cmdMatch) {
             suggestedTaoAnhPrompt = cmdMatch[1].trim();
             replyText = rawAiText.replace(cmdMatch[0], '').trim() || rawAiText;
@@ -1349,6 +1716,90 @@ export async function processChatDesignRequest(
       ...currentMeta,
       placementQuad: input.placementQuad || currentMeta.placementQuad,
       chatMessages: updatedChat,
+      designContext,
+    };
+
+    const nextScreenDims =
+      existing.requestType === 'banner'
+        ? `${effectiveBannerW}x${effectiveBannerH}px`
+        : `${effectiveWidthM.toFixed(2).replace('.', ',')} x ${effectiveHeightM.toFixed(2).replace('.', ',')} m`;
+
+    await prisma.designRequest.update({
+      where: { id: requestId },
+      data: {
+        screenDimensions: nextScreenDims,
+        installPositionJson: JSON.stringify(updatedMetadata),
+        version: { increment: 1 },
+      },
+    });
+
+    return {
+      requestId,
+      mode: 'consultant_free' as const,
+      commandAction: 'CHAT' as const,
+      versionNumber: existing.assetVersions[0]?.versionNumber ?? 1,
+      versionId: existing.assetVersions[0]?.id,
+      suggestedTaoAnhPrompt,
+      chatMessages: updatedChat,
+      designContext,
+    };
+  }
+
+  // 4. Validate Mandatory Readiness before calling Image API
+  const hasSurveyPhoto = Boolean(
+    photosList.length > 0 ||
+      existing.sitePhotoUrl ||
+      input.selectedPhotoUrl ||
+      sourceVersionObj
+  );
+  const effectiveQuad =
+    input.placementQuad ||
+    currentMeta.placementQuad ||
+    designContext.fields.placementQuad ||
+    DEFAULT_PLACEMENT_QUAD;
+  const hasPlacementQuad = Boolean(effectiveQuad?.topLeft && effectiveQuad?.bottomRight);
+
+  const readiness = validateCommandReadiness({
+    routed: routeDecision,
+    hasSurveyPhoto,
+    hasPlacementQuad,
+    placementQuad: effectiveQuad,
+    widthMm: Math.round(effectiveWidthM * 1000),
+    heightMm: Math.round(effectiveHeightM * 1000),
+    pixelPitch: effectivePitch,
+    bannerWidthPx: effectiveBannerW,
+    bannerHeightPx: effectiveBannerH,
+    bannerBriefFromContext: designContext.fields.bannerContent,
+  });
+
+  if (!readiness.canExecuteImmediately && readiness.clarificationReply) {
+    const existingChat = currentMeta.chatMessages || [];
+    const updatedChat: DesignChatMessageDto[] = [
+      ...existingChat,
+      {
+        id: `msg-user-${Date.now()}`,
+        role: 'user',
+        text: input.prompt,
+        timestamp: new Date().toISOString(),
+        chatMode: 'consultant_free',
+      },
+      {
+        id: `msg-ai-missing-${Date.now() + 1}`,
+        role: 'assistant',
+        text: readiness.clarificationReply,
+        timestamp: new Date().toISOString(),
+        chatMode: 'consultant_free',
+        modelUsed: 'Command Router Validator',
+        durationSec: 0.05,
+        cost: '$0.00',
+        status: 'success',
+      },
+    ];
+
+    const updatedMetadata: StoredMetadata = {
+      ...currentMeta,
+      chatMessages: updatedChat,
+      designContext,
     };
 
     await prisma.designRequest.update({
@@ -1362,15 +1813,31 @@ export async function processChatDesignRequest(
     return {
       requestId,
       mode: 'consultant_free' as const,
+      commandAction: routeDecision.action,
+      missingFields: readiness.missingFields,
       versionNumber: existing.assetVersions[0]?.versionNumber ?? 1,
       versionId: existing.assetVersions[0]?.id,
-      suggestedTaoAnhPrompt,
       chatMessages: updatedChat,
+      designContext,
     };
   }
 
-  // MODE 2: @TaoAnh IMAGE GENERATION -> Strip @TaoAnh prefix for clean image generation prompt
-  const cleanImagePrompt = input.prompt.replace(DAO_TAO_ANH_REGEX, '').trim() || input.prompt;
+  // 5. Reject text-only Chat Models when attempting Image Generation
+  if (
+    input.modelId &&
+    /(?:chat-only|text-only|gemini-1\.5-flash-8b|gpt-4o-mini-text)/i.test(input.modelId)
+  ) {
+    throw new Error(
+      `MODEL_NOT_IMAGE_CAPABLE: Model "${input.modelId}" chỉ hỗ trợ Chat văn bản, không hỗ trợ xuất file ảnh. Vui lòng chọn Image Provider/Model hỗ trợ tạo ảnh (như gemini-3.1-flash-image-preview, imagen-3.0, gpt-image-1 hoặc Local Sandbox).`
+    );
+  }
+
+  // MODE 2: IMAGE GENERATION (@taoanh -> GENERATE_SCENE | @taobanner -> GENERATE_BANNER)
+  const cleanImagePrompt =
+    routeDecision.cleanInstruction ||
+    input.prompt.replace(DAO_TAO_ANH_REGEX, '').trim() ||
+    designContext.fields.bannerContent ||
+    input.prompt;
 
   const normalizedProviderId = (
     input.providerId === 'flux_pro'
@@ -1387,24 +1854,43 @@ export async function processChatDesignRequest(
     | 'local_sandbox'
     | undefined;
 
+  const effectiveCompositingMode: CompositingProtectionMode =
+    input.compositingMode ||
+    designContext.fields.compositingMode ||
+    currentMeta.compositingMode ||
+    'STRICT';
+
   const providerResult =
     dbType === '3d_perspective'
       ? await AiDesignProviderFactory.executePerspectiveWithFallback(
           {
             workflow: 'perspective_3d',
             prompt: cleanImagePrompt,
-            referenceImageUrl: input.selectedPhotoUrl || existing.sitePhotoUrl || DEFAULT_SHOWROOM_PHOTO,
+            referenceImageUrl:
+              input.selectedPhotoUrl ||
+              activePhotoObj?.url ||
+              existing.sitePhotoUrl ||
+              DEFAULT_SHOWROOM_PHOTO,
             referenceImageBuffer: activePhotoFileData?.buffer,
             referenceImageMimeType: activePhotoFileData?.mimeType,
-            placementQuad: input.placementQuad || currentMeta.placementQuad || DEFAULT_PLACEMENT_QUAD,
+            placementQuad: effectiveQuad,
+            compositingMode: effectiveCompositingMode,
+            productSpec: {
+              productCode: currentMeta.productSpec?.productCode || 'LED_INDOOR',
+              productName: existing.ledCategory || 'Màn hình LED Indoor',
+              pitch: effectivePitch,
+              screenStyle: effectiveStyle,
+            },
             dimensions: {
-              widthM: input.screenWidthM || 4.8,
-              heightM: input.screenHeightM || 2.7,
+              widthM: effectiveWidthM,
+              heightM: effectiveHeightM,
               aspectRatio: input.aspectRatio || existing.aspectRatio || '16:9',
             },
             quality: input.quality || 'draft',
             modelId: input.modelId,
-            idempotencyKey: input.idempotencyKey || `chat-design-${requestId}-v${nextVersionNumber}-${Date.now()}`,
+            idempotencyKey:
+              input.idempotencyKey ||
+              `chat-design-${requestId}-v${nextVersionNumber}-${Date.now()}`,
             simulateTimeout: input.simulateAiTimeout,
           },
           normalizedProviderId
@@ -1414,13 +1900,15 @@ export async function processChatDesignRequest(
             workflow: 'banner',
             prompt: cleanImagePrompt,
             dimensions: {
-              widthPx: input.bannerWidthPx || 1920,
-              heightPx: input.bannerHeightPx || 1080,
+              widthPx: effectiveBannerW,
+              heightPx: effectiveBannerH,
               aspectRatio: input.aspectRatio || existing.aspectRatio || '16:9',
             },
             quality: input.quality || 'draft',
             modelId: input.modelId,
-            idempotencyKey: input.idempotencyKey || `chat-banner-${requestId}-v${nextVersionNumber}-${Date.now()}`,
+            idempotencyKey:
+              input.idempotencyKey ||
+              `chat-banner-${requestId}-v${nextVersionNumber}-${Date.now()}`,
             simulateTimeout: input.simulateAiTimeout,
           },
           normalizedProviderId
@@ -1443,12 +1931,15 @@ export async function processChatDesignRequest(
       status: 'timeout',
       errorMessage: 'Hệ thống AI dựng ảnh quá thời gian phản hồi (UC06 E1).',
     });
-    throw new Error('Kết nối hệ thống AI quá thời gian phản hồi (UC06 E1). Phiên bản hiện tại vẫn được bảo toàn an toàn.');
+    throw new Error(
+      'Kết nối hệ thống AI quá thời gian phản hồi (UC06 E1). Phiên bản hiện tại vẫn được bảo toàn an toàn.'
+    );
   }
 
-  // If Cloud Image Generation failed (e.g. Free Gmail API Key has limit: 0 for image output on Google AI Studio),
-  // DO NOT create a fake synthetic room image that makes the user's photo jump! Keep the user's photo intact!
-  if (providerResult.status === 'failed' || providerResult.imageBuffer.length === 0) {
+  // Validate binary output strictly: NEVER mark success if provider returned text-only, empty buffer, or invalid image bytes!
+  const imageValidation = validateGeneratedImageBuffer(providerResult.imageBuffer);
+
+  if (providerResult.status === 'failed' || !imageValidation.isValid) {
     const existingChat = currentMeta.chatMessages || [];
     const explainText = providerResult.errorMessage?.startsWith('FREE_TIER_IMAGE_LIMIT_0')
       ? [
@@ -1457,7 +1948,7 @@ export async function processChatDesignRequest(
           `• Để AI tự động vẽ/chỉnh sửa trực tiếp ra file ảnh mới (thêm/bớt vật thể trong ảnh), bạn cần bật **Billing Tier 1** trên Google AI Studio hoặc gắn Key **OpenAI (\`gpt-image-1\`) / FLUX.1 Pro** trong mục **Setting**.`,
           `• Nếu bạn chỉ muốn **ghép khung màn hình LED 3D Toàn Trung** vào điểm chạm trên bức ảnh này, hãy gõ: \`@TaoAnh: Ghép màn hình LED vào điểm chạm\`.`,
         ].join('\n')
-      : `Không thể xuất ảnh mới từ AI (${providerResult.errorMessage || 'Lỗi kết nối'}). Hệ thống giữ nguyên bức ảnh hiện tại của bạn trên màn hình.`;
+      : `Không thể xuất ảnh mới từ AI (${providerResult.errorMessage || imageValidation.errorMessage || 'AI chỉ trả về văn bản hoặc thiếu dữ liệu ảnh hợp lệ'}). Hệ thống không tạo phiên bản lỗi và giữ nguyên bức ảnh hiện tại của bạn trên màn hình.`;
 
     const updatedChat: DesignChatMessageDto[] = [
       ...existingChat,
@@ -1477,14 +1968,15 @@ export async function processChatDesignRequest(
         modelUsed: providerResult.modelUsed || 'Google Gemini API',
         durationSec: Number((providerResult.durationMs / 1000).toFixed(2)),
         cost: '$0.00',
-        status: 'success',
+        status: 'failed',
       },
     ];
 
     const updatedMetadata: StoredMetadata = {
       ...currentMeta,
-      placementQuad: input.placementQuad || currentMeta.placementQuad,
+      placementQuad: effectiveQuad,
       chatMessages: updatedChat,
+      designContext,
     };
 
     await prisma.designRequest.update({
@@ -1499,21 +1991,46 @@ export async function processChatDesignRequest(
       requestId,
       mode: 'consultant_free' as const,
       freeTierImageBlocked: true,
+      errorReason: providerResult.errorMessage || imageValidation.errorMessage,
       versionNumber: existing.assetVersions[0]?.versionNumber ?? 1,
       versionId: existing.assetVersions[0]?.id,
       chatMessages: updatedChat,
+      designContext,
     };
+  }
+
+  // Post-process banner resolution & typography warning when action is GENERATE_BANNER
+  let finalBufferToSave = providerResult.imageBuffer;
+  let bannerTypographyWarning: string | null = null;
+  let bannerResizeExplanation: string | null = null;
+  let curvedDistortionWarning: string | null = null;
+
+  if (dbType === 'banner') {
+    const bannerProcessed = processBannerToTargetResolution({
+      sourceBuffer: providerResult.imageBuffer,
+      sourceMimeType: providerResult.mimeType || 'image/png',
+      targetWidthPx: effectiveBannerW,
+      targetHeightPx: effectiveBannerH,
+      prompt: cleanImagePrompt,
+    });
+    finalBufferToSave = bannerProcessed.imageBuffer;
+    bannerTypographyWarning = bannerProcessed.typographyWarning;
+    bannerResizeExplanation = bannerProcessed.resizeExplanation;
+  } else if (effectiveStyle === 'curved') {
+    curvedDistortionWarning =
+      'Cấu hình màn hình LED cong (Curved): Phép biến đổi mặt phẳng 4 góc chỉ là xấp xỉ; cần kiểm tra biến dạng phi phẳng theo bán kính cong thực tế.';
   }
 
   const savedFile = savePrivateBusinessFile({
     bucket: 'design',
     prefix: `ai-draft-req-${requestId}-v${nextVersionNumber}`,
-    fileBuffer: providerResult.imageBuffer,
+    fileBuffer: finalBufferToSave,
     declaredMimeType: providerResult.mimeType || 'image/png',
   });
 
   const aiLog = await recordAiUsageAttempt(prisma, {
-    idempotencyKey: `chat-design-run-${requestId}-v${nextVersionNumber}-${Date.now()}`,
+    idempotencyKey:
+      input.idempotencyKey || `chat-design-run-${requestId}-v${nextVersionNumber}-${Date.now()}`,
     attemptNumber: nextVersionNumber,
     providerRequestId: `${providerResult.provider}-${requestId}-v${nextVersionNumber}`,
     moduleCode: '05-ai-design',
@@ -1541,7 +2058,22 @@ export async function processChatDesignRequest(
       promptUsed: input.prompt,
       parametersJson: JSON.stringify({
         regeneratedFromVersion: existing.version,
-        placementQuad: input.placementQuad || currentMeta.placementQuad,
+        sourceOrigin: sourceImageOrigin,
+        sourcePhotoId: activePhotoObj?.id ?? null,
+        sourceVersionId: sourceVersionObj?.id ?? null,
+        compositingMode: effectiveCompositingMode,
+        placementQuad: effectiveQuad,
+        screenDimensionsMm: {
+          widthMm: Math.round(effectiveWidthM * 1000),
+          heightMm: Math.round(effectiveHeightM * 1000),
+        },
+        bannerResolutionPx:
+          dbType === 'banner'
+            ? { widthPx: effectiveBannerW, heightPx: effectiveBannerH }
+            : undefined,
+        curvedDistortionWarning,
+        bannerResizeExplanation,
+        bannerTypographyWarning,
         quality: input.quality,
         providerId: providerResult.provider,
         modelUsed: providerResult.modelUsed,
@@ -1551,6 +2083,19 @@ export async function processChatDesignRequest(
       isApprovedFinal: false,
     },
   });
+
+  designContext.fields.activeVersionId = createdVersion.id;
+
+  const extraNotices: string[] = [];
+  if (dbType === 'banner') {
+    if (bannerResizeExplanation) extraNotices.push(`• 📐 ${bannerResizeExplanation}`);
+    if (bannerTypographyWarning) extraNotices.push(`• ${bannerTypographyWarning}`);
+  } else {
+    extraNotices.push(
+      `• 🛡️ Chế độ bảo vệ nền: **${effectiveCompositingMode}** (giữ nguyên toạ độ 4 góc & kích thước ${Math.round(effectiveWidthM * 1000)}×${Math.round(effectiveHeightM * 1000)}mm).`
+    );
+    if (curvedDistortionWarning) extraNotices.push(`• ⚠️ ${curvedDistortionWarning}`);
+  }
 
   // Append to chat messages
   const existingChat = currentMeta.chatMessages || [];
@@ -1566,7 +2111,10 @@ export async function processChatDesignRequest(
     {
       id: `msg-ai-${Date.now() + 1}`,
       role: 'assistant',
-      text: `Đã kết xuất phiên bản thiết kế mới (v${nextVersionNumber} · ${providerResult.modelUsed}) và cập nhật lên màn hình chính.`,
+      text: [
+        `Đã kết xuất phiên bản thiết kế mới (v${nextVersionNumber} · ${providerResult.modelUsed}) và cập nhật lên màn hình chính.`,
+        ...extraNotices,
+      ].join('\n'),
       timestamp: new Date().toISOString(),
       chatMode: 'image_generator',
       versionNumber: nextVersionNumber,
@@ -1580,10 +2128,21 @@ export async function processChatDesignRequest(
     },
   ];
 
+  const processedKeys = { ...(currentMeta.processedIdempotencyKeys || {}) };
+  if (input.idempotencyKey) {
+    processedKeys[input.idempotencyKey] = {
+      versionId: createdVersion.id,
+      versionNumber: createdVersion.versionNumber,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
   const updatedMetadata: StoredMetadata = {
     ...currentMeta,
-    placementQuad: input.placementQuad || currentMeta.placementQuad,
+    placementQuad: effectiveQuad,
     chatMessages: updatedChat,
+    designContext,
+    processedIdempotencyKeys: processedKeys,
   };
 
   const newTotalTokens = (existing.tokenCost ?? 0) + providerResult.totalTokens;
@@ -1605,10 +2164,18 @@ export async function processChatDesignRequest(
 
   return {
     requestId,
+    commandAction: routeDecision.action,
     versionNumber: createdVersion.versionNumber,
     versionId: createdVersion.id,
     downloadUrl: `/api/v1/design/asset/${createdVersion.id}`,
+    compositingMode: effectiveCompositingMode,
+    sourcePhotoId: activePhotoObj?.id ?? null,
+    sourceVersionId: sourceVersionObj?.id ?? null,
+    typographyWarning: bannerTypographyWarning,
+    resizeExplanation: bannerResizeExplanation,
+    curvedDistortionWarning,
     chatMessages: updatedChat,
+    designContext,
   };
 }
 
@@ -1617,6 +2184,8 @@ export async function updateDesignProject(
   requestId: number,
   input: UpdateDesignProjectDto
 ) {
+  await assertCanAccessDesignProject(actor, requestId);
+
   const existing = await prisma.designRequest.findUnique({ where: { id: requestId } });
   if (!existing) throw new Error('Không tìm thấy dự án thiết kế.');
   if (input.expectedVersion !== undefined && existing.version !== input.expectedVersion) {
@@ -1639,6 +2208,38 @@ export async function updateDesignProject(
   if (input.aspectLocked !== undefined) meta.aspectLocked = input.aspectLocked;
   if (input.isArchived !== undefined) meta.isArchived = input.isArchived;
   if (input.placementQuad) meta.placementQuad = input.placementQuad;
+
+  // Keep per-project DesignContext synchronized when user manually updates fields
+  if (meta.designContext) {
+    if (input.screenWidthM != null) {
+      meta.designContext.fields.widthMm = Math.round(input.screenWidthM * 1000);
+      meta.designContext.provenance.widthMm = 'user_confirmed';
+    }
+    if (input.screenHeightM != null) {
+      meta.designContext.fields.heightMm = Math.round(input.screenHeightM * 1000);
+      meta.designContext.provenance.heightMm = 'user_confirmed';
+    }
+    if (input.pixelPitch) {
+      meta.designContext.fields.pixelPitch = input.pixelPitch;
+      meta.designContext.provenance.pixelPitch = 'user_confirmed';
+    }
+    if (input.installationInfo) {
+      meta.designContext.fields.installPosition = input.installationInfo;
+      meta.designContext.provenance.installPosition = 'user_confirmed';
+    }
+    if (input.screenStyle) {
+      meta.designContext.fields.screenStyle = input.screenStyle;
+      meta.designContext.provenance.screenStyle = 'user_confirmed';
+    }
+    if (input.placementQuad) {
+      meta.designContext.fields.placementQuad = input.placementQuad;
+      meta.designContext.provenance.placementQuad = 'user_confirmed';
+    }
+    if (input.selectedPhotoId) {
+      meta.designContext.fields.selectedPhotoId = input.selectedPhotoId;
+    }
+    meta.designContext.updatedAt = new Date().toISOString();
+  }
 
   let nextSitePhotoUrl = existing.sitePhotoUrl;
   const photos = meta.photos && meta.photos.length > 0 ? [...meta.photos] : [];
@@ -1730,6 +2331,7 @@ export async function updateDesignProject(
     heightM: hM,
     pitch: meta.pixelPitch || meta.productSpec?.pixelPitch || 'P2.5',
     screenStyle: meta.screenStyle || meta.productSpec?.screenStyle || 'flat',
+    cabinetModelCode: meta.cabinetModelCode,
   });
   if (meta.productId) {
     meta.productSpec.productId = meta.productId;
@@ -1781,6 +2383,8 @@ export async function addProjectPhoto(
   requestId: number,
   input: AddProjectPhotoDto
 ) {
+  await assertCanAccessDesignProject(actor, requestId);
+
   const existing = await prisma.designRequest.findUnique({ where: { id: requestId } });
   if (!existing) throw new Error('Không tìm thấy dự án thiết kế.');
 
@@ -1811,6 +2415,9 @@ export async function addProjectPhoto(
   });
   photos.push(newPhoto);
   meta.photos = photos;
+  if (meta.designContext) {
+    meta.designContext.fields.selectedPhotoId = newPhoto.id;
+  }
 
   await prisma.designRequest.update({
     where: { id: requestId },
@@ -1829,6 +2436,8 @@ export async function deleteProjectPhoto(
   requestId: number,
   photoId: string
 ) {
+  await assertCanAccessDesignProject(actor, requestId);
+
   const existing = await prisma.designRequest.findUnique({ where: { id: requestId } });
   if (!existing) throw new Error('Không tìm thấy dự án thiết kế.');
 
@@ -1866,6 +2475,8 @@ export async function deleteDesignAssetVersion(
   requestId: number,
   versionId: number
 ) {
+  await assertCanAccessDesignProject(actor, requestId);
+
   const existing = await prisma.designRequest.findUnique({
     where: { id: requestId },
     include: {
@@ -1916,6 +2527,8 @@ export async function deleteDesignProject(
   actor: SessionUserDto,
   requestId: number,
 ) {
+  await assertCanAccessDesignProject(actor, requestId);
+
   const existing = await prisma.designRequest.findUnique({ where: { id: requestId } });
   if (!existing) throw new Error('Không tìm thấy dự án thiết kế cần xóa.');
 
@@ -1942,6 +2555,8 @@ export async function approveDesignAssetVersion(
   requestId: number,
   input: ApproveDesignVersionDto
 ) {
+  await assertCanAccessDesignProject(actor, requestId);
+
   const existing = await prisma.designRequest.findUnique({
     where: { id: requestId },
     include: { assetVersions: true },
@@ -2045,6 +2660,8 @@ export async function saveCompositedDraftVersion(
     placementQuad?: QuadCoordinatesDto;
   }
 ) {
+  await assertCanAccessDesignProject(actor, requestId);
+
   const existing = await prisma.designRequest.findUnique({
     where: { id: requestId },
     include: {
@@ -2158,6 +2775,8 @@ export async function uploadDesignerFinalRender(
     note?: string;
   }
 ) {
+  await assertCanAccessDesignProject(actor, requestId);
+
   const existing = await prisma.designRequest.findUnique({
     where: { id: requestId },
     include: {

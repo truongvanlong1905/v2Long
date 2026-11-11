@@ -18,7 +18,10 @@ export interface PerspectiveGenerationInput {
   referenceImageUrl: string;
   referenceImageBuffer?: Buffer;
   referenceImageMimeType?: string;
+  sourcePhotoId?: string | null;
+  sourceVersionId?: number | null;
   placementQuad?: QuadCoordinates;
+  compositingMode?: 'STRICT' | 'REALISTIC';
   dimensions: {
     widthM: number;
     heightM: number;
@@ -34,11 +37,13 @@ export interface PerspectiveGenerationInput {
   modelId?: string;
   idempotencyKey: string;
   simulateTimeout?: boolean;
+  disableLocalFallback?: boolean;
 }
 
 export interface BannerGenerationInput {
   workflow: 'banner';
   prompt: string;
+  sourceVersionId?: number | null;
   dimensions: {
     widthPx: number;
     heightPx: number;
@@ -52,6 +57,7 @@ export interface BannerGenerationInput {
   modelId?: string;
   idempotencyKey: string;
   simulateTimeout?: boolean;
+  disableLocalFallback?: boolean;
 }
 
 export type DesignGenerationInput = PerspectiveGenerationInput | BannerGenerationInput;
@@ -67,7 +73,9 @@ export interface ProviderGenerationResult {
   totalTokens: number;
   costMicros: bigint; // 1 USD = 1,000,000 micros
   costCurrency: 'USD' | 'VND';
+  isCostEstimated?: boolean;
   status: 'success' | 'failed' | 'timeout';
+  errorCode?: string;
   errorMessage?: string;
   fallbackNotice?: string;
 }

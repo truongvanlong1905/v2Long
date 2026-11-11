@@ -134,6 +134,8 @@ export interface WebhookLeadIntakeInput {
   landingPageUrl?: string | null;
   deviceType?: string | null;
   ipAddress?: string | null;
+  existingLeadAction?: 'create_new' | 'work_on_existing';
+  targetExistingLeadId?: number | null;
 }
 
 /**
@@ -259,27 +261,44 @@ export async function ingestLeadWithTrackingIdempotent(
           }
         }
 
-        // Quy tắc 1 SĐT = 1 Hồ sơ Khách hàng duy nhất:
-        // Nếu SĐT đã tồn tại trong hệ thống (không phải Spam), tự động gộp / mở lại hồ sơ của SĐT đó thay vì tạo thêm nhiều dòng Lead trùng SĐT.
-        const existingPhoneLead = await tx.lead.findFirst({
+        // Kiểm tra hồ sơ khách hàng có cùng SĐT trong hệ thống (không phải Spam):
+        // - Nếu khách ĐÃ CHỐT THÀNH CÔNG (won): Tuyệt đối giữ nguyên hồ sơ đã chốt và tạo hồ sơ Lead mới liên kết về hồ sơ cũ.
+        // - Nếu khách CHƯA CHỐT (new_lead, quoting, quote_sent, lost):
+        //   + Khi chọn 'work_on_existing': Trực tiếp làm việc / mở lại và cập nhật trên hồ sơ đó.
+        //   + Khi chọn 'create_new' (hoặc mặc định tạo mới): Tạo hồ sơ Lead mới độc lập và liên kết matchedOldLeadId để bấm xem được hồ sơ cũ.
+        const existingPhoneCandidates = await tx.lead.findMany({
           where: {
             phone: input.phone.trim(),
             isSpam: false,
           },
           include: { tracking: true },
-          orderBy: { id: 'asc' },
+          orderBy: { id: 'desc' },
         });
 
-        if (existingPhoneLead) {
+        const existingPhoneLead =
+          (input.targetExistingLeadId
+            ? existingPhoneCandidates.find((c) => c.id === input.targetExistingLeadId)
+            : null) ||
+          existingPhoneCandidates.find((c) => c.pipelineStatus === 'won') ||
+          existingPhoneCandidates.find(
+            (c) =>
+              c.pipelineStatus === 'new_lead' ||
+              c.pipelineStatus === 'quoting' ||
+              c.pipelineStatus === 'quote_sent',
+          ) ||
+          existingPhoneCandidates[0] ||
+          null;
+
+        const shouldWorkOnExisting =
+          Boolean(existingPhoneLead) &&
+          input.existingLeadAction === 'work_on_existing' &&
+          existingPhoneLead!.pipelineStatus !== 'won';
+
+        if (existingPhoneLead && shouldWorkOnExisting) {
           const prevStatus = existingPhoneLead.pipelineStatus;
-          const isWonBefore = prevStatus === 'won';
           const isLostBefore = prevStatus === 'lost';
-          const nextDuplicateStatus = isWonBefore
-            ? 'won_returning'
-            : isLostBefore
-              ? 'lost_returning'
-              : 'duplicate_red';
-          const nextPipelineStatus = isWonBefore || isLostBefore ? 'new_lead' : prevStatus;
+          const nextDuplicateStatus = isLostBefore ? 'lost_returning' : 'duplicate_red';
+          const nextPipelineStatus = isLostBefore ? 'new_lead' : prevStatus;
           const sourceLabel =
             input.selfReportedSource?.trim() ||
             input.marketingSource ||
@@ -307,10 +326,9 @@ export async function ingestLeadWithTrackingIdempotent(
                 input.province?.trim() || existingPhoneLead.province || null,
               district:
                 input.district?.trim() || existingPhoneLead.district || null,
+              ...(input.assignedSalesId ? { assignedSalesId: input.assignedSalesId } : {}),
               contactedAt: new Date(),
-              ...(isWonBefore || isLostBefore
-                ? { reopenCount: { increment: 1 } }
-                : {}),
+              ...(isLostBefore ? { reopenCount: { increment: 1 } } : {}),
               version: { increment: 1 },
             },
           });
@@ -333,16 +351,14 @@ export async function ingestLeadWithTrackingIdempotent(
                 },
               });
 
-          const mergeNote = isWonBefore
-            ? `💎 [KHÁCH CŨ QUAY LẠI] Khách hàng SĐT ${input.phone.trim()} (đã từng Chốt thành công hợp đồng trước đây) liên hệ lại qua ${sourceLabel}${input.projectName ? ` · Dự án mới: ${input.projectName}` : ''}. Hệ thống tự động mở lại trên cùng hồ sơ SĐT để không tạo Lead trùng.`
-            : isLostBefore
-              ? `🔄 [KHÁCH QUAY LẠI HỎI MUA] Khách hàng SĐT ${input.phone.trim()} (từng hỏi trước đây nhưng chưa chốt · Lý do lần trước: ${existingPhoneLead.lostReason || 'Hoãn dự án / Chưa chốt'}) nay liên hệ lại tiếp tục muốn mua qua ${sourceLabel}. Hệ thống tự động mở lại hồ sơ gốc của SĐT này.`
-              : `⚠️ [TRÙNG SĐT - ĐÃ GỘP TỰ ĐỘNG] Khách hàng SĐT ${input.phone.trim()} gửi lại thông tin qua ${sourceLabel} khi hồ sơ đang mở (${prevStatus}). Đã gộp vào hồ sơ hiện tại của SĐT này.`;
+          const mergeNote = isLostBefore
+            ? `🔄 [KHÁCH QUAY LẠI HỎI MUA] Khách hàng SĐT ${input.phone.trim()} (từng hỏi trước đây nhưng chưa chốt · Lý do lần trước: ${existingPhoneLead.lostReason || 'Hoãn dự án / Chưa chốt'}) nay liên hệ lại tiếp tục muốn mua qua ${sourceLabel}. Đã mở lại để làm việc trực tiếp trên hồ sơ này.`
+            : `🎯 [LÀM VIỆC TRỰC TIẾP TRÊN HỒ SƠ ĐANG MỞ] Khách hàng SĐT ${input.phone.trim()} cập nhật thông tin qua ${sourceLabel} khi hồ sơ đang ở trạng thái ${prevStatus}.`;
 
           await tx.leadActivity.create({
             data: {
               leadId: existingPhoneLead.id,
-              actionType: isWonBefore || isLostBefore ? 'reopen_lead' : 'add_note',
+              actionType: isLostBefore ? 'reopen_lead' : 'add_note',
               oldStatus: prevStatus,
               newStatus: nextPipelineStatus,
               transferReason: existingPhoneLead.lostReason || null,
@@ -359,6 +375,18 @@ export async function ingestLeadWithTrackingIdempotent(
             deduplicated: true,
           };
         }
+
+        const hasWonHistory = existingPhoneCandidates.some((c) => c.pipelineStatus === 'won');
+        const matchedPriorLead =
+          existingPhoneCandidates.find((c) => c.pipelineStatus === 'won') ||
+          existingPhoneLead;
+        const newLeadDuplicateStatus = matchedPriorLead
+          ? hasWonHistory
+            ? 'won_returning'
+            : matchedPriorLead.pipelineStatus === 'lost'
+              ? 'lost_returning'
+              : 'duplicate_red'
+          : 'none';
 
         const lead = await tx.lead.create({
           data: {
@@ -379,6 +407,9 @@ export async function ingestLeadWithTrackingIdempotent(
             createdByActorType: actorType,
             createdByActorRef: actorRef,
             assignedSalesId: input.assignedSalesId ?? input.createdByUserId ?? null,
+            isDuplicateAlert: Boolean(matchedPriorLead),
+            duplicateStatus: newLeadDuplicateStatus,
+            matchedOldLeadId: matchedPriorLead ? matchedPriorLead.id : null,
           },
         });
 
