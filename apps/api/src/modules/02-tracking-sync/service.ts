@@ -30,6 +30,7 @@ import {
   selectAutoAssignedSales,
 } from '../01-leads/service';
 import { refreshKeywordDerivedCacheFromCanonicalMetrics } from '../03-keywords-ads/service';
+import { syncAllGoogleDataAcrossModules } from './google-oauth.service';
 
 export function resolveAttributionBySignals(input: {
   provider: 'WEBSITE_FORM' | 'GOOGLE_LEAD_FORM';
@@ -441,74 +442,20 @@ export async function declareExternalCampaignAndRemapUtm(input: DeclareExternalC
 }
 
 export async function triggerPlatformSyncExecution(input: TriggerPlatformSyncDto) {
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const windowDays = input.scheduleSlot === 'FULL_0200' ? 30 : 2;
-  const startStr = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-
-  const campIndoor = await prisma.campaign.findFirst({
-    where: { platform: 'google_ads' },
-    orderBy: { id: 'asc' },
-  });
-
-  // Upsert today's preliminary metrics idempotently (UC03 Luồng B: Số liệu hôm nay chưa chốt, ghi đè mỗi lần chạy)
-  await upsertPlatformMetricIdempotent(prisma, {
-    platform: 'google_ads',
-    accountPropertyId: 'GADS-TT-01',
-    metricDate: todayStr,
-    grain: 'campaign',
-    campaignExternalId: campIndoor?.campaignCode || 'CAMP_LED_INDOOR_P25_Q4',
-    campaignId: campIndoor?.id ?? null,
-    campaignName: campIndoor?.campaignName || 'Chiến dịch Màn hình LED Hội trường P2.5 Q4',
-    currencyCode: 'VND',
-    spendMicros: 3_150_000_000_000n,
-    dailyBudgetMicros: 3_500_000_000_000n,
-    cpcMicros: 28_636_363_000n,
-    impressions: 1920,
-    clicks: 110,
-    conversionsMicros: 3_000_000n,
-    googleLeadFormCount: 2,
-    isFinalized: false,
-  });
-
-  await upsertPlatformMetricIdempotent(prisma, {
-    platform: 'ga4',
-    accountPropertyId: 'GA4-TOANTRUNG-MAIN',
-    metricDate: todayStr,
-    grain: 'page',
-    pageUrlRaw: 'https://toantrung.com.vn/man-hinh-led-hoi-truong',
-    pageViews: 412,
-    avgTimeOnPageSec: 158.2,
-    isFinalized: false,
-  });
-
-  const syncLog = await prisma.platformSyncLog.create({
-    data: {
-      platform: 'google_ads',
-      accountPropertyId: 'GADS-TT-01',
-      runType: input.scheduleSlot === 'FULL_0200' ? 'full' : 'light',
-      windowStartDate: startStr,
-      windowEndDate: todayStr,
-      recordsSynced: 2,
-      status: 'success',
-      consecutiveFailures: 0,
-      startedAt: new Date(),
-      completedAt: new Date(),
-    },
+  const syncRes = await syncAllGoogleDataAcrossModules(input.scheduleSlot);
+  const latestLog = await prisma.platformSyncLog.findFirst({
+    orderBy: { id: 'desc' },
   });
 
   const gclidRetryResult = input.runGclidResolution
     ? await retryUnresolvedGclids()
-    : { scanned: 0, resolved: 0 };
-
-  await refreshKeywordDerivedCacheFromCanonicalMetrics({ force: true });
+    : { scanned: 0, resolved: syncRes.gclidResolved || 0 };
 
   return {
-    syncLogId: syncLog.id,
-    recordsSynced: 2,
+    syncLogId: latestLog?.id || 0,
+    recordsSynced: syncRes.syncedRecords,
     gclidRetryResult,
-    liveIntegrationMode: 'FIXTURE_SIMULATION' as const,
+    liveIntegrationMode: 'LIVE_CONFIGURED' as const,
   };
 }
 
@@ -851,12 +798,31 @@ async function buildGoogleAssetsHub() {
     orderBy: { pageViews: 'desc' },
   });
 
-  const ga4PropertiesDefs = [
+  // Discover properties from connection accessibleResources + DB metrics
+  const defaultProps = [
     { id: '512879968', name: 'toantrung.com.vn', domain: 'toantrung.com.vn', url: 'https://toantrung.com.vn' },
     { id: '509190194', name: 'manhinhled.net.vn', domain: 'manhinhled.net.vn', url: 'https://manhinhled.net.vn' },
     { id: '538179128', name: 'bangled.vn', domain: 'bangled.vn', url: 'https://bangled.vn' },
     { id: '508951192', name: 'Toàn Trung - Bảng điện tử', domain: 'toantrung.com.vn', url: 'https://toantrung.com.vn' },
   ];
+
+  const discoveredGa4Resources: Array<{ id: string; name: string }> = Array.isArray(conn?.accessibleResources)
+    ? conn.accessibleResources.filter((r: any) => r.type === 'GA4_PROPERTY')
+    : [];
+
+  const ga4PropertiesDefs =
+    discoveredGa4Resources.length > 0
+      ? discoveredGa4Resources.map((r) => {
+          const cleanName = r.name.replace(/^GA4:\s*/i, '').trim();
+          const matchedDefault = defaultProps.find((d) => d.id === r.id);
+          return {
+            id: r.id,
+            name: cleanName,
+            domain: matchedDefault?.domain || cleanName,
+            url: matchedDefault?.url || `https://${cleanName}`,
+          };
+        })
+      : defaultProps;
 
   const ga4Properties = ga4PropertiesDefs.map((def) => {
     const propMetrics = ga4Metrics.filter((m) => m.accountPropertyId === def.id);
@@ -864,8 +830,8 @@ async function buildGoogleAssetsHub() {
     const pageRows = propMetrics.filter((m) => m.grain === 'page');
 
     const totalViews = accountRow?.pageViews ?? pageRows.reduce((sum, r) => sum + r.pageViews, 0);
-    const users = def.id === '509190194' ? 287 : def.id === '512879968' ? 236 : def.id === '538179128' ? 105 : 0;
-    const events = def.id === '509190194' ? 3137 : def.id === '512879968' ? 2765 : def.id === '538179128' ? 1266 : 0;
+    const users = accountRow?.clicks ?? 0;
+    const events = accountRow?.impressions ?? 0;
 
     return {
       id: def.id,
@@ -878,7 +844,7 @@ async function buildGoogleAssetsHub() {
       topPages: pageRows.slice(0, 6).map((p) => ({
         path: p.pageUrlRaw || '/',
         views: p.pageViews,
-        avgDurationSec: p.avgTimeOnPageSec || 60,
+        avgDurationSec: p.avgTimeOnPageSec || 0,
       })),
     };
   });
@@ -889,7 +855,15 @@ async function buildGoogleAssetsHub() {
     orderBy: [{ clicks: 'desc' }, { impressions: 'desc' }],
   });
 
-  const sitesDefs = ['https://toantrung.com.vn/', 'https://manhinhled.net.vn/', 'https://bangled.vn/'];
+  const discoveredScSites: Array<{ id: string; name: string }> = Array.isArray(conn?.accessibleResources)
+    ? conn.accessibleResources.filter((r: any) => r.type === 'SEARCH_CONSOLE_SITE')
+    : [];
+
+  const sitesDefs =
+    discoveredScSites.length > 0
+      ? discoveredScSites.map((s) => s.id)
+      : ['https://toantrung.com.vn/', 'https://manhinhled.net.vn/', 'https://bangled.vn/'];
+
   const searchConsoleSites = sitesDefs.map((siteUrl) => {
     const siteRows = scMetrics.filter((m) => m.accountPropertyId === siteUrl);
     return {
@@ -907,10 +881,27 @@ async function buildGoogleAssetsHub() {
     };
   });
 
+  // Query real Google Ads campaigns & spend
+  const realAdsCampaigns = await prisma.campaign.findMany({
+    where: { platform: 'google_ads', isActive: true },
+  });
+  const realAdsMetrics = await prisma.platformDailyMetric.findMany({
+    where: { platform: 'google_ads', grain: 'campaign' },
+  });
+  const totalAdsSpendMicros = realAdsMetrics.reduce((sum, m) => sum + (m.spendMicros || 0n), 0n);
+  const totalAdsSpendVnd = Number(totalAdsSpendMicros / 1_000_000n);
+
+  // Build Google Trends topics dynamically from real Search Console / SeoKeywords in DB
+  const topKeywords = await prisma.seoKeyword.findMany({
+    orderBy: [{ cachedOrganicClicks: 'desc' }, { cachedSearchVolume: 'desc' }],
+    take: 6,
+  });
+  const maxImpr = Math.max(...topKeywords.map((k) => k.cachedSearchVolume || 1), 1);
+
   return {
     connectedEmail: conn?.connectedEmail || null,
     connectedName: conn?.connectedName || null,
-    lastSyncAt: conn?.lastSyncAt || new Date().toISOString(),
+    lastSyncAt: conn?.lastSyncAt || null,
     ga4: {
       totalProperties: ga4Properties.length,
       properties: ga4Properties,
@@ -921,20 +912,23 @@ async function buildGoogleAssetsHub() {
     },
     googleAds: {
       connectedEmail: conn?.connectedEmail || null,
-      customerId: conn?.detectedGadsCustomerId || 'Chưa liên kết Customer ID',
+      customerId: conn?.selectedGadsCustomerId || conn?.detectedGadsCustomerId || 'Chưa liên kết Customer ID',
       status: 'ZERO_SPEND_READY' as const,
-      activeCampaignsCount: 0,
-      totalSpendVnd: 0,
-      statusMessage: 'Tài khoản Google Ads chưa kích hoạt chiến dịch có chi phí thực tế. Hệ thống đã kết nối sẵn sàng để ghi nhận và đối soát ngay khi có chiến dịch quảng cáo.',
+      activeCampaignsCount: realAdsCampaigns.length,
+      totalSpendVnd: totalAdsSpendVnd,
+      statusMessage:
+        realAdsCampaigns.length > 0
+          ? `Đang đồng bộ ${realAdsCampaigns.length} chiến dịch Google Ads thực tế.`
+          : 'Chưa có chiến dịch Google Ads phát sinh chi phí trong kỳ.',
     },
     googleTrends: {
-      marketCluster: 'Màn hình LED & Bảng điện tử B2B Việt Nam',
-      topics: [
-        { topic: 'Màn hình LED Hội trường P2.5 / P3', interestScore: 88, trend: 'rising' as const, searchQuery: 'màn hình led hội trường' },
-        { topic: 'Màn hình LED Ngoài trời P4 / P5 chống nước', interestScore: 76, trend: 'stable' as const, searchQuery: 'màn hình led ngoài trời' },
-        { topic: 'Bảng điện tử Năng suất & An toàn Nhà máy', interestScore: 68, trend: 'rising' as const, searchQuery: 'bảng led năng suất' },
-        { topic: 'Bảng tỉ số điện tử Nhà thi đấu thể thao', interestScore: 55, trend: 'stable' as const, searchQuery: 'bảng tỉ số điện tử' },
-      ],
+      marketCluster: 'Từ khóa Tìm kiếm Thực tế (Google Search Console)',
+      topics: topKeywords.map((k) => ({
+        topic: k.keyword,
+        interestScore: Math.min(100, Math.max(10, Math.round(((k.cachedSearchVolume || 0) / maxImpr) * 100))),
+        trend: (k.trendDirection === 'rising' ? 'rising' : 'stable') as 'rising' | 'stable',
+        searchQuery: k.keyword,
+      })),
     },
   };
 }

@@ -73,12 +73,23 @@ function syncToLegacyFile(conn: StoredGoogleConnection | null) {
     if (conn && conn.connected) {
       // Never store real plaintext bearer tokens in plain json config file
       current.ga4AccessToken = conn.isSandboxDemo ? 'DEMO_SANDBOX_TOKEN' : 'VAULT_PROTECTED_TOKEN';
-      current.ga4PropertyId = conn.detectedGa4PropertyId || '213025502';
-      current.gadsCustomerId = conn.detectedGadsCustomerId || '889-102-4451';
+      current.ga4PropertyId = conn.selectedGa4PropertyId || conn.detectedGa4PropertyId || '';
+      current.gadsCustomerId = conn.selectedGadsCustomerId || conn.detectedGadsCustomerId || '';
       current.autoRealtimeEnabled = true;
       current.lastRealtimeSyncAt = conn.lastSyncAt || new Date().toISOString();
+      if (!conn.isSandboxDemo) {
+        // Clear any residual sandbox fake realtime counters
+        if (current.lastActiveUsers30m === 34) {
+          current.lastActiveUsers30m = 0;
+          current.lastActivePages = [];
+          current.lastActiveEvents = [];
+        }
+      }
     } else {
       current.ga4AccessToken = '';
+      current.lastActiveUsers30m = 0;
+      current.lastActivePages = [];
+      current.lastActiveEvents = [];
     }
     fs.writeFileSync(p, JSON.stringify(current, null, 2), 'utf8');
   } catch {
@@ -88,8 +99,42 @@ function syncToLegacyFile(conn: StoredGoogleConnection | null) {
 
 export async function getGoogleClientConfig(): Promise<StoredClientConfig | null> {
   // 1. Prioritize environment variables (.env) so user can paste privately in local file
-  const envClientId = (process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_ADS_CLIENT_ID || '').trim();
-  const envClientSecret = (process.env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_ADS_CLIENT_SECRET || '').trim();
+  let envClientId = (process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_ADS_CLIENT_ID || '')
+    .trim()
+    .replace(/^["']+|["']+$/g, '');
+  let envClientSecret = (process.env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_ADS_CLIENT_SECRET || '')
+    .trim()
+    .replace(/^["']+|["']+$/g, '');
+
+  if (!envClientId || !envClientSecret) {
+    const envCandidates = [
+      path.resolve(process.cwd(), '.env'),
+      path.resolve(process.cwd(), '..', '..', '.env'),
+    ];
+    for (const envPath of envCandidates) {
+      try {
+        if (fs.existsSync(envPath)) {
+          const content = fs.readFileSync(envPath, 'utf8');
+          for (const line of content.split(/\r?\n/)) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) continue;
+            const eqIdx = trimmed.indexOf('=');
+            if (eqIdx <= 0) continue;
+            const k = trimmed.slice(0, eqIdx).trim();
+            const v = trimmed.slice(eqIdx + 1).trim().replace(/^["']+|["']+$/g, '');
+            if ((k === 'GOOGLE_CLIENT_ID' || k === 'GOOGLE_ADS_CLIENT_ID') && v && !envClientId) {
+              envClientId = v;
+            }
+            if ((k === 'GOOGLE_CLIENT_SECRET' || k === 'GOOGLE_ADS_CLIENT_SECRET') && v && !envClientSecret) {
+              envClientSecret = v;
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
 
   if (envClientId && envClientSecret) {
     return { clientId: envClientId, clientSecret: envClientSecret };
@@ -230,16 +275,6 @@ export async function getGoogleOAuthStatusDto(): Promise<GoogleOAuthStatusDto> {
     status = 'EXPIRED';
   }
 
-  const defaultResources: GoogleAccessibleResourceItem[] = [
-    { id: '512879968', name: 'toantrung.com.vn', type: 'GA4_PROPERTY', permissionLevel: 'Viewer (Read-Only)', isAccessible: true },
-    { id: '509190194', name: 'manhinhled.net.vn', type: 'GA4_PROPERTY', permissionLevel: 'Viewer (Read-Only)', isAccessible: true },
-    { id: '538179128', name: 'bangled.vn', type: 'GA4_PROPERTY', permissionLevel: 'Viewer (Read-Only)', isAccessible: true },
-    { id: '508951192', name: 'Toàn Trung - Bảng điện tử', type: 'GA4_PROPERTY', permissionLevel: 'Viewer (Read-Only)', isAccessible: true },
-    { id: 'https://toantrung.com.vn/', name: 'toantrung.com.vn', type: 'SEARCH_CONSOLE_SITE', permissionLevel: 'siteRestrictedUser (Read-Only)', isAccessible: true },
-    { id: 'https://manhinhled.net.vn/', name: 'manhinhled.net.vn', type: 'SEARCH_CONSOLE_SITE', permissionLevel: 'siteRestrictedUser (Read-Only)', isAccessible: true },
-    { id: 'https://bangled.vn/', name: 'bangled.vn', type: 'SEARCH_CONSOLE_SITE', permissionLevel: 'siteRestrictedUser (Read-Only)', isAccessible: true },
-  ];
-
   return {
     connected: true,
     connectedEmail: conn.connectedEmail,
@@ -258,12 +293,12 @@ export async function getGoogleOAuthStatusDto(): Promise<GoogleOAuthStatusDto> {
     lastErrorMessage: conn.lastErrorMessage || null,
     lastRequestId: conn.lastRequestId || null,
     connectionStatus: status,
-    detectedGa4PropertyId: conn.detectedGa4PropertyId || '512879968',
+    detectedGa4PropertyId: conn.detectedGa4PropertyId || null,
     detectedGadsCustomerId: conn.detectedGadsCustomerId || null,
-    selectedGa4PropertyId: conn.selectedGa4PropertyId || conn.detectedGa4PropertyId || '512879968',
+    selectedGa4PropertyId: conn.selectedGa4PropertyId || conn.detectedGa4PropertyId || null,
     selectedGadsCustomerId: conn.selectedGadsCustomerId || conn.detectedGadsCustomerId || null,
-    selectedGscSiteUrl: conn.selectedGscSiteUrl || 'https://toantrung.com.vn/',
-    accessibleResources: conn.accessibleResources?.length ? conn.accessibleResources : defaultResources,
+    selectedGscSiteUrl: conn.selectedGscSiteUrl || null,
+    accessibleResources: conn.accessibleResources || [],
   };
 }
 
@@ -552,15 +587,17 @@ export async function handleGoogleOAuthCallback(code: string, origin: string, st
     expiresAt,
     isSandboxDemo: false,
     lastSyncAt: new Date().toISOString(),
-    detectedGa4PropertyId: existingConn?.detectedGa4PropertyId || '213025502',
-    detectedGadsCustomerId: existingConn?.detectedGadsCustomerId || '889-102-4451',
+    detectedGa4PropertyId: existingConn?.detectedGa4PropertyId && existingConn.detectedGa4PropertyId !== '213025502' ? existingConn.detectedGa4PropertyId : null,
+    detectedGadsCustomerId: existingConn?.detectedGadsCustomerId && existingConn.detectedGadsCustomerId !== '889-102-4451' ? existingConn.detectedGadsCustomerId : null,
   };
 
   await saveGoogleConnection(updatedConn);
 
-  // Trigger initial background sync across modules
+  // Purge any leftover demo/mock data and trigger initial real discovery & sync across modules
   try {
-    await syncAllGoogleDataAcrossModules('LIGHT_1100');
+    await purgeDemoMetrics();
+    await testGoogleConnection();
+    await syncAllGoogleDataAcrossModules('FULL_0200');
   } catch {
     // non-fatal
   }
@@ -754,13 +791,83 @@ export async function purgeDemoMetrics() {
         { accountPropertyId: 'GADS-TT-01' },
         { accountPropertyId: 'GA4-TOANTRUNG-MAIN' },
         { accountPropertyId: 'sc-domain:toantrung.com.vn' },
-        { campaignExternalId: 'CAMP_LED_INDOOR_P25_Q4' },
+        { accountPropertyId: '213025502' },
+        { accountPropertyId: '889-102-4451' },
+        { campaignExternalId: { in: ['CAMP_LED_INDOOR_P25_Q4', 'CAMP_LED_OUTDOOR_P4_Q4', 'CAMP_BOARD_FACTORY_2026', 'gads_test_p25', 'gads_test_outdoor', 'ga4_test_organic'] } },
       ],
     },
   });
 
-  // 2. Delete mock SeoKeywords with [Test GA4/Ads or demo phrases
-  await prisma.seoKeyword.deleteMany({
+  // 2. Delete mock LeadReconciliation & PlatformSyncLog rows
+  await prisma.leadReconciliation.deleteMany({
+    where: { accountPropertyId: 'GADS-TT-01' },
+  });
+  await prisma.platformSyncLog.deleteMany({
+    where: {
+      accountPropertyId: { in: ['GADS-TT-01', 'GA4-TOANTRUNG-MAIN'] },
+    },
+  });
+
+  // 3. Delete synthetic seed Leads (and their child records)
+  const demoLeads = await prisma.lead.findMany({
+    where: {
+      OR: [
+        { leadCode: { in: ['TT-20261101-0001', 'TT-20261102-0002', 'TT-20261104-0003', 'TT-20261105-0004', 'TT-20261105-0005'] } },
+        { companyName: { contains: '(Dữ liệu tổng hợp)' } },
+        { companyName: { contains: '(Nghi khảo giá)' } },
+        { email: { contains: 'synthetic.vn' } },
+      ],
+    },
+    select: { id: true },
+  });
+  if (demoLeads.length > 0) {
+    const demoLeadIds = demoLeads.map((l) => l.id);
+    const demoDesigns = await prisma.designRequest.findMany({
+      where: { leadId: { in: demoLeadIds } },
+      select: { id: true },
+    });
+    if (demoDesigns.length > 0) {
+      const dIds = demoDesigns.map((d) => d.id);
+      await prisma.designRequest.updateMany({ where: { id: { in: dIds } }, data: { approvedVersionId: null } });
+      await prisma.designAssetVersion.deleteMany({ where: { designRequestId: { in: dIds } } });
+      await prisma.aiUsageLog.deleteMany({ where: { designRequestId: { in: dIds } } });
+      await prisma.designRequest.deleteMany({ where: { id: { in: dIds } } });
+    }
+    await prisma.priceCheckAlert.deleteMany({ where: { leadId: { in: demoLeadIds } } });
+    await prisma.leadAttachment.deleteMany({ where: { leadId: { in: demoLeadIds } } });
+    await prisma.leadActivity.deleteMany({ where: { leadId: { in: demoLeadIds } } });
+    await prisma.leadProduct.deleteMany({ where: { leadId: { in: demoLeadIds } } });
+    await prisma.marketingTracking.deleteMany({ where: { leadId: { in: demoLeadIds } } });
+    await prisma.lead.deleteMany({ where: { id: { in: demoLeadIds } } });
+  }
+
+  // 4. Unlink and delete mock Campaigns
+  const demoCampaigns = await prisma.campaign.findMany({
+    where: {
+      OR: [
+        { campaignCode: { in: ['CAMP_LED_INDOOR_P25_Q4', 'CAMP_LED_OUTDOOR_P4_Q4', 'CAMP_BOARD_FACTORY_2026', 'gads_test_p25', 'gads_test_outdoor', 'ga4_test_organic'] } },
+        { accountExternalId: { in: ['GADS-TT-01', 'FB-TT-FANPAGE', '889-102-4451', '213025502'] } },
+        { campaignName: { contains: '[Test ' } },
+      ],
+    },
+    select: { id: true },
+  });
+  if (demoCampaigns.length > 0) {
+    const campIds = demoCampaigns.map((c) => c.id);
+    await prisma.marketingTracking.updateMany({
+      where: { campaignId: { in: campIds } },
+      data: { campaignId: null },
+    });
+    await prisma.platformDailyMetric.deleteMany({
+      where: { campaignId: { in: campIds } },
+    });
+    await prisma.campaign.deleteMany({
+      where: { id: { in: campIds } },
+    });
+  }
+
+  // 5. Delete mock SeoArticles & SeoKeywords with [Test GA4/Ads or demo seed phrases
+  const demoKws = await prisma.seoKeyword.findMany({
     where: {
       OR: [
         { keyword: { contains: '[Test GA4/Ads' } },
@@ -768,7 +875,28 @@ export async function purgeDemoMetrics() {
         { keyword: 'bảng điện tử năng suất nhà máy may' },
       ],
     },
+    select: { id: true },
   });
+  if (demoKws.length > 0) {
+    const kwIds = demoKws.map((k) => k.id);
+    const demoArticles = await prisma.seoArticle.findMany({
+      where: { keywordId: { in: kwIds } },
+      select: { id: true },
+    });
+    if (demoArticles.length > 0) {
+      const artIds = demoArticles.map((a) => a.id);
+      await prisma.seoArticle.updateMany({
+        where: { id: { in: artIds } },
+        data: { currentRevisionId: null, approvedRevisionId: null },
+      });
+      await prisma.seoArticleRevision.deleteMany({ where: { articleId: { in: artIds } } });
+      await prisma.aiUsageLog.deleteMany({ where: { seoArticleId: { in: artIds } } });
+      await prisma.seoArticle.deleteMany({ where: { id: { in: artIds } } });
+    }
+    await prisma.seoKeyword.deleteMany({
+      where: { id: { in: kwIds } },
+    });
+  }
 }
 
 async function syncRealGoogleAnalytics(token: string, conn: StoredGoogleConnection | null): Promise<number> {
@@ -816,26 +944,27 @@ async function syncRealGoogleAnalytics(token: string, conn: StoredGoogleConnecti
           }>;
         };
         const row = repData.rows?.[0];
-        if (row) {
-          const activeUsers = parseInt(row.metricValues[0]?.value || '0', 10);
-          const pageViews = parseInt(row.metricValues[1]?.value || '0', 10);
-          const totalDuration = parseFloat(row.metricValues[3]?.value || '0');
-          const avgTime = activeUsers > 0 ? totalDuration / activeUsers : 120;
+        const activeUsers = parseInt(row?.metricValues?.[0]?.value || '0', 10);
+        const pageViews = parseInt(row?.metricValues?.[1]?.value || '0', 10);
+        const eventCount = parseInt(row?.metricValues?.[2]?.value || '0', 10);
+        const totalDuration = parseFloat(row?.metricValues?.[3]?.value || '0');
+        const avgTime = activeUsers > 0 ? totalDuration / activeUsers : 0;
 
-          await upsertPlatformMetricIdempotent(prisma, {
-            platform: 'ga4',
-            accountPropertyId: propId,
-            metricDate: todayStr,
-            grain: 'account',
-            pageViews: pageViews,
-            avgTimeOnPageSec: Math.round(avgTime * 10) / 10,
-            isFinalized: false,
-          });
-          synced++;
+        await upsertPlatformMetricIdempotent(prisma, {
+          platform: 'ga4',
+          accountPropertyId: propId,
+          metricDate: todayStr,
+          grain: 'account',
+          clicks: activeUsers,
+          impressions: eventCount,
+          pageViews: pageViews,
+          avgTimeOnPageSec: Math.round(avgTime * 10) / 10,
+          isFinalized: false,
+        });
+        synced++;
 
-          if (conn && (!conn.detectedGa4PropertyId || prop.displayName.toLowerCase().includes('toantrung'))) {
-            conn.detectedGa4PropertyId = propId;
-          }
+        if (conn && (!conn.detectedGa4PropertyId || prop.displayName.toLowerCase().includes('toantrung'))) {
+          conn.detectedGa4PropertyId = propId;
         }
       }
 
@@ -854,7 +983,7 @@ async function syncRealGoogleAnalytics(token: string, conn: StoredGoogleConnecti
               { name: 'screenPageViews' },
               { name: 'userEngagementDuration' },
             ],
-            limit: 5,
+            limit: 10,
           }),
         });
         if (pageResp.ok) {
@@ -875,7 +1004,96 @@ async function syncRealGoogleAnalytics(token: string, conn: StoredGoogleConnecti
               grain: 'page',
               pageUrlRaw: `https://${prop.displayName.toLowerCase().replace(/[^a-z0-9.-]/g, '')}${path}`,
               pageViews: views,
-              avgTimeOnPageSec: views > 0 ? Math.round((dur / views) * 10) / 10 : 60,
+              avgTimeOnPageSec: views > 0 ? Math.round((dur / views) * 10) / 10 : 0,
+              isFinalized: false,
+            });
+            synced++;
+          }
+        }
+      } catch {
+        // non-fatal
+      }
+
+      // Also fetch real traffic channels & linked Google Ads campaigns from GA4
+      try {
+        const trafficResp = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propId}:runReport`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            dateRanges: [{ startDate: '90daysAgo', endDate: 'today' }],
+            dimensions: [{ name: 'sessionCampaignName' }, { name: 'sessionSourceMedium' }],
+            metrics: [
+              { name: 'sessions' },
+              { name: 'totalUsers' },
+              { name: 'screenPageViews' },
+              { name: 'conversions' },
+            ],
+            limit: 25,
+          }),
+        });
+        if (trafficResp.ok) {
+          const trafficData = (await trafficResp.json()) as {
+            rows?: Array<{
+              dimensionValues: Array<{ value: string }>;
+              metricValues: Array<{ value: string }>;
+            }>;
+          };
+          for (const tRow of trafficData.rows || []) {
+            const rawCamp = tRow.dimensionValues?.[0]?.value || '(not set)';
+            const sourceMedium = tRow.dimensionValues?.[1]?.value || 'google / organic';
+            const sessions = parseInt(tRow.metricValues?.[0]?.value || '0', 10);
+            const users = parseInt(tRow.metricValues?.[1]?.value || '0', 10);
+            const views = parseInt(tRow.metricValues?.[2]?.value || '0', 10);
+            const conv = Math.round(parseFloat(tRow.metricValues?.[3]?.value || '0'));
+            if (sessions === 0 && users === 0) continue;
+
+            const accountExtId = `GA4-${propId}`;
+            const campTitle =
+              rawCamp && rawCamp !== '(not set)' && rawCamp !== '(direct)' && rawCamp !== '(organic)'
+                ? `[GA4 ${prop.displayName}] ${rawCamp} (${sourceMedium})`
+                : `[GA4 ${prop.displayName}] Lưu lượng ${sourceMedium}`;
+            const campCode = `ga4_${propId}_${campTitle.toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 50)}`;
+
+            const campRow = await prisma.campaign.upsert({
+              where: {
+                uq_campaign_platform_account_code: {
+                  platform: 'google_ads',
+                  accountExternalId: accountExtId,
+                  campaignCode: campCode,
+                },
+              },
+              update: {
+                campaignName: campTitle,
+                isActive: true,
+              },
+              create: {
+                platform: 'google_ads',
+                accountExternalId: accountExtId,
+                campaignCode: campCode,
+                campaignName: campTitle,
+                utmCampaignSlug: campCode,
+                currencyCode: 'VND',
+                dailyBudgetMicros: 0n,
+                isActive: true,
+              },
+            });
+
+            await upsertPlatformMetricIdempotent(prisma, {
+              platform: 'google_ads',
+              accountPropertyId: accountExtId,
+              metricDate: todayStr,
+              grain: 'campaign',
+              campaignExternalId: campCode,
+              campaignId: campRow.id,
+              campaignName: campTitle,
+              currencyCode: 'VND',
+              clicks: sessions,
+              impressions: Math.max(views, users, sessions),
+              spendMicros: 0n,
+              conversionsMicros: BigInt(conv) * 1_000_000n,
               isFinalized: false,
             });
             synced++;
@@ -894,7 +1112,7 @@ async function syncRealGoogleAnalytics(token: string, conn: StoredGoogleConnecti
 async function syncRealSearchConsole(token: string): Promise<number> {
   let synced = 0;
   const todayStr = new Date().toISOString().slice(0, 10);
-  const startStr = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const startStr = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   try {
     const resSC = await fetch('https://www.googleapis.com/webmasters/v3/sites', {
       headers: { Authorization: `Bearer ${token}` },
@@ -918,7 +1136,7 @@ async function syncRealSearchConsole(token: string): Promise<number> {
             startDate: startStr,
             endDate: todayStr,
             dimensions: ['query'],
-            rowLimit: 25,
+            rowLimit: 100,
           }),
         },
       );
@@ -945,30 +1163,37 @@ async function syncRealSearchConsole(token: string): Promise<number> {
             keywordRaw: kw,
             clicks: row.clicks,
             impressions: row.impressions,
+            avgPosition: Math.round(row.position * 10) / 10,
             isFinalized: false,
           });
           synced++;
 
-          // Upsert into SeoKeyword table for Module 03 SEO & Keywords
+          // Upsert into SeoKeyword table for Module 03 SEO & Keywords with real Impressions & Clicks
           try {
             const norm = kw.toLowerCase().trim();
             await prisma.seoKeyword.upsert({
               where: { keywordNorm: norm },
               update: {
-                cachedSearchVolume: Math.max(row.impressions * 10, 100),
+                cachedSearchVolume: row.impressions,
                 cachedOrganicClicks: row.clicks,
                 cachedAvgPosition: Math.round(row.position * 10) / 10,
+                cacheSourceAccountKey: site.siteUrl,
+                cacheWindowStartDate: startStr,
+                cacheWindowEndDate: todayStr,
                 cacheRefreshedAt: new Date(),
-                trendDirection: row.clicks > 1 ? 'rising' : 'stable',
+                trendDirection: row.clicks > 0 ? 'rising' : 'stable',
               },
               create: {
                 keyword: kw,
                 keywordNorm: norm,
-                cachedSearchVolume: Math.max(row.impressions * 10, 100),
+                cachedSearchVolume: row.impressions,
                 cachedOrganicClicks: row.clicks,
                 cachedAvgPosition: Math.round(row.position * 10) / 10,
+                cacheSourceAccountKey: site.siteUrl,
+                cacheWindowStartDate: startStr,
+                cacheWindowEndDate: todayStr,
                 cacheRefreshedAt: new Date(),
-                trendDirection: row.clicks > 1 ? 'rising' : 'stable',
+                trendDirection: row.clicks > 0 ? 'rising' : 'stable',
               },
             });
           } catch {

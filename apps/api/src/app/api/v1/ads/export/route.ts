@@ -6,6 +6,11 @@ import { hasBaPermission, isL2Valid, isL3Effective } from '@toantrung/contracts'
 import { jsonError, jsonSuccess } from '../../../../../core/http';
 import { requirePermissionSession } from '../../../../../core/permissions';
 import { buildStandardXlsxBuffer } from '../../../../../core/export/xlsx-builder';
+import {
+  getGoogleConnection,
+  getValidAccessToken,
+  syncAllGoogleDataAcrossModules,
+} from '../../../../../modules/02-tracking-sync/google-oauth.service';
 
 interface GoogleRealtimeStoredConfig {
   ga4PropertyId?: string;
@@ -847,16 +852,32 @@ export async function POST(request: Request) {
 
       if (body.mode === 'get_realtime_config') {
         const cfg = readRealtimeConfig();
+        const oauthConn = await getGoogleConnection();
+        const validOAuthToken = await getValidAccessToken();
+        const hasManualToken = Boolean(
+          cfg.ga4AccessToken &&
+            cfg.ga4AccessToken !== 'VAULT_PROTECTED_TOKEN' &&
+            cfg.ga4AccessToken !== 'DEMO_SANDBOX_TOKEN',
+        );
+        const isLiveConnected = Boolean(
+          (oauthConn?.connected && validOAuthToken) || hasManualToken || cfg.ga4RefreshToken,
+        );
+        const activePropId = isLiveConnected
+          ? oauthConn?.selectedGa4PropertyId ||
+            oauthConn?.detectedGa4PropertyId ||
+            cfg.ga4PropertyId ||
+            ''
+          : '';
         return jsonSuccess({
-          hasGa4: Boolean(cfg.ga4PropertyId && (cfg.ga4AccessToken || cfg.ga4RefreshToken)),
+          hasGa4: Boolean(isLiveConnected && activePropId),
           hasGsheet: Boolean(cfg.gsheetUrl),
-          ga4PropertyId: cfg.ga4PropertyId || '',
+          ga4PropertyId: activePropId,
           gsheetUrl: cfg.gsheetUrl || '',
           autoRealtimeEnabled: Boolean(cfg.autoRealtimeEnabled),
-          lastRealtimeSyncAt: cfg.lastRealtimeSyncAt || null,
-          activeUsers30m: cfg.lastActiveUsers30m || 0,
-          activePages: cfg.lastActivePages || [],
-          activeEvents: cfg.lastActiveEvents || [],
+          lastRealtimeSyncAt: isLiveConnected ? cfg.lastRealtimeSyncAt || null : null,
+          activeUsers30m: isLiveConnected ? cfg.lastActiveUsers30m || 0 : 0,
+          activePages: isLiveConnected ? cfg.lastActivePages || [] : [],
+          activeEvents: isLiveConnected ? cfg.lastActiveEvents || [] : [],
         });
       }
 
@@ -910,11 +931,19 @@ export async function POST(request: Request) {
         }
 
         // 2. Poll Google Analytics 4 Realtime API (runRealtimeReport + runReport)
-        const cleanPropId = (saved.ga4PropertyId || process.env.GA4_PROPERTY_ID || '').replace(
-          /\D/g,
-          '',
-        );
+        const oauthConn = await getGoogleConnection();
+        const rawPropId =
+          saved.ga4PropertyId && saved.ga4PropertyId !== '213025502'
+            ? saved.ga4PropertyId
+            : oauthConn?.selectedGa4PropertyId ||
+              oauthConn?.detectedGa4PropertyId ||
+              process.env.GA4_PROPERTY_ID ||
+              '';
+        const cleanPropId = rawPropId.replace(/\D/g, '');
         let bearer = (saved.ga4AccessToken || '').trim();
+        if (!bearer || bearer === 'VAULT_PROTECTED_TOKEN' || bearer === 'DEMO_SANDBOX_TOKEN') {
+          bearer = (await getValidAccessToken()) || '';
+        }
         if (!bearer && saved.ga4RefreshToken && saved.ga4ClientId && saved.ga4ClientSecret) {
           try {
             const tr = await fetch('https://oauth2.googleapis.com/token', {
@@ -930,83 +959,27 @@ export async function POST(request: Request) {
             if (tr.ok) {
               const tj = (await tr.json()) as { access_token?: string };
               bearer = tj.access_token || '';
-              if (bearer) writeRealtimeConfig({ ga4AccessToken: bearer });
             }
           } catch {
             // ignore
           }
         }
 
-        if (cleanPropId && bearer) {
-          // Special Mode: Official Demo / Test Sandbox Stream (Property 213025502 or DEMO_SANDBOX_TOKEN)
-          if (cleanPropId === '213025502' || bearer === 'DEMO_SANDBOX_TOKEN') {
-            const jitter = Math.floor(Math.random() * 9);
-            const u1 = 11 + (jitter % 7);
-            const u2 = 8 + ((jitter * 2) % 6);
-            const u3 = 5 + ((jitter * 3) % 5);
-            const u4 = 3 + (jitter % 4);
-            activeUsers30m = u1 + u2 + u3 + u4;
-            activePages = [
-              { page: '/man-hinh-led-hoi-truong-p2-5', users: u1 },
-              { page: '/bang-gia-man-hinh-led-ngoai-troi-p3-p4', users: u2 },
-              { page: '/du-an-man-hinh-led-sanh-tiec-cuoi', users: u3 },
-              { page: '/lien-he-nhan-bao-gia-toan-trung', users: u4 },
-            ];
-            activeEvents = [
-              { event: 'page_view', count: activeUsers30m * 4 + jitter * 3 },
-              { event: 'user_engagement', count: activeUsers30m * 2 + jitter * 2 },
-              { event: 'click_zalo_hotline', count: 8 + (jitter % 6) },
-              { event: 'generate_lead', count: 3 + (jitter % 3) },
-            ];
-            activeSources.push('GA4 Demo (213025502)', 'Google Ads Sandbox (889-102-4451)');
-
-            const minuteTick = Math.floor(Date.now() / 15000) % 100;
-            const sandboxGrid: string[][] = [
-              [
-                'Mã Chiến Dịch',
-                'Tên Chiến Dịch',
-                'Trạng Thái',
-                'Ngân Sách',
-                'Lượt Hiển Thị',
-                'Lượt Nhấp',
-                'Chi Phí',
-                'Lượt Chuyển Đổi',
-              ],
-              [
-                'gads_test_p25',
-                '[Test Ads 889-102-4451] Search - Màn hình LED Hội trường P2.5',
-                'Đang chạy',
-                '1500000',
-                String(14200 + minuteTick * 18),
-                String(640 + minuteTick * 2),
-                String(7680000 + minuteTick * 24000),
-                String(19 + Math.floor(minuteTick / 15)),
-              ],
-              [
-                'gads_test_outdoor',
-                '[Test Ads 889-102-4451] Search - Màn hình LED Ngoài trời P3/P4',
-                'Đang chạy',
-                '2000000',
-                String(18900 + minuteTick * 25),
-                String(815 + minuteTick * 3),
-                String(9780000 + minuteTick * 36000),
-                String(24 + Math.floor(minuteTick / 12)),
-              ],
-              [
-                'ga4_test_organic',
-                '[Test GA4 213025502] Google Organic Search (3 Website)',
-                'Đang chạy',
-                '0',
-                String(26400 + minuteTick * 30),
-                String(1280 + minuteTick * 4),
-                '0',
-                String(31 + Math.floor(minuteTick / 10)),
-              ],
-            ];
-            const rTest = await ingestGridsIntoAdsDatabase([sandboxGrid]);
-            totalImportedCampaigns += rTest.importedCampaigns;
-          } else {
+        if (cleanPropId && bearer && bearer !== 'DEMO_SANDBOX_TOKEN') {
           try {
+            // If DB has no synced keywords or campaigns yet, run full Google sync across all properties & Search Console sites
+            const [kwCount, campCount] = await Promise.all([
+              prisma.seoKeyword.count(),
+              prisma.campaign.count(),
+            ]);
+            if (kwCount === 0 || campCount === 0) {
+              try {
+                await syncAllGoogleDataAcrossModules('FULL_0200');
+              } catch {
+                // non-fatal
+              }
+            }
+
             // 2a. GA4 runRealtimeReport (Last 30 minutes live traffic!)
             const rtResp = await fetch(
               `https://analyticsdata.googleapis.com/v1beta/properties/${cleanPropId}:runRealtimeReport`,
@@ -1078,7 +1051,72 @@ export async function POST(request: Request) {
               }));
             }
 
-            // 2c. GA4 Core Report (Campaigns & Google Ads traffic)
+            // If 0 visitors in the exact last 30m, also load 30-day real pages & events from GA4 runReport so the user sees their real historical GA4 pages/events
+            if (activePages.length === 0) {
+              const histPagesResp = await fetch(
+                `https://analyticsdata.googleapis.com/v1beta/properties/${cleanPropId}:runReport`,
+                {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${bearer}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    dateRanges: [{ startDate: '30daysAgo', endDate: 'today' }],
+                    dimensions: [{ name: 'pagePath' }],
+                    metrics: [{ name: 'activeUsers' }, { name: 'screenPageViews' }],
+                    limit: 6,
+                  }),
+                  cache: 'no-store',
+                },
+              );
+              if (histPagesResp.ok) {
+                const hpData = (await histPagesResp.json()) as {
+                  rows?: Array<{
+                    dimensionValues?: Array<{ value?: string }>;
+                    metricValues?: Array<{ value?: string }>;
+                  }>;
+                };
+                activePages = (hpData.rows || []).map((r) => ({
+                  page: `${r.dimensionValues?.[0]?.value || '/'} (30 ngày)`,
+                  users: Number(r.metricValues?.[0]?.value || 0),
+                }));
+              }
+            }
+
+            if (activeEvents.length === 0) {
+              const histEvResp = await fetch(
+                `https://analyticsdata.googleapis.com/v1beta/properties/${cleanPropId}:runReport`,
+                {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${bearer}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    dateRanges: [{ startDate: '30daysAgo', endDate: 'today' }],
+                    dimensions: [{ name: 'eventName' }],
+                    metrics: [{ name: 'eventCount' }],
+                    limit: 6,
+                  }),
+                  cache: 'no-store',
+                },
+              );
+              if (histEvResp.ok) {
+                const heData = (await histEvResp.json()) as {
+                  rows?: Array<{
+                    dimensionValues?: Array<{ value?: string }>;
+                    metricValues?: Array<{ value?: string }>;
+                  }>;
+                };
+                activeEvents = (heData.rows || []).map((r) => ({
+                  event: `${r.dimensionValues?.[0]?.value || 'page_view'} (30d)`,
+                  count: Number(r.metricValues?.[0]?.value || 0),
+                }));
+              }
+            }
+
+            // 2c. GA4 Core Report (Real Traffic Channels & Google Ads traffic)
             const ga4Resp = await fetch(
               `https://analyticsdata.googleapis.com/v1beta/properties/${cleanPropId}:runReport`,
               {
@@ -1130,8 +1168,9 @@ export async function POST(request: Request) {
                 const sessions = Number(row.metricValues?.[0]?.value || 0);
                 const users = Number(row.metricValues?.[1]?.value || 0);
                 const conversions = Math.round(Number(row.metricValues?.[3]?.value || 0));
+                if (sessions === 0 && users === 0) continue;
                 const displayName =
-                  rawCamp && rawCamp !== '(not set)' && rawCamp !== '(direct)'
+                  rawCamp && rawCamp !== '(not set)' && rawCamp !== '(direct)' && rawCamp !== '(organic)'
                     ? `[GA4] ${rawCamp} (${rawSource})`
                     : `[GA4] Lưu lượng ${rawSource}`;
                 const code = `ga4_${slugifyCode(displayName)}`;
@@ -1146,12 +1185,13 @@ export async function POST(request: Request) {
                   String(conversions),
                 ]);
               }
-              const r2 = await ingestGridsIntoAdsDatabase([campGrid]);
-              totalImportedCampaigns += r2.importedCampaigns;
+              if (campGrid.length > 1) {
+                const r2 = await ingestGridsIntoAdsDatabase([campGrid]);
+                totalImportedCampaigns += r2.importedCampaigns;
+              }
             }
           } catch (e) {
             errors.push(e instanceof Error ? e.message : 'Lỗi đọc GA4 API');
-          }
           }
         }
 
@@ -1191,84 +1231,8 @@ export async function POST(request: Request) {
         }
 
         let bearerToken = (body.accessToken || '').trim();
-        if (cleanPropId === '213025502' || bearerToken === 'DEMO_SANDBOX_TOKEN') {
-          const sandboxGrid: string[][] = [
-            [
-              'Mã Chiến Dịch',
-              'Tên Chiến Dịch',
-              'Trạng Thái',
-              'Ngân Sách',
-              'Lượt Hiển Thị',
-              'Lượt Nhấp',
-              'Chi Phí',
-              'Lượt Chuyển Đổi',
-            ],
-            [
-              'gads_test_p25',
-              '[Test Ads 889-102-4451] Search - Màn hình LED Hội trường P2.5',
-              'Đang chạy',
-              '1500000',
-              '14520',
-              '668',
-              '8016000',
-              '21',
-            ],
-            [
-              'gads_test_outdoor',
-              '[Test Ads 889-102-4451] Search - Màn hình LED Ngoài trời P3/P4',
-              'Đang chạy',
-              '2000000',
-              '19240',
-              '842',
-              '10104000',
-              '26',
-            ],
-            [
-              'ga4_test_organic',
-              '[Test GA4 213025502] Google Organic Search (3 Website)',
-              'Đang chạy',
-              '0',
-              '26850',
-              '1320',
-              '0',
-              '34',
-            ],
-          ];
-          const kwGrid: string[][] = [
-            ['Từ khóa mục tiêu', 'Lượt tìm kiếm', 'Click quảng cáo', 'Click tự nhiên'],
-            ['màn hình led hội trường p2.5 [Test GA4/Ads]', '3200', '245', '190'],
-            ['báo giá màn hình led ngoài trời p4 [Test GA4/Ads]', '2850', '198', '165'],
-          ];
-          const { importedCampaigns, importedKeywords } = await ingestGridsIntoAdsDatabase([
-            sandboxGrid,
-            kwGrid,
-          ]);
-          const nowIso = new Date().toISOString();
-          writeRealtimeConfig({
-            ga4PropertyId: '213025502',
-            ga4AccessToken: 'DEMO_SANDBOX_TOKEN',
-            gadsCustomerId: '889-102-4451',
-            autoRealtimeEnabled: true,
-            lastRealtimeSyncAt: nowIso,
-            lastActiveUsers30m: 34,
-            lastActivePages: [
-              { page: '/man-hinh-led-hoi-truong-p2-5', users: 14 },
-              { page: '/bang-gia-man-hinh-led-ngoai-troi-p3-p4', users: 10 },
-              { page: '/du-an-man-hinh-led-sanh-tiec-cuoi', users: 6 },
-              { page: '/lien-he-nhan-bao-gia-toan-trung', users: 4 },
-            ],
-            lastActiveEvents: [
-              { event: 'page_view', count: 148 },
-              { event: 'user_engagement', count: 82 },
-              { event: 'click_zalo_hotline', count: 14 },
-              { event: 'generate_lead', count: 5 },
-            ],
-          });
-          return jsonSuccess({
-            importedCampaigns,
-            importedKeywords,
-            source: 'Tài khoản Test Mẫu (GA4 213025502 & Google Ads 889-102-4451)',
-          });
+        if (!bearerToken || bearerToken === 'VAULT_PROTECTED_TOKEN' || bearerToken === 'DEMO_SANDBOX_TOKEN') {
+          bearerToken = (await getValidAccessToken()) || '';
         }
 
         if (!bearerToken) {

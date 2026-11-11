@@ -301,15 +301,6 @@ export function GoogleOAuthManager({
             <LinkIcon className="w-3.5 h-3.5" />
             <span>Đăng nhập Google (OAuth 2.0)</span>
           </button>
-          <button
-            type="button"
-            onClick={() => void handleDemoConnect()}
-            className="h-8 px-3 rounded-xl bg-white border border-blue-200 hover:bg-blue-50 text-blue-700 font-semibold inline-flex items-center gap-1 transition"
-            title="Thử nhanh với tài khoản mẫu không cần cài đặt Google Cloud"
-          >
-            <Zap className="w-3.5 h-3.5 text-amber-500" />
-            <span>Test Demo</span>
-          </button>
         </div>
       </div>
     );
@@ -423,16 +414,6 @@ export function GoogleOAuthManager({
                 >
                   <LinkIcon className="w-4 h-4" />
                   <span>Đăng nhập bằng Google</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void handleDemoConnect()}
-                  className="h-10 px-3.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 text-xs font-bold inline-flex items-center gap-1.5 transition"
-                  title="Kết nối nhanh với tài khoản Demo Marketing để trải nghiệm ngay"
-                >
-                  <Zap className="w-4 h-4 text-amber-600" />
-                  <span>Thử tài khoản Demo</span>
                 </button>
               </>
             )}
@@ -641,16 +622,7 @@ export function GoogleOAuthManager({
               </p>
             </div>
 
-            <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => void handleDemoConnect()}
-                className="h-9 px-3.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-bold inline-flex items-center gap-1.5 transition"
-              >
-                <Zap className="w-3.5 h-3.5 text-amber-700" />
-                <span>Thử Demo Sandbox</span>
-              </button>
-
+            <div className="flex items-center justify-end pt-3 border-t border-slate-100">
               <div className="flex items-center gap-2">
                 <button
                   type="button"

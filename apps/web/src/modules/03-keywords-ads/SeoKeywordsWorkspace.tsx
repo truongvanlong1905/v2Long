@@ -1025,49 +1025,7 @@ export function SeoKeywordsWorkspace() {
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => {
-                        setGa4PropertyId('213025502');
-                        setGa4AccessToken('DEMO_SANDBOX_TOKEN');
-                        if (!user) return;
-                        setBusy(true);
-                        setErrorMsg(null);
-                        void (async () => {
-                          try {
-                            const res = await apiRequest<{
-                              importedCampaigns: number;
-                              importedKeywords: number;
-                            }>('/api/v1/ads/export', {
-                              method: 'POST',
-                              csrfToken: user.csrfToken,
-                              body: {
-                                mode: 'ga4_api',
-                                propertyId: '213025502',
-                                accessToken: 'DEMO_SANDBOX_TOKEN',
-                              },
-                            });
-                            setShowDirectSyncModal(false);
-                            setFeedbackMsg(
-                              `🧪 Đã kích hoạt Tài khoản Test Mẫu (GA4 Property 213025502 & Google Ads 889-102-4451): nạp ${res.importedCampaigns} chiến dịch & bật luồng đọc Realtime mỗi 15 giây!`,
-                            );
-                            await pollRealtimeData(true);
-                          } catch (err) {
-                            setErrorMsg(
-                              err instanceof Error ? err.message : 'Lỗi kích hoạt tài khoản test.',
-                            );
-                          } finally {
-                            setBusy(false);
-                          }
-                        })();
-                      }}
-                      className="h-9 px-4 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold"
-                    >
-                      🧪 Dùng Tài khoản Test Mẫu (GA4 213025502 &amp; Ads 889-102-4451)
-                    </button>
-
+                  <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
                     <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -1319,54 +1277,17 @@ export function SeoKeywordsWorkspace() {
                 </h3>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  disabled={busy || realtimePolling}
-                  onClick={() => {
-                    if (!user) return;
-                    setGa4PropertyId('213025502');
-                    setGa4AccessToken('DEMO_SANDBOX_TOKEN');
-                    void (async () => {
-                      setBusy(true);
-                      try {
-                        await apiRequest('/api/v1/ads/export', {
-                          method: 'POST',
-                          csrfToken: user.csrfToken,
-                          body: {
-                            mode: 'ga4_api',
-                            propertyId: '213025502',
-                            accessToken: 'DEMO_SANDBOX_TOKEN',
-                          },
-                        });
-                        setFeedbackMsg(
-                          '🧪 Đã gắn Tài khoản Test Mẫu (GA4 Property 213025502 & Google Ads 889-102-4451) — Đang chạy luồng Realtime mỗi 15 giây!',
-                        );
-                        setShowCampaignsTable(true);
-                        await pollRealtimeData(true);
-                      } finally {
-                        setBusy(false);
-                      }
-                    })();
-                  }}
-                  className="px-3 py-1 rounded-full bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-900 text-xs font-bold transition"
-                >
-                  🧪 Bật Tài khoản Test (GA4 213025502 &amp; Ads 889-102-4451)
-                </button>
                 {ga4PropertyId ? (
                   <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-mono font-bold">
                     GA4 Property: {ga4PropertyId}
                   </span>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDirectSyncTab('ga4');
-                      setShowDirectSyncModal(true);
-                    }}
-                    className="px-3 py-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold"
+                  <a
+                    href="/api/v1/auth/google/authorize?redirect=true&returnPath=%2Fads"
+                    className="px-3.5 py-1.5 rounded-full bg-[#1E3A8A] hover:bg-blue-900 text-white text-xs font-bold shadow-2xs transition inline-flex items-center gap-1.5"
                   >
-                    + Nhập GA4 thật
-                  </button>
+                    <span>🔗 Đăng nhập Google (OAuth 2.0) để tải dữ liệu thật về máy này</span>
+                  </a>
                 )}
               </div>
             </div>
@@ -1578,231 +1499,8 @@ export function SeoKeywordsWorkspace() {
             </div>
           </div>
 
-          {/* 2-Column Section: Truy cập nhanh (Left 7 cols) + Nguồn dữ liệu (Right 5 cols) */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-            {/* Left: Truy cập nhanh */}
-            <div className="lg:col-span-7 bg-white border border-slate-200/80 rounded-3xl p-6 shadow-2xs flex flex-col justify-between space-y-5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-sky-50 text-sky-600 grid place-items-center">
-                    <LayoutGrid className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h2 className="font-display font-bold text-slate-900 text-base">
-                      Truy cập nhanh
-                    </h2>
-                    <p className="text-xs text-slate-500">
-                      Mở nhanh các chức năng vận hành trong Module 03
-                    </p>
-                  </div>
-                </div>
-                <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold">
-                  Lưu trực tiếp DB
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <button
-                  type="button"
-                  onClick={() => setMainTab('keywords')}
-                  className="group p-4 rounded-2xl border border-slate-200/90 hover:border-blue-300 hover:bg-blue-50/30 text-left transition flex items-center justify-between gap-3"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-sky-50 text-sky-600 grid place-items-center shrink-0">
-                      <Search className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="font-bold text-slate-900 group-hover:text-blue-700">
-                        Nhập số liệu từ khóa
-                      </div>
-                      <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                        Google Ads, Search Console, Google Trends
-                      </p>
-                    </div>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 shrink-0" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMainTab('content');
-                    setContentSubTab('compose');
-                  }}
-                  className="group p-4 rounded-2xl border border-slate-200/90 hover:border-blue-300 hover:bg-blue-50/30 text-left transition flex items-center justify-between gap-3"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 grid place-items-center shrink-0">
-                      <FileText className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="font-bold text-slate-900 group-hover:text-blue-700">
-                        Soạn và duyệt bài
-                      </div>
-                      <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                        Tạo bản nháp AI Gemini, chỉnh sửa và quản lý phiên bản
-                      </p>
-                    </div>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 shrink-0" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setMainTab('schedule')}
-                  className="group p-4 rounded-2xl border border-slate-200/90 hover:border-blue-300 hover:bg-blue-50/30 text-left transition flex items-center justify-between gap-3"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 grid place-items-center shrink-0">
-                      <Calendar className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="font-bold text-slate-900 group-hover:text-blue-700">
-                        Lập lịch và nhập hiệu quả
-                      </div>
-                      <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                        Quản lý lịch xuất bản và theo dõi số liệu SEO 30 ngày
-                      </p>
-                    </div>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 shrink-0" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowCampaignsTable((prev) => !prev)}
-                  className="group p-4 rounded-2xl border border-slate-200/90 hover:border-blue-300 hover:bg-blue-50/30 text-left transition flex items-center justify-between gap-3"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 grid place-items-center shrink-0">
-                      <BarChart3 className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="font-bold text-slate-900 group-hover:text-blue-700">
-                        Chiến dịch Google Ads ({campaigns.length})
-                      </div>
-                      <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                        {showCampaignsTable ? 'Ẩn bảng chi tiết chiến dịch' : 'Xem biểu đồ & bảng chiến dịch đang chạy'}
-                      </p>
-                    </div>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 shrink-0" />
-                </button>
-              </div>
-
-              <div className="pt-2 flex flex-wrap items-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => adsImportInputRef.current?.click()}
-                  className="h-9 px-4 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700"
-                >
-                  Nhập dữ liệu từ file Excel (.xlsx/.csv)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowCampaignsTable((prev) => !prev)}
-                  className="h-9 px-4 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700"
-                >
-                  {showCampaignsTable ? 'Thu gọn biểu đồ Chiến dịch' : 'Mở biểu đồ & danh sách Chiến dịch Ads'}
-                </button>
-              </div>
-            </div>
-
-            {/* Right: Nguồn dữ liệu */}
-            <div className="lg:col-span-5 bg-white border border-slate-200/80 rounded-3xl p-6 shadow-2xs space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-sky-50 text-sky-600 grid place-items-center">
-                  <Globe className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="font-display font-bold text-slate-900 text-base">
-                    Nguồn dữ liệu
-                  </h2>
-                  <p className="text-xs text-slate-500">
-                    Trạng thái đồng bộ và nhập liệu của từng nguồn
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <div className="p-4 rounded-2xl border border-slate-200/80 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 grid place-items-center shrink-0">
-                      <Target className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="font-bold text-slate-900 text-sm">Google Ads (Quyền Chỉ xem)</div>
-                      <p className="text-xs text-slate-500">
-                        Đồng bộ qua Link Google Sheets hoặc nhập file Excel/CSV
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDirectSyncTab('gsheet');
-                      setShowDirectSyncModal(true);
-                    }}
-                    className="px-3 py-1 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold shrink-0"
-                  >
-                    Cấu hình Ads
-                  </button>
-                </div>
-
-                <div className="p-4 rounded-2xl border border-slate-200/80 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 grid place-items-center shrink-0">
-                      <Activity className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="font-bold text-slate-900 text-sm">
-                        Google Analytics 4 (Quyền Chỉ xem)
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        Kết nối trực tiếp qua GA4 Property ID &amp; OAuth Read-Only
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDirectSyncTab('ga4');
-                      setShowDirectSyncModal(true);
-                    }}
-                    className="px-3 py-1 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-bold shrink-0"
-                  >
-                    Cấu hình GA4
-                  </button>
-                </div>
-
-                <div className="p-4 rounded-2xl border border-slate-200/80 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 grid place-items-center shrink-0">
-                      <Search className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="font-bold text-slate-900 text-sm">
-                        Search Console &amp; AI Gemini
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        Số liệu Click Organic, Vị trí TB &amp; Trợ lý AI viết bài
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setMainTab('keywords')}
-                    className="px-3 py-1 rounded-full bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold shrink-0"
-                  >
-                    Cập nhật
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
           {/* Expandable Campaign Performance Chart & Campaigns Table */}
-          {showCampaignsTable && (
+          {(showCampaignsTable || campaigns.length > 0) && (
             <div className="space-y-5">
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
                 <div className="lg:col-span-7 bg-white border border-slate-200/80 rounded-3xl p-6 shadow-2xs">

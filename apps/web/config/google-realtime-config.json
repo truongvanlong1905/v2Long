@@ -1,44 +1,10 @@
 {
-  "ga4PropertyId": "512879968",
-  "ga4AccessToken": "VAULT_PROTECTED_TOKEN",
-  "gadsCustomerId": "889-102-4451",
+  "ga4PropertyId": "",
+  "ga4AccessToken": "",
+  "gadsCustomerId": "",
   "autoRealtimeEnabled": true,
-  "lastRealtimeSyncAt": "2026-11-11T09:21:17.017Z",
-  "lastActiveUsers30m": 35,
-  "lastActivePages": [
-    {
-      "page": "/man-hinh-led-hoi-truong-p2-5",
-      "users": 15
-    },
-    {
-      "page": "/bang-gia-man-hinh-led-ngoai-troi-p3-p4",
-      "users": 10
-    },
-    {
-      "page": "/du-an-man-hinh-led-sanh-tiec-cuoi",
-      "users": 7
-    },
-    {
-      "page": "/lien-he-nhan-bao-gia-toan-trung",
-      "users": 3
-    }
-  ],
-  "lastActiveEvents": [
-    {
-      "event": "page_view",
-      "count": 152
-    },
-    {
-      "event": "user_engagement",
-      "count": 78
-    },
-    {
-      "event": "click_zalo_hotline",
-      "count": 12
-    },
-    {
-      "event": "generate_lead",
-      "count": 4
-    }
-  ]
+  "lastRealtimeSyncAt": null,
+  "lastActiveUsers30m": 0,
+  "lastActivePages": [],
+  "lastActiveEvents": []
 }

@@ -810,159 +810,8 @@ export function TrackingWorkspace() {
             </form>
           </div>
 
-          {/* Trình mô phỏng Webhook & Kiểm thử Chống trùng (Idempotency theo Website + Submission ID) */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card space-y-3">
-            <div className="flex items-center gap-2">
-              <Crosshair className="w-5 h-5 text-brand" />
-              <h2 className="font-display text-base font-bold text-ink">
-                Trình mô phỏng Webhook Intake & Kiểm thử Chống trùng theo Website
-              </h2>
-            </div>
-            <p className="text-sm text-slate-600">
-              Khóa chống trùng: <code className="font-mono">(intakeSourceProvider, intakeSourceAccountKey, externalSubmissionId)</code>. Gửi lặp cùng Submission ID trên cùng 1 website sẽ được deduplicate an toàn; cùng Submission ID trên website khác vẫn tạo Lead hợp lệ.
-            </p>
-            <div className="flex flex-wrap items-center gap-2 pb-1">
-              <span className="text-sm font-bold text-slate-600">Chọn nhanh kịch bản mẫu:</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setWhWebsite('toantrung.com.vn');
-                  setWhSubmissionId(`WEB-GADS-${Date.now().toString().slice(-4)}`);
-                  setWhPhone('0909345678');
-                  setWhCompany('Công ty TNHH Điện tử Á Châu');
-                  setWhGclid(`EAIaIQobChMI_std_${Date.now().toString().slice(-4)}`);
-                  setWhUtmSource('google');
-                  setWhUtmCampaign('led_indoor_p25_q4');
-                }}
-                className="px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-brand text-xs font-semibold hover:bg-blue-100"
-              >
-                1. Lead chuẩn Google Ads
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setWhWebsite('bangled.vn');
-                  setWhSubmissionId(`WEB-DELAY-${Date.now().toString().slice(-4)}`);
-                  setWhPhone('0918223344');
-                  setWhCompany('Bệnh viện Đa khoa Tỉnh');
-                  setWhGclid(`EAIaIQobChMI_delayed_${Date.now().toString().slice(-4)}`);
-                  setWhUtmSource('');
-                  setWhUtmCampaign('');
-                }}
-                className="px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold hover:bg-amber-100"
-              >
-                2. GCLID trễ Campaign (Chờ đồng bộ tra lại)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setWhWebsite('manhinhled.net.vn');
-                  setWhSubmissionId(`WEB-BR4-${Date.now().toString().slice(-4)}`);
-                  setWhPhone('0987654321');
-                  setWhCompany('Trung tâm Hội nghị Quốc tế');
-                  setWhGclid(`EAIaIQobChMI_br4_${Date.now().toString().slice(-4)}`);
-                  setWhUtmSource('facebook');
-                  setWhUtmCampaign('fb_retargeting_q4');
-                }}
-                className="px-3 py-1.5 rounded-lg bg-purple-50 border border-purple-200 text-purple-900 text-xs font-semibold hover:bg-purple-100"
-              >
-                3. UTM lệch GCLID
-              </button>
-            </div>
-            <form
-              onSubmit={(e) => void handleSimulateWebhook(e)}
-              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3"
-            >
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">Website nguồn</label>
-                <select
-                  value={whWebsite}
-                  onChange={(e) => setWhWebsite(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200 text-sm"
-                >
-                  <option value="toantrung.com.vn">toantrung.com.vn</option>
-                  <option value="bangled.vn">bangled.vn</option>
-                  <option value="manhinhled.net.vn">manhinhled.net.vn</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">
-                  Mã sự kiện (externalSubmissionId)
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={whSubmissionId}
-                  onChange={(e) => setWhSubmissionId(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200 font-mono text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">SĐT khách hàng *</label>
-                <input
-                  type="text"
-                  required
-                  value={whPhone}
-                  onChange={(e) => setWhPhone(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200 text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">
-                  Email (Bắt buộc với Form Web) *
-                </label>
-                <input
-                  type="email"
-                  required
-                  value={whEmail}
-                  onChange={(e) => setWhEmail(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200 text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">Tên công ty</label>
-                <input
-                  type="text"
-                  value={whCompany}
-                  onChange={(e) => setWhCompany(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200 text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">gclid (tùy chọn)</label>
-                <input
-                  type="text"
-                  value={whGclid}
-                  onChange={(e) => setWhGclid(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200 font-mono text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">utm_campaign</label>
-                <input
-                  type="text"
-                  value={whUtmCampaign}
-                  onChange={(e) => setWhUtmCampaign(e.target.value)}
-                  className="w-full h-9 px-3 rounded-xl border border-slate-200 font-mono text-sm"
-                />
-              </div>
-              <div className="flex items-end">
-                <button
-                  type="submit"
-                  disabled={busy}
-                  className="w-full h-9 px-4 rounded-xl bg-brand hover:bg-brand-deep text-white text-sm font-bold inline-flex items-center justify-center gap-1.5"
-                >
-                  <Send className="w-4 h-4" />
-                  <span>Gửi Webhook Intake</span>
-                </button>
-              </div>
-            </form>
-          </div>
-
-          {/* Bảng điều khiển 5 Tác vụ Nền (Background Workers) & Ma trận Kết nối API Thật/Giả lập */}
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
-            {/* Cột trái: Điều khiển 5 Worker Jobs */}
-            <div className="xl:col-span-7 bg-white border border-slate-200 rounded-2xl p-5 shadow-card space-y-4">
+          {/* Bảng điều khiển 5 Tác vụ Nền (Background Workers) */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                 <div>
                   <h2 className="font-display font-bold text-base text-ink">
@@ -983,7 +832,7 @@ export function TrackingWorkspace() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
                 {[
                   {
                     code: 'D3_SYNC_FULL' as const,
@@ -1067,44 +916,6 @@ export function TrackingWorkspace() {
                   </div>
                 </div>
               )}
-            </div>
-
-            {/* Cột phải: Ma trận Kết nối API Thật / Giả lập */}
-            <div className="xl:col-span-5 bg-white border border-slate-200 rounded-2xl p-5 shadow-card space-y-4">
-              <div className="border-b border-slate-100 pb-3">
-                <h2 className="font-display font-bold text-base text-ink">
-                  Ma trận Trạng thái Kết nối Tài nguyên Công ty (Dual-Mode Adapters)
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Hệ thống tự động chuyển từ <strong>Mô phỏng an toàn</strong> sang <strong>Kết nối thật (Live API)</strong> ngay khi cấu hình khóa kết nối
-                </p>
-              </div>
-
-              <div className="space-y-2.5">
-                {(data.adapterMatrix || []).map((item) => (
-                  <div
-                    key={item.code}
-                    className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 space-y-1"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <strong className="text-sm text-slate-900 font-bold">{item.name}</strong>
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full text-xs font-bold shrink-0 ${item.mode === 'LIVE_CONNECTED'
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                            : 'bg-amber-100 text-amber-900 border border-amber-300'
-                          }`}
-                      >
-                        {item.mode === 'LIVE_CONNECTED' ? '● Live API' : '◐ Mô phỏng (Chờ cấp Key)'}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600">{item.description}</p>
-                    <div className="text-xs text-slate-400 font-mono">
-                      Biến môi trường: {item.envKeysRequired.join(', ')}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         </>
       )}
