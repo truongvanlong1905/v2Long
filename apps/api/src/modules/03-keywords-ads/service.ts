@@ -292,7 +292,7 @@ export async function listKeywordsAndArticlesForUser(user: SessionUserDto): Prom
       topicCluster: 'Giải pháp Màn hình LED & Bảng điện tử',
       searchIntent: 'COMMERCIAL',
       targetWebsite: detectedSite,
-      cachedSearchVolume: k.cachedSearchVolume ?? 1000,
+      cachedSearchVolume: k.cachedSearchVolume ?? 0,
       cachedAdsClicks: k.cachedAdsClicks ?? 0,
       cachedOrganicClicks: k.cachedOrganicClicks ?? 0,
       cachedAvgPosition: k.cachedAvgPosition,
