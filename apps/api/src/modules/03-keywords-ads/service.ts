@@ -168,21 +168,23 @@ export async function listKeywordsAndArticlesForUser(user: SessionUserDto): Prom
       ['google_ads', 'facebook', 'facebook_ads'].includes(m.platform),
   );
 
-  const totalImpressions = adsMetrics.reduce((sum, m) => sum + m.impressions, 0);
-  const totalClicks = adsMetrics.reduce((sum, m) => sum + m.clicks, 0);
+  const hasAdsMetrics = adsMetrics.length > 0;
+  const totalImpressions = hasAdsMetrics ? adsMetrics.reduce((sum, m) => sum + m.impressions, 0) : 0;
+  const totalClicks = hasAdsMetrics ? adsMetrics.reduce((sum, m) => sum + m.clicks, 0) : 0;
   const totalSpendMicros = adsMetrics.reduce((sum, m) => sum + m.spendMicros, 0n);
-  const totalSpendVnd = Number(totalSpendMicros / 1_000_000n);
-  const totalConversions = adsMetrics.reduce(
-    (sum, m) => sum + Number(m.conversionsMicros / 1_000_000n),
-    0,
-  );
+  const totalSpendVnd = hasAdsMetrics ? Number(totalSpendMicros / 1_000_000n) : 0;
+  const totalConversions = hasAdsMetrics
+    ? adsMetrics.reduce((sum, m) => sum + Number(m.conversionsMicros / 1_000_000n), 0)
+    : 0;
   const avgCtrPct =
-    totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) + '%' : '0.00%';
+    hasAdsMetrics && totalImpressions > 0
+      ? ((totalClicks / totalImpressions) * 100).toFixed(2) + '%'
+      : '—';
   const cplVndText =
-    totalConversions > 0
+    hasAdsMetrics && totalConversions > 0
       ? Math.round(totalSpendVnd / totalConversions).toLocaleString('vi-VN') + ' ₫'
-      : 'Chưa có';
-  const totalSpendVndText = totalSpendVnd.toLocaleString('vi-VN') + ' ₫';
+      : '—';
+  const totalSpendVndText = hasAdsMetrics ? totalSpendVnd.toLocaleString('vi-VN') + ' ₫' : '—';
 
   const kpis = {
     totalImpressions,

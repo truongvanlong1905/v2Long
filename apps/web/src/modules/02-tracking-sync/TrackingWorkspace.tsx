@@ -78,29 +78,37 @@ export function TrackingWorkspace() {
   const [reconcileNotes, setReconcileNotes] = useState<Record<number, string>>({});
   const [realtimePolling, setRealtimePolling] = useState<boolean>(false);
   const [lastPolledAt, setLastPolledAt] = useState<Date>(new Date());
-  const inFlightRef = useRef<boolean>(false);
+  const requestIdRef = useRef<number>(0);
+  const activePeriodRef = useRef<number>(periodDays);
+  activePeriodRef.current = periodDays;
   const dataRef = useRef<ExtendedTrackingDashboardDto | null>(null);
   dataRef.current = data;
 
   const fetchDashboard = useCallback(async (forceFresh = false) => {
-    if (inFlightRef.current) return;
-    inFlightRef.current = true;
+    const thisRequestId = ++requestIdRef.current;
+    const requestedPeriod = periodDays;
     setLoading(!dataRef.current);
     setRealtimePolling(true);
     setErrorMsg(null);
     try {
       const res = await apiRequest<ExtendedTrackingDashboardDto>(
-        `/api/v1/tracking?periodDays=${periodDays}`,
+        `/api/v1/tracking?periodDays=${requestedPeriod}`,
         { skipCache: forceFresh },
       );
-      setData(res);
-      setLastPolledAt(new Date());
+      // Guard against race condition: only apply if this is still the active request and active period filter
+      if (thisRequestId === requestIdRef.current && requestedPeriod === activePeriodRef.current) {
+        setData(res);
+        setLastPolledAt(new Date());
+      }
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Không thể tải dữ liệu Tracking.');
+      if (thisRequestId === requestIdRef.current) {
+        setErrorMsg(err instanceof Error ? err.message : 'Không thể tải dữ liệu Tracking.');
+      }
     } finally {
-      inFlightRef.current = false;
-      setLoading(false);
-      setRealtimePolling(false);
+      if (thisRequestId === requestIdRef.current) {
+        setLoading(false);
+        setRealtimePolling(false);
+      }
     }
   }, [periodDays]);
 

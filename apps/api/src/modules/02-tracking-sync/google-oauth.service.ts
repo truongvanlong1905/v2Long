@@ -700,6 +700,22 @@ export async function getValidAccessToken(): Promise<string | null> {
   return conn.accessToken;
 }
 
+export const ALLOWED_COMPANY_GA4_PROPERTY_IDS = [
+  '512879968', // toantrung.com.vn
+  '509190194', // manhinhled.net.vn
+  '538179128', // bangled.vn
+  '508951192', // Toàn Trung - Bảng điện tử
+];
+
+export const ALLOWED_COMPANY_GSC_SITES = [
+  'https://toantrung.com.vn/',
+  'sc-domain:toantrung.com.vn',
+  'https://manhinhled.net.vn/',
+  'sc-domain:manhinhled.net.vn',
+  'https://bangled.vn/',
+  'sc-domain:bangled.vn',
+];
+
 /**
  * FULL SYNC ACROSS ALL MODULES (02, 03, 04)
  * Called during manual sync button, OAuth callback, or scheduled worker slots (02:00, 11:00, 17:00)
@@ -717,12 +733,12 @@ export async function syncAllGoogleDataAcrossModules(slot: 'FULL_0200' | 'LIGHT_
   let realGa4Count = 0;
   let realScCount = 0;
 
-  let ga4Outcome: { success: boolean; synced: number; error?: string } = {
+  let ga4Outcome: { success: boolean; synced: number; isPartial?: boolean; isEmpty?: boolean; error?: string } = {
     success: false,
     synced: 0,
     error: 'Chưa cấu hình hoặc thiếu token',
   };
-  let scOutcome: { success: boolean; synced: number; error?: string } = {
+  let scOutcome: { success: boolean; synced: number; isPartial?: boolean; isEmpty?: boolean; error?: string } = {
     success: false,
     synced: 0,
     error: 'Chưa cấu hình hoặc thiếu token',
@@ -756,6 +772,19 @@ export async function syncAllGoogleDataAcrossModules(slot: 'FULL_0200' | 'LIGHT_
       console.warn('Real Search Console sync error:', err);
     }
 
+    // Accumulate consecutive failures correctly from previous logs
+    const lastGa4Log = await prisma.platformSyncLog.findFirst({
+      where: { platform: 'ga4' },
+      orderBy: { startedAt: 'desc' },
+    });
+    const ga4Consecutive = ga4Outcome.success ? 0 : ((lastGa4Log?.consecutiveFailures ?? 0) + 1);
+
+    const lastScLog = await prisma.platformSyncLog.findFirst({
+      where: { platform: 'search_console' },
+      orderBy: { startedAt: 'desc' },
+    });
+    const scConsecutive = scOutcome.success ? 0 : ((lastScLog?.consecutiveFailures ?? 0) + 1);
+
     // Log sync execution separately per provider to maintain truthful status
     await prisma.platformSyncLog.create({
       data: {
@@ -767,7 +796,7 @@ export async function syncAllGoogleDataAcrossModules(slot: 'FULL_0200' | 'LIGHT_
         recordsSynced: realGa4Count,
         status: ga4Outcome.success ? 'success' : 'failed',
         errorMessage: ga4Outcome.success ? null : (ga4Outcome.error?.slice(0, 500) || 'Lỗi không xác định'),
-        consecutiveFailures: ga4Outcome.success ? 0 : 1,
+        consecutiveFailures: ga4Consecutive,
         startedAt: new Date(),
         completedAt: new Date(),
       },
@@ -783,7 +812,7 @@ export async function syncAllGoogleDataAcrossModules(slot: 'FULL_0200' | 'LIGHT_
         recordsSynced: realScCount,
         status: scOutcome.success ? 'success' : 'failed',
         errorMessage: scOutcome.success ? null : (scOutcome.error?.slice(0, 500) || 'Lỗi không xác định'),
-        consecutiveFailures: scOutcome.success ? 0 : 1,
+        consecutiveFailures: scConsecutive,
         startedAt: new Date(),
         completedAt: new Date(),
       },
@@ -796,25 +825,49 @@ export async function syncAllGoogleDataAcrossModules(slot: 'FULL_0200' | 'LIGHT_
   // 7. Refresh Module 03 Keyword & Ads Derived Cache
   await refreshKeywordDerivedCacheFromCanonicalMetrics({ force: true });
 
-  // 8. Update connection timestamps: record attempt time always, lastSyncAt ONLY if at least one provider succeeded
+  // 8. Update connection timestamps: record attempt time always, lastSyncAt ONLY per successful provider
   if (conn) {
     (conn as any).lastAttemptAt = new Date().toISOString();
+    if (ga4Outcome.success) {
+      (conn as any).ga4LastSyncAt = new Date().toISOString();
+      (conn as any).ga4LastStatus = ga4Outcome.isPartial ? 'partial' : 'success';
+      (conn as any).ga4LastError = null;
+    } else {
+      (conn as any).ga4LastStatus = 'failed';
+      (conn as any).ga4LastError = ga4Outcome.error || 'Thất bại';
+    }
+
+    if (scOutcome.success) {
+      (conn as any).scLastSyncAt = new Date().toISOString();
+      (conn as any).scLastStatus = scOutcome.isPartial ? 'partial' : 'success';
+      (conn as any).scLastError = null;
+    } else {
+      (conn as any).scLastStatus = 'failed';
+      (conn as any).scLastError = scOutcome.error || 'Thất bại';
+    }
+
     if (ga4Outcome.success || scOutcome.success) {
       conn.lastSyncAt = new Date().toISOString();
     }
     await saveGoogleConnection(conn);
   }
 
+  const overallSuccess = ga4Outcome.success || scOutcome.success;
+
   return {
-    success: ga4Outcome.success || scOutcome.success,
+    success: overallSuccess,
     slot,
     syncedRecords,
     realGa4Count,
     realScCount,
-    ga4Status: ga4Outcome.success ? 'success' : 'failed',
-    scStatus: scOutcome.success ? 'success' : 'failed',
+    ga4Status: ga4Outcome.success ? (ga4Outcome.isPartial ? 'partial' : 'success') : 'failed',
+    scStatus: scOutcome.success ? (scOutcome.isPartial ? 'partial' : 'success') : 'failed',
+    ga4Error: ga4Outcome.success ? null : ga4Outcome.error,
+    scError: scOutcome.success ? null : scOutcome.error,
     gclidResolved: gclidResult.resolved,
     lastSyncAt: conn?.lastSyncAt || null,
+    ga4LastSyncAt: (conn as any)?.ga4LastSyncAt || null,
+    scLastSyncAt: (conn as any)?.scLastSyncAt || null,
     connectionEmail: conn?.connectedEmail || null,
     isSandboxDemo: Boolean(conn?.isSandboxDemo),
   };
@@ -833,7 +886,7 @@ async function syncRealGoogleAnalytics(
   token: string,
   conn: StoredGoogleConnection | null,
   windowDays = 30,
-): Promise<{ success: boolean; synced: number; error?: string }> {
+): Promise<{ success: boolean; synced: number; isPartial?: boolean; isEmpty?: boolean; error?: string }> {
   let synced = 0;
   const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -861,19 +914,40 @@ async function syncRealGoogleAnalytics(
 
   const allProps = adminData.accountSummaries?.flatMap((a) => a.propertySummaries || []) || [];
 
-  // Scope filtering: only synchronize company properties or explicitly selected property
-  const companyKeywords = ['toantrung', 'toan trung', 'manhinhled', 'bangled'];
-  const properties = allProps.filter((p) => {
-    const propId = p.property.replace('properties/', '');
-    if (conn?.selectedGa4PropertyId && conn.selectedGa4PropertyId === propId) return true;
-    const lowerName = (p.displayName || '').toLowerCase();
-    return companyKeywords.some((k) => lowerName.includes(k));
-  });
+  // Scope enforcement: Synchronize ONLY explicitly authorized company properties
+  let targetProps: Array<{ property: string; displayName: string }> = [];
 
-  const targetProps = properties.length > 0 ? properties : allProps.slice(0, 5);
+  if (conn?.selectedGa4PropertyId) {
+    const matched = allProps.find((p) => p.property.replace('properties/', '') === conn.selectedGa4PropertyId);
+    if (!matched) {
+      return {
+        success: false,
+        synced: 0,
+        error: `Thuộc tính GA4 được chọn (ID: ${conn.selectedGa4PropertyId}) không tìm thấy trong tài khoản Google được cấp quyền.`,
+      };
+    }
+    targetProps = [matched];
+  } else {
+    targetProps = allProps.filter((p) => {
+      const propId = p.property.replace('properties/', '');
+      return ALLOWED_COMPANY_GA4_PROPERTY_IDS.includes(propId);
+    });
+
+    if (targetProps.length === 0) {
+      return {
+        success: false,
+        synced: 0,
+        error: 'Không tìm thấy thuộc tính GA4 nào thuộc danh sách cho phép của công ty Toàn Trung trong tài khoản này.',
+      };
+    }
+  }
+
+  const propOutcomes: Array<{ propId: string; ok: boolean; count: number; error?: string }> = [];
 
   for (const prop of targetProps) {
     const propId = prop.property.replace('properties/', '');
+    let propSynced = 0;
+    let propError: string | undefined;
 
     // 1. Query daily account metrics with dimension "date" so daily facts represent their actual date
     try {
@@ -895,7 +969,10 @@ async function syncRealGoogleAnalytics(
         }),
       });
 
-      if (reportResp.ok) {
+      if (!reportResp.ok) {
+        const errText = await reportResp.text();
+        propError = `HTTP ${reportResp.status}: ${errText.slice(0, 150)}`;
+      } else {
         const repData = (await reportResp.json()) as {
           rows?: Array<{
             dimensionValues: Array<{ value: string }>;
@@ -924,6 +1001,7 @@ async function syncRealGoogleAnalytics(
             avgTimeOnPageSec: Math.round(avgTime * 10) / 10,
             isFinalized: false,
           });
+          propSynced++;
           synced++;
         }
 
@@ -932,69 +1010,154 @@ async function syncRealGoogleAnalytics(
         }
       }
     } catch (err) {
-      console.warn(`GA4 property ${propId} report error:`, err);
+      propError = err instanceof Error ? err.message : 'Lỗi kết nối GA4 Data API';
     }
 
-    // 2. Query daily page-level report for top landing pages
-    try {
-      const pageResp = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propId}:runReport`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          dateRanges: [{ startDate: `${windowDays}daysAgo`, endDate: 'today' }],
-          dimensions: [{ name: 'date' }, { name: 'pagePath' }],
-          metrics: [
-            { name: 'screenPageViews' },
-            { name: 'userEngagementDuration' },
-          ],
-          limit: 100,
-        }),
-      });
+    // 2. Query period-level deduplicated unique users (no date dimension) to avoid summing daily users
+    if (!propError) {
+      try {
+        const periodResp = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propId}:runReport`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            dateRanges: [{ startDate: `${windowDays}daysAgo`, endDate: 'today' }],
+            metrics: [
+              { name: 'activeUsers' },
+              { name: 'screenPageViews' },
+              { name: 'eventCount' },
+            ],
+          }),
+        });
 
-      if (pageResp.ok) {
-        const pageData = (await pageResp.json()) as {
-          rows?: Array<{
-            dimensionValues: Array<{ value: string }>;
-            metricValues: Array<{ value: string }>;
-          }>;
-        };
-        for (const pRow of pageData.rows || []) {
-          const dateVal = pRow.dimensionValues?.[0]?.value || '';
-          if (!dateVal || dateVal.length !== 8) continue;
-          const metricDate = `${dateVal.slice(0, 4)}-${dateVal.slice(4, 6)}-${dateVal.slice(6, 8)}`;
-          const path = pRow.dimensionValues?.[1]?.value || '/';
-          const views = parseInt(pRow.metricValues?.[0]?.value || '0', 10);
-          const dur = parseFloat(pRow.metricValues?.[1]?.value || '0');
+        if (periodResp.ok) {
+          const pData = (await periodResp.json()) as {
+            rows?: Array<{
+              metricValues: Array<{ value: string }>;
+            }>;
+          };
+          const periodRow = pData.rows?.[0];
+          if (periodRow) {
+            const periodUsers = parseInt(periodRow.metricValues?.[0]?.value || '0', 10);
+            const periodViews = parseInt(periodRow.metricValues?.[1]?.value || '0', 10);
+            const periodEvents = parseInt(periodRow.metricValues?.[2]?.value || '0', 10);
 
-          await upsertPlatformMetricIdempotent(prisma, {
-            platform: 'ga4',
-            accountPropertyId: propId,
-            metricDate,
-            grain: 'page',
-            pageUrlRaw: `https://${prop.displayName.toLowerCase().replace(/[^a-z0-9.-]/g, '')}${path}`,
-            pageViews: views,
-            avgTimeOnPageSec: views > 0 ? Math.round((dur / views) * 10) / 10 : 0,
-            isFinalized: false,
-          });
-          synced++;
+            // Store period-level deduplicated snapshot safely under grain: 'account' with distinct campaignExternalId
+            await upsertPlatformMetricIdempotent(prisma, {
+              platform: 'ga4',
+              accountPropertyId: propId,
+              metricDate: todayStr,
+              grain: 'account',
+              campaignExternalId: 'PERIOD_SNAPSHOT',
+              clicks: periodUsers, // Deduplicated unique users for the entire period
+              impressions: periodEvents,
+              pageViews: periodViews,
+              isFinalized: false,
+            });
+            propSynced++;
+            synced++;
+          }
         }
+      } catch {
+        // non-fatal period snapshot query
       }
-    } catch {
-      // non-fatal
     }
+
+    // 3. Query daily page-level report for top landing pages
+    if (!propError) {
+      try {
+        const pageResp = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propId}:runReport`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            dateRanges: [{ startDate: `${windowDays}daysAgo`, endDate: 'today' }],
+            dimensions: [{ name: 'date' }, { name: 'pagePath' }],
+            metrics: [
+              { name: 'screenPageViews' },
+              { name: 'userEngagementDuration' },
+            ],
+            limit: 100,
+          }),
+        });
+
+        if (pageResp.ok) {
+          const pageData = (await pageResp.json()) as {
+            rows?: Array<{
+              dimensionValues: Array<{ value: string }>;
+              metricValues: Array<{ value: string }>;
+            }>;
+          };
+          for (const pRow of pageData.rows || []) {
+            const dateVal = pRow.dimensionValues?.[0]?.value || '';
+            if (!dateVal || dateVal.length !== 8) continue;
+            const metricDate = `${dateVal.slice(0, 4)}-${dateVal.slice(4, 6)}-${dateVal.slice(6, 8)}`;
+            const path = pRow.dimensionValues?.[1]?.value || '/';
+            const views = parseInt(pRow.metricValues?.[0]?.value || '0', 10);
+            const dur = parseFloat(pRow.metricValues?.[1]?.value || '0');
+
+            await upsertPlatformMetricIdempotent(prisma, {
+              platform: 'ga4',
+              accountPropertyId: propId,
+              metricDate,
+              grain: 'page',
+              pageUrlRaw: `https://${prop.displayName.toLowerCase().replace(/[^a-z0-9.-]/g, '')}${path}`,
+              pageViews: views,
+              avgTimeOnPageSec: views > 0 ? Math.round((dur / views) * 10) / 10 : 0,
+              isFinalized: false,
+            });
+            propSynced++;
+            synced++;
+          }
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+
+    propOutcomes.push({
+      propId,
+      ok: !propError,
+      count: propSynced,
+      error: propError,
+    });
   }
 
-  return { success: true, synced };
+  const failedProps = propOutcomes.filter((p) => !p.ok);
+  const successProps = propOutcomes.filter((p) => p.ok);
+
+  // If ALL properties failed report requests, return failure! Never swallow and return success!
+  if (successProps.length === 0) {
+    const errDetails = failedProps.map((p) => `${p.propId}: ${p.error}`).join('; ');
+    return {
+      success: false,
+      synced: 0,
+      error: `Tất cả thuộc tính GA4 đều bị lỗi truy vấn báo cáo (${errDetails})`,
+    };
+  }
+
+  // Partial success when some properties failed
+  if (failedProps.length > 0) {
+    return {
+      success: true,
+      synced,
+      isPartial: true,
+      error: `Đồng bộ một phần: ${failedProps.length} thuộc tính bị lỗi (${failedProps.map((p) => p.propId).join(', ')})`,
+    };
+  }
+
+  return { success: true, synced, isEmpty: synced === 0 };
 }
 
 async function syncRealSearchConsole(
   token: string,
   conn: StoredGoogleConnection | null,
   windowDays = 30,
-): Promise<{ success: boolean; synced: number; error?: string }> {
+): Promise<{ success: boolean; synced: number; isPartial?: boolean; isEmpty?: boolean; error?: string }> {
   let synced = 0;
   const todayStr = new Date().toISOString().slice(0, 10);
   const startStr = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -1017,16 +1180,37 @@ async function syncRealSearchConsole(
 
   const allSites = scData.siteEntry || [];
 
-  // Scope filtering: only sync company sites or explicitly selected site
-  const companyDomains = ['toantrung.com.vn', 'manhinhled.net.vn', 'bangled.vn'];
-  const sites = allSites.filter((s) => {
-    if (conn?.selectedGscSiteUrl && conn.selectedGscSiteUrl === s.siteUrl) return true;
-    return companyDomains.some((d) => s.siteUrl.includes(d));
-  });
+  // Scope enforcement: Synchronize ONLY explicitly authorized company sites
+  let targetSites: Array<{ siteUrl: string }> = [];
 
-  const targetSites = sites.length > 0 ? sites : allSites;
+  if (conn?.selectedGscSiteUrl) {
+    const matched = allSites.find((s) => s.siteUrl === conn.selectedGscSiteUrl);
+    if (!matched) {
+      return {
+        success: false,
+        synced: 0,
+        error: `Website Search Console được chọn (${conn.selectedGscSiteUrl}) không tìm thấy trong tài khoản Google được cấp quyền.`,
+      };
+    }
+    targetSites = [matched];
+  } else {
+    targetSites = allSites.filter((s) => ALLOWED_COMPANY_GSC_SITES.includes(s.siteUrl));
+
+    if (targetSites.length === 0) {
+      return {
+        success: false,
+        synced: 0,
+        error: 'Không tìm thấy website nào thuộc danh sách Search Console cho phép của công ty Toàn Trung trong tài khoản này.',
+      };
+    }
+  }
+
+  const siteOutcomes: Array<{ siteUrl: string; ok: boolean; count: number; error?: string }> = [];
 
   for (const site of targetSites) {
+    let siteSynced = 0;
+    let siteError: string | undefined;
+
     // 1. Query daily site performance with dimension "date"
     try {
       const dailyResp = await fetch(
@@ -1046,7 +1230,10 @@ async function syncRealSearchConsole(
         },
       );
 
-      if (dailyResp.ok) {
+      if (!dailyResp.ok) {
+        const errText = await dailyResp.text();
+        siteError = `Daily HTTP ${dailyResp.status}: ${errText.slice(0, 150)}`;
+      } else {
         const dailyData = (await dailyResp.json()) as {
           rows?: Array<{
             keys: string[];
@@ -1070,96 +1257,132 @@ async function syncRealSearchConsole(
             avgPosition: Math.round(row.position * 10) / 10,
             isFinalized: false,
           });
+          siteSynced++;
           synced++;
         }
       }
     } catch (err) {
-      console.warn(`Search Console site ${site.siteUrl} daily query error:`, err);
+      siteError = err instanceof Error ? err.message : 'Lỗi kết nối Search Console Daily';
     }
 
-    // 2. Query top search queries (keywords) for SEO
-    try {
-      const qResp = await fetch(
-        `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(site.siteUrl)}/searchAnalytics/query`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
+    // 2. Query daily keyword facts with dimensions ["date", "query"] so keywords retain their TRUE source date
+    if (!siteError) {
+      try {
+        const qResp = await fetch(
+          `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(site.siteUrl)}/searchAnalytics/query`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              startDate: startStr,
+              endDate: todayStr,
+              dimensions: ['date', 'query'], // Both date and query dimensions
+              rowLimit: 250,
+            }),
           },
-          body: JSON.stringify({
-            startDate: startStr,
-            endDate: todayStr,
-            dimensions: ['query'],
-            rowLimit: 100,
-          }),
-        },
-      );
+        );
 
-      if (qResp.ok) {
-        const qData = (await qResp.json()) as {
-          rows?: Array<{
-            keys: string[];
-            clicks: number;
-            impressions: number;
-            ctr: number;
-            position: number;
-          }>;
-        };
+        if (qResp.ok) {
+          const qData = (await qResp.json()) as {
+            rows?: Array<{
+              keys: string[];
+              clicks: number;
+              impressions: number;
+              ctr: number;
+              position: number;
+            }>;
+          };
 
-        for (const row of qData.rows || []) {
-          const kw = row.keys?.[0];
-          if (!kw) continue;
-          await upsertPlatformMetricIdempotent(prisma, {
-            platform: 'search_console',
-            accountPropertyId: site.siteUrl,
-            metricDate: todayStr,
-            grain: 'keyword',
-            keywordRaw: kw,
-            clicks: row.clicks,
-            impressions: row.impressions,
-            avgPosition: Math.round(row.position * 10) / 10,
-            isFinalized: false,
-          });
-          synced++;
+          for (const row of qData.rows || []) {
+            const rowDate = row.keys?.[0];
+            const kw = row.keys?.[1];
+            if (!rowDate || !kw) continue;
 
-          // Upsert into SeoKeyword table for Module 03 SEO & Keywords
-          try {
-            const norm = kw.toLowerCase().trim();
-            await prisma.seoKeyword.upsert({
-              where: { keywordNorm: norm },
-              update: {
-                cachedSearchVolume: row.impressions,
-                cachedOrganicClicks: row.clicks,
-                cachedAvgPosition: Math.round(row.position * 10) / 10,
-                cacheSourceAccountKey: site.siteUrl,
-                cacheWindowStartDate: startStr,
-                cacheWindowEndDate: todayStr,
-                cacheRefreshedAt: new Date(),
-                trendDirection: row.clicks > 0 ? 'rising' : 'stable',
-              },
-              create: {
-                keyword: kw,
-                keywordNorm: norm,
-                cachedSearchVolume: row.impressions,
-                cachedOrganicClicks: row.clicks,
-                cachedAvgPosition: Math.round(row.position * 10) / 10,
-                cacheSourceAccountKey: site.siteUrl,
-                cacheWindowStartDate: startStr,
-                cacheWindowEndDate: todayStr,
-                cacheRefreshedAt: new Date(),
-                trendDirection: row.clicks > 0 ? 'rising' : 'stable',
-              },
+            // Store daily keyword fact under actual source date!
+            await upsertPlatformMetricIdempotent(prisma, {
+              platform: 'search_console',
+              accountPropertyId: site.siteUrl,
+              metricDate: rowDate, // Actual source date
+              grain: 'keyword',
+              keywordRaw: kw,
+              clicks: row.clicks,
+              impressions: row.impressions,
+              avgPosition: Math.round(row.position * 10) / 10,
+              isFinalized: false,
             });
-          } catch {
-            // non-fatal
+            siteSynced++;
+            synced++;
+
+            // Update SeoKeyword 30-day window cache snapshot
+            try {
+              const norm = kw.toLowerCase().trim();
+              await prisma.seoKeyword.upsert({
+                where: { keywordNorm: norm },
+                update: {
+                  cachedSearchVolume: row.impressions,
+                  cachedOrganicClicks: row.clicks,
+                  cachedAvgPosition: Math.round(row.position * 10) / 10,
+                  cacheSourceAccountKey: site.siteUrl,
+                  cacheWindowStartDate: startStr,
+                  cacheWindowEndDate: todayStr,
+                  cacheRefreshedAt: new Date(),
+                  trendDirection: row.clicks > 0 ? 'rising' : 'stable',
+                },
+                create: {
+                  keyword: kw,
+                  keywordNorm: norm,
+                  cachedSearchVolume: row.impressions,
+                  cachedOrganicClicks: row.clicks,
+                  cachedAvgPosition: Math.round(row.position * 10) / 10,
+                  cacheSourceAccountKey: site.siteUrl,
+                  cacheWindowStartDate: startStr,
+                  cacheWindowEndDate: todayStr,
+                  cacheRefreshedAt: new Date(),
+                  trendDirection: row.clicks > 0 ? 'rising' : 'stable',
+                },
+              });
+            } catch {
+              // non-fatal
+            }
           }
         }
+      } catch {
+        // non-fatal keyword query
       }
-    } catch {
-      // non-fatal
     }
+
+    siteOutcomes.push({
+      siteUrl: site.siteUrl,
+      ok: !siteError,
+      count: siteSynced,
+      error: siteError,
+    });
   }
 
-  return { success: true, synced };
+  const failedSites = siteOutcomes.filter((s) => !s.ok);
+  const successSites = siteOutcomes.filter((s) => s.ok);
+
+  // If ALL sites failed report requests, return failure!
+  if (successSites.length === 0) {
+    const errDetails = failedSites.map((s) => `${s.siteUrl}: ${s.error}`).join('; ');
+    return {
+      success: false,
+      synced: 0,
+      error: `Tất cả website Search Console đều bị lỗi truy vấn báo cáo (${errDetails})`,
+    };
+  }
+
+  if (failedSites.length > 0) {
+    return {
+      success: true,
+      synced,
+      isPartial: true,
+      error: `Đồng bộ một phần: ${failedSites.length} website Search Console bị lỗi (${failedSites.map((s) => s.siteUrl).join(', ')})`,
+    };
+  }
+
+  return { success: true, synced, isEmpty: synced === 0 };
 }

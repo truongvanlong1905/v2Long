@@ -30,7 +30,14 @@ import {
   selectAutoAssignedSales,
 } from '../01-leads/service';
 import { refreshKeywordDerivedCacheFromCanonicalMetrics } from '../03-keywords-ads/service';
-import { syncAllGoogleDataAcrossModules } from './google-oauth.service';
+import {
+  syncAllGoogleDataAcrossModules,
+  ALLOWED_COMPANY_GA4_PROPERTY_IDS,
+  ALLOWED_COMPANY_GSC_SITES,
+} from './google-oauth.service';
+import { getCanonicalDateRange } from '../../core/reporting-dates';
+
+export { ALLOWED_COMPANY_GA4_PROPERTY_IDS, ALLOWED_COMPANY_GSC_SITES };
 
 export function resolveAttributionBySignals(input: {
   provider: 'WEBSITE_FORM' | 'GOOGLE_LEAD_FORM';
@@ -480,9 +487,10 @@ function formatRatioPct(numerator: number, denominator: number): string {
 }
 
 export async function getTrackingDashboardData(periodDays = 30): Promise<TrackingDashboardDto> {
-  const cutoffDate = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000);
-  const cutoffDateStr = cutoffDate.toISOString().slice(0, 10);
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const dateRange = getCanonicalDateRange(periodDays);
+  const cutoffDate = dateRange.startDateTime;
+  const cutoffDateStr = dateRange.startDateStr;
+  const todayStr = dateRange.endDateStr;
 
   const [leads, campaigns, syncLogs, reconciliations, webhookErrors] = await Promise.all([
     prisma.lead.findMany({
@@ -812,25 +820,51 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
     // ignore
   }
 
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const windowDays = Math.max(1, periodDays || 30);
-  const windowStartDate = new Date(Date.now() - (windowDays - 1) * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
+  const dateRange = getCanonicalDateRange(periodDays);
+  const windowStartDate = dateRange.startDateStr;
+  const todayStr = dateRange.endDateStr;
 
-  // Query verified GA4 metrics within the requested period window
-  const ga4Metrics = await prisma.platformDailyMetric.findMany({
-    where: {
-      platform: 'ga4',
-      metricDate: {
-        gte: windowStartDate,
-        lte: todayStr,
+  // Retrieve sync logs separately for GA4 and Search Console to maintain honest provenance
+  const [ga4Logs, scLogs, ga4Metrics, scMetrics] = await Promise.all([
+    prisma.platformSyncLog.findMany({
+      where: { platform: 'ga4' },
+      orderBy: { startedAt: 'desc' },
+      take: 10,
+    }),
+    prisma.platformSyncLog.findMany({
+      where: { platform: 'search_console' },
+      orderBy: { startedAt: 'desc' },
+      take: 10,
+    }),
+    prisma.platformDailyMetric.findMany({
+      where: {
+        platform: 'ga4',
+        metricDate: {
+          gte: windowStartDate,
+          lte: todayStr,
+        },
       },
-    },
-    orderBy: { metricDate: 'desc' },
-  });
+      orderBy: { metricDate: 'desc' },
+    }),
+    prisma.platformDailyMetric.findMany({
+      where: {
+        platform: 'search_console',
+        metricDate: {
+          gte: windowStartDate,
+          lte: todayStr,
+        },
+      },
+      orderBy: { metricDate: 'desc' },
+    }),
+  ]);
 
-  // Discover properties from connection accessibleResources or approved company properties
+  const latestGa4Success = ga4Logs.find((l) => l.status === 'success');
+  const latestGa4Log = ga4Logs[0];
+
+  const latestScSuccess = scLogs.find((l) => l.status === 'success');
+  const latestScLog = scLogs[0];
+
+  // Discover properties strictly constrained to authorized company property IDs
   const defaultProps = [
     { id: '512879968', name: 'toantrung.com.vn', domain: 'toantrung.com.vn', url: 'https://toantrung.com.vn' },
     { id: '509190194', name: 'manhinhled.net.vn', domain: 'manhinhled.net.vn', url: 'https://manhinhled.net.vn' },
@@ -844,45 +878,71 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
 
   const ga4PropertiesDefs =
     discoveredGa4Resources.length > 0
-      ? discoveredGa4Resources.map((r) => {
-          const cleanName = r.name.replace(/^GA4:\s*/i, '').trim();
-          const matchedDefault = defaultProps.find((d) => d.id === r.id);
-          return {
-            id: r.id,
-            name: cleanName,
-            domain: matchedDefault?.domain || cleanName,
-            url: matchedDefault?.url || `https://${cleanName}`,
-          };
-        })
+      ? discoveredGa4Resources
+          .filter((r) => ALLOWED_COMPANY_GA4_PROPERTY_IDS.includes(r.id))
+          .map((r) => {
+            const cleanName = r.name.replace(/^GA4:\s*/i, '').trim();
+            const matchedDefault = defaultProps.find((d) => d.id === r.id);
+            return {
+              id: r.id,
+              name: cleanName,
+              domain: matchedDefault?.domain || cleanName,
+              url: matchedDefault?.url || `https://${cleanName}`,
+            };
+          })
       : defaultProps;
 
   const ga4Properties = ga4PropertiesDefs.map((def) => {
     const propMetrics = ga4Metrics.filter((m) => m.accountPropertyId === def.id);
-    const accountRows = propMetrics.filter((m) => m.grain === 'account');
+    const accountRows = propMetrics.filter((m) => m.grain === 'account' && m.campaignExternalId !== 'PERIOD_SNAPSHOT');
     const pageRows = propMetrics.filter((m) => m.grain === 'page');
+    const periodSnapshot = propMetrics.find((m) => m.grain === 'account' && m.campaignExternalId === 'PERIOD_SNAPSHOT' && m.metricDate === todayStr);
 
     const hasAccountRows = accountRows.length > 0;
     const totalViews = hasAccountRows ? accountRows.reduce((sum, r) => sum + r.pageViews, 0) : null;
     const totalEvents = hasAccountRows ? accountRows.reduce((sum, r) => sum + r.impressions, 0) : null;
-    // For 1 day (today), activeUsers is the exact daily unique active users.
-    // For multi-day periods, summing daily activeUsers is non-deduplicated (same visitor on multiple days counted multiple times).
-    const activeUsers = hasAccountRows ? accountRows.reduce((sum, r) => sum + r.clicks, 0) : null;
 
-    let status: 'HAS_DATA' | 'CONFIRMED_ZERO' | 'NOT_SYNCED' | 'NOT_CONNECTED' = 'NOT_SYNCED';
+    // Multi-day deduplication handling:
+    // 1. For 1 day (today), daily activeUsers is the exact unique active users.
+    // 2. For multi-day periods, if periodSnapshot exists from provider, that is the true deduplicated count.
+    // 3. Otherwise, do NOT present the daily sum as period unique users. Keep sumDailyActiveUsers distinct.
+    const sumDailyActiveUsers = hasAccountRows ? accountRows.reduce((sum, r) => sum + r.clicks, 0) : null;
+    const deduplicatedPeriodUsers = periodSnapshot ? periodSnapshot.clicks : null;
+
+    let activeUsers: number | null = null;
+    if (periodDays <= 1) {
+      activeUsers = sumDailyActiveUsers;
+    } else if (deduplicatedPeriodUsers !== null) {
+      activeUsers = deduplicatedPeriodUsers;
+    } else {
+      activeUsers = null; // Honest null when multi-day deduplicated users not yet queried
+    }
+
+    let status: 'HAS_DATA' | 'CONFIRMED_ZERO' | 'FAILED_SYNC' | 'STALE_DATA_WITH_ERROR' | 'LEGACY_UNVERIFIED' | 'NOT_SYNCED' | 'NOT_CONNECTED' = 'NOT_SYNCED';
     let statusMessage = 'Chưa có bản ghi đồng bộ cho khoảng thời gian này (Bấm Đồng bộ ngay)';
 
     if (!conn?.connected) {
       status = 'NOT_CONNECTED';
       statusMessage = 'Chưa liên kết tài khoản Google OAuth';
+    } else if (latestGa4Log && latestGa4Log.status === 'failed') {
+      status = hasAccountRows ? 'STALE_DATA_WITH_ERROR' : 'FAILED_SYNC';
+      statusMessage = `Đồng bộ thất bại: ${latestGa4Log.errorMessage || 'Lỗi GA4 API'}`;
     } else if (hasAccountRows) {
-      if ((totalViews ?? 0) === 0 && (activeUsers ?? 0) === 0) {
+      // Check if all rows are historical aggregate snapshots on 2026-11-11
+      const isHistoricalSnapshotOnly = accountRows.every((r) => r.metricDate === '2026-11-11') && dateRange.totalCalendarDays > 1;
+      if (isHistoricalSnapshotOnly) {
+        status = 'LEGACY_UNVERIFIED';
+        statusMessage = 'Bản ghi lịch sử (Chưa đối soát qua phiên đồng bộ theo ngày)';
+      } else if ((totalViews ?? 0) === 0 && (sumDailyActiveUsers ?? 0) === 0) {
         status = 'CONFIRMED_ZERO';
-        statusMessage = 'Xác nhận từ GA4: 0 lượt truy cập trong kỳ';
+        statusMessage = 'Xác minh từ GA4 API: 0 lượt truy cập trong kỳ';
       } else {
         status = 'HAS_DATA';
         statusMessage = periodDays <= 1
-          ? 'Xác minh từ GA4: Người dùng hoạt động thực tế trong ngày'
-          : 'Xác minh từ GA4: Lượt người dùng hoạt động cộng dồn theo ngày (chưa khử trùng lặp đa ngày)';
+          ? 'Xác minh từ GA4 API: Người dùng hoạt động thực tế trong ngày'
+          : deduplicatedPeriodUsers !== null
+            ? 'Xác minh từ GA4 API: Người dùng duy nhất đã khử trùng lặp toàn kỳ'
+            : 'Xác minh từ GA4 API: Đã có số liệu xem trang (Người dùng đa ngày cần khử trùng lặp)';
       }
     }
 
@@ -910,29 +970,21 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
       domain: def.domain,
       url: def.url,
       activeUsers,
+      sumDailyActiveUsers,
+      deduplicatedPeriodUsers,
       pageViews: totalViews,
       eventCount: totalEvents,
       status,
       statusMessage,
       source: `Google Analytics 4 API (property/${def.id})`,
       reportingPeriod: `${windowStartDate} đến ${todayStr}`,
-      lastSyncAt: conn?.lastSyncAt || null,
-      isEstimatedPeriodUsers: periodDays > 1,
+      lastSyncAt: latestGa4Success?.completedAt?.toISOString() || (conn as any)?.ga4LastSyncAt || null,
+      lastAttemptAt: latestGa4Log?.startedAt?.toISOString() || (conn as any)?.lastAttemptAt || null,
+      consecutiveFailures: latestGa4Log?.consecutiveFailures ?? 0,
+      isEstimatedPeriodUsers: periodDays > 1 && deduplicatedPeriodUsers === null,
       isPartialDay: periodDays <= 1,
       topPages,
     };
-  });
-
-  // Query verified Search Console metrics within the requested period window
-  const scMetrics = await prisma.platformDailyMetric.findMany({
-    where: {
-      platform: 'search_console',
-      metricDate: {
-        gte: windowStartDate,
-        lte: todayStr,
-      },
-    },
-    orderBy: { metricDate: 'desc' },
   });
 
   const discoveredScSites: Array<{ id: string; name: string }> = Array.isArray(conn?.accessibleResources)
@@ -941,7 +993,9 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
 
   const sitesDefs =
     discoveredScSites.length > 0
-      ? discoveredScSites.map((s) => s.id)
+      ? discoveredScSites
+          .filter((s) => ALLOWED_COMPANY_GSC_SITES.includes(s.id))
+          .map((s) => s.id)
       : ['https://toantrung.com.vn/', 'https://manhinhled.net.vn/', 'https://bangled.vn/'];
 
   const searchConsoleSites = sitesDefs.map((siteUrl) => {
@@ -957,12 +1011,15 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
       ? siteAccountRows.reduce((sum, r) => sum + r.impressions, 0)
       : null;
 
-    let status: 'HAS_DATA' | 'CONFIRMED_ZERO' | 'KEYWORD_ONLY' | 'NOT_SYNCED' | 'NOT_CONNECTED' = 'NOT_SYNCED';
+    let status: 'HAS_DATA' | 'CONFIRMED_ZERO' | 'KEYWORD_ONLY' | 'FAILED_SYNC' | 'STALE_DATA_WITH_ERROR' | 'NOT_SYNCED' | 'NOT_CONNECTED' = 'NOT_SYNCED';
     let statusMessage = 'Chưa có bản ghi đồng bộ tổng site trong khoảng thời gian này';
 
     if (!conn?.connected) {
       status = 'NOT_CONNECTED';
       statusMessage = 'Chưa liên kết tài khoản Google OAuth';
+    } else if (latestScLog && latestScLog.status === 'failed') {
+      status = hasAccountRows ? 'STALE_DATA_WITH_ERROR' : 'FAILED_SYNC';
+      statusMessage = `Đồng bộ thất bại: ${latestScLog.errorMessage || 'Lỗi Search Console'}`;
     } else if (hasAccountRows) {
       if ((totalClicks ?? 0) === 0 && (totalImpressions ?? 0) === 0) {
         status = 'CONFIRMED_ZERO';
@@ -973,7 +1030,7 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
       }
     } else if (siteKeywordRows.length > 0) {
       status = 'KEYWORD_ONLY';
-      statusMessage = 'Đã có danh sách từ khóa, chưa có bản ghi tổng hợp site theo ngày';
+      statusMessage = 'Đã có danh sách từ khóa theo ngày, chưa có bản ghi tổng hợp site';
     }
 
     // Group keywords
@@ -1007,7 +1064,9 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
       statusMessage,
       source: `Google Search Console API (${siteUrl})`,
       reportingPeriod: `${windowStartDate} đến ${todayStr}`,
-      lastSyncAt: conn?.lastSyncAt || null,
+      lastSyncAt: latestScSuccess?.completedAt?.toISOString() || (conn as any)?.scLastSyncAt || null,
+      lastAttemptAt: latestScLog?.startedAt?.toISOString() || (conn as any)?.lastAttemptAt || null,
+      consecutiveFailures: latestScLog?.consecutiveFailures ?? 0,
       topQueries,
     };
   });

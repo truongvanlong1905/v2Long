@@ -1,5 +1,6 @@
 import { prisma } from '@toantrung/database';
 import { buildStandardXlsxBuffer } from '../../core/export/xlsx-builder';
+import { getCanonicalDateRange, getCustomCanonicalDateRange } from '../../core/reporting-dates';
 import {
   CONTACT_CHANNEL_LABELS,
   PIPELINE_STATUS_LABELS,
@@ -88,29 +89,46 @@ function resolveDateRange(
 ): {
   fromDate: Date;
   toDate: Date;
+  fromDateStr: string;
+  toDateStr: string;
 } {
-  const now = new Date();
-  const toDate = toStr ? new Date(toStr) : new Date(now);
-  toDate.setHours(23, 59, 59, 999);
-
   if (preset === '7d') {
-    const fromDate = new Date(now.getTime() - 7 * 24 * 3600 * 1000);
-    fromDate.setHours(0, 0, 0, 0);
-    return { fromDate, toDate };
+    const range = getCanonicalDateRange(7);
+    return {
+      fromDate: range.startDateTime,
+      toDate: range.endDateTime,
+      fromDateStr: range.startDateStr,
+      toDateStr: range.endDateStr,
+    };
   }
   if (preset === '30d') {
-    const fromDate = new Date(now.getTime() - 30 * 24 * 3600 * 1000);
-    fromDate.setHours(0, 0, 0, 0);
-    return { fromDate, toDate };
+    const range = getCanonicalDateRange(30);
+    return {
+      fromDate: range.startDateTime,
+      toDate: range.endDateTime,
+      fromDateStr: range.startDateStr,
+      toDateStr: range.endDateStr,
+    };
   }
-  if (preset === 'custom' && fromStr) {
-    const fromDate = new Date(fromStr);
-    fromDate.setHours(0, 0, 0, 0);
-    return { fromDate, toDate };
+  if (preset === 'custom' && fromStr && toStr) {
+    const range = getCustomCanonicalDateRange(fromStr, toStr);
+    return {
+      fromDate: range.startDateTime,
+      toDate: range.endDateTime,
+      fromDateStr: range.startDateStr,
+      toDateStr: range.endDateStr,
+    };
   }
 
-  const fromDate = new Date('2025-01-01T00:00:00.000Z');
-  return { fromDate, toDate };
+  // Preset 'all' or fallback
+  const fromDate = new Date('2025-01-01T00:00:00.000+07:00');
+  const nowRange = getCanonicalDateRange(1);
+  return {
+    fromDate,
+    toDate: nowRange.endDateTime,
+    fromDateStr: '2025-01-01',
+    toDateStr: nowRange.endDateStr,
+  };
 }
 
 export async function getScopedReportsDashboard(
@@ -119,9 +137,7 @@ export async function getScopedReportsDashboard(
 ): Promise<ReportsDashboardDto> {
   const parsed = ReportQuerySchema.safeParse(rawQuery ?? {});
   const query = parsed.success ? parsed.data : { preset: '30d' as const };
-  const { fromDate, toDate } = resolveDateRange(query.preset, query.fromDate, query.toDate);
-  const fromDateStr = fromDate.toISOString().slice(0, 10);
-  const toDateStr = toDate.toISOString().slice(0, 10);
+  const { fromDate, toDate, fromDateStr, toDateStr } = resolveDateRange(query.preset, query.fromDate, query.toDate);
   const { scopeRole, scopeDescription } = getScopeInfo(user);
   const anonymized = isAnonymizedViewerRole(user.roleCode);
 
@@ -409,6 +425,7 @@ export async function getScopedReportsDashboard(
     .filter((p) => p.inquiryCount > 0)
     .sort((a, b) => b.inquiryCount - a.inquiryCount);
 
+  const hasAdsMetrics = metrics.length > 0;
   const totalAdsSpendMicros = metrics.reduce(
     (acc, m) => acc + (m.spendMicros ?? 0n),
     0n
@@ -420,7 +437,7 @@ export async function getScopedReportsDashboard(
     ['Google Ads', 'Facebook Ads'].includes(l.tracking?.marketingSource ?? '')
   ).length;
   const cplEffectiveMicros =
-    effectiveLeadsFromAds > 0
+    hasAdsMetrics && effectiveLeadsFromAds > 0
       ? totalAdsSpendMicros / BigInt(effectiveLeadsFromAds)
       : null;
 
@@ -701,7 +718,7 @@ export async function getScopedReportsDashboard(
     productInsights,
     unansweredQuotes,
     marketingSummary: {
-      totalAdsSpend: toMonetaryAmountDto(totalAdsSpendMicros, 'VND', 'micros'),
+      totalAdsSpend: hasAdsMetrics ? toMonetaryAmountDto(totalAdsSpendMicros, 'VND', 'micros') : null,
       platformReportedConversions,
       effectiveLeadsFromAds,
       cplEffective:

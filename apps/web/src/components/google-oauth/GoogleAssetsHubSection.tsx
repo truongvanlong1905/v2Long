@@ -23,7 +23,14 @@ export interface GoogleAssetGa4Property {
   activeUsers: number | null;
   pageViews: number | null;
   eventCount: number | null;
-  status?: 'HAS_DATA' | 'CONFIRMED_ZERO' | 'NOT_SYNCED' | 'NOT_CONNECTED';
+  status?:
+    | 'HAS_DATA'
+    | 'CONFIRMED_ZERO'
+    | 'FAILED_SYNC'
+    | 'STALE_DATA_WITH_ERROR'
+    | 'LEGACY_UNVERIFIED'
+    | 'NOT_SYNCED'
+    | 'NOT_CONNECTED';
   statusMessage?: string;
   source?: string;
   reportingPeriod?: string;
@@ -39,7 +46,14 @@ export interface GoogleAssetSearchConsoleSite {
   totalQueries: number;
   totalClicks: number | null;
   totalImpressions: number | null;
-  status?: 'HAS_DATA' | 'CONFIRMED_ZERO' | 'KEYWORD_ONLY' | 'NOT_SYNCED' | 'NOT_CONNECTED';
+  status?:
+    | 'HAS_DATA'
+    | 'CONFIRMED_ZERO'
+    | 'KEYWORD_ONLY'
+    | 'FAILED_SYNC'
+    | 'STALE_DATA_WITH_ERROR'
+    | 'NOT_SYNCED'
+    | 'NOT_CONNECTED';
   statusMessage?: string;
   source?: string;
   reportingPeriod?: string;
@@ -209,8 +223,11 @@ export function GoogleAssetsHubSection({ hub, periodDays = 30, onSelectPeriod }:
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {hub.ga4.properties.map((prop, idx) => {
               const isSelected = selectedGa4Index === idx;
-              const hasTraffic = (prop.activeUsers ?? 0) > 0;
+              const hasTraffic = (prop.activeUsers ?? (prop as any).sumDailyActiveUsers ?? 0) > 0;
               const isConfirmedZero = prop.status === 'CONFIRMED_ZERO';
+              const isFailedSync = prop.status === 'FAILED_SYNC';
+              const isStaleError = prop.status === 'STALE_DATA_WITH_ERROR';
+              const isLegacySnapshot = prop.status === 'LEGACY_UNVERIFIED';
               const isNotSynced = prop.status === 'NOT_SYNCED';
               const isNotConnected = prop.status === 'NOT_CONNECTED';
 
@@ -229,7 +246,19 @@ export function GoogleAssetsHubSection({ hub, periodDays = 30, onSelectPeriod }:
                     <span className="font-extrabold text-xs sm:text-sm text-slate-800 truncate" title={prop.name}>
                       {prop.name}
                     </span>
-                    {hasTraffic ? (
+                    {isFailedSync ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] bg-red-100 text-red-800 px-2 py-0.5 rounded-full font-bold">
+                        Lỗi đồng bộ
+                      </span>
+                    ) : isStaleError ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] bg-orange-100 text-orange-800 px-2 py-0.5 rounded-full font-bold">
+                        Dữ liệu cũ (Lỗi)
+                      </span>
+                    ) : isLegacySnapshot ? (
+                      <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-medium">
+                        Bản ghi lịch sử
+                      </span>
+                    ) : hasTraffic ? (
                       <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                         GA4 Live
