@@ -141,12 +141,22 @@ export async function listKeywordsAndArticlesForUser(user: SessionUserDto): Prom
       orderBy: { cachedSearchVolume: 'desc' },
     }),
     prisma.campaign.findMany({
+      where: {
+        NOT: [
+          { accountExternalId: { startsWith: 'GA4-' } },
+          { campaignCode: { startsWith: 'ga4_' } },
+        ],
+      },
       orderBy: { id: 'asc' },
     }),
     prisma.platformDailyMetric.findMany({
       where: {
         grain: 'campaign',
         platform: { in: ['google_ads', 'facebook', 'facebook_ads'] },
+        NOT: [
+          { accountPropertyId: { startsWith: 'GA4-' } },
+          { campaignExternalId: { startsWith: 'ga4_' } },
+        ],
       },
       orderBy: { metricDate: 'desc' },
     }),

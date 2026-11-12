@@ -189,6 +189,10 @@ export async function getScopedReportsDashboard(
           gte: fromDateStr,
           lte: toDateStr,
         },
+        NOT: [
+          { accountPropertyId: { startsWith: 'GA4-' } },
+          { campaignExternalId: { startsWith: 'ga4_' } },
+        ],
       },
       include: {
         campaign: {

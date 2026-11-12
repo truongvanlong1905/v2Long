@@ -20,9 +20,16 @@ export interface GoogleAssetGa4Property {
   name: string;
   domain: string;
   url: string;
-  activeUsers: number;
-  pageViews: number;
-  eventCount: number;
+  activeUsers: number | null;
+  pageViews: number | null;
+  eventCount: number | null;
+  status?: 'HAS_DATA' | 'CONFIRMED_ZERO' | 'NOT_SYNCED' | 'NOT_CONNECTED';
+  statusMessage?: string;
+  source?: string;
+  reportingPeriod?: string;
+  lastSyncAt?: string | null;
+  isEstimatedPeriodUsers?: boolean;
+  isPartialDay?: boolean;
   topPages: Array<{ path: string; views: number; avgDurationSec: number }>;
 }
 
@@ -30,8 +37,13 @@ export interface GoogleAssetSearchConsoleSite {
   siteUrl: string;
   domain: string;
   totalQueries: number;
-  totalClicks: number;
-  totalImpressions: number;
+  totalClicks: number | null;
+  totalImpressions: number | null;
+  status?: 'HAS_DATA' | 'CONFIRMED_ZERO' | 'KEYWORD_ONLY' | 'NOT_SYNCED' | 'NOT_CONNECTED';
+  statusMessage?: string;
+  source?: string;
+  reportingPeriod?: string;
+  lastSyncAt?: string | null;
   topQueries: Array<{
     keyword: string;
     clicks: number;
@@ -105,7 +117,7 @@ export function GoogleAssetsHubSection({ hub, periodDays = 30, onSelectPeriod }:
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
                 </span>
-                <span>100% Real Live Stream</span>
+                <span>Dữ liệu GA4 & Search Console thực tế</span>
                 <span className="flex items-end gap-0.5 h-3 ml-0.5">
                   <span className="w-0.5 bg-emerald-300 animate-equalizer-1" />
                   <span className="w-0.5 bg-emerald-300 animate-equalizer-2" />
@@ -197,7 +209,11 @@ export function GoogleAssetsHubSection({ hub, periodDays = 30, onSelectPeriod }:
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {hub.ga4.properties.map((prop, idx) => {
               const isSelected = selectedGa4Index === idx;
-              const hasTraffic = prop.activeUsers > 0;
+              const hasTraffic = (prop.activeUsers ?? 0) > 0;
+              const isConfirmedZero = prop.status === 'CONFIRMED_ZERO';
+              const isNotSynced = prop.status === 'NOT_SYNCED';
+              const isNotConnected = prop.status === 'NOT_CONNECTED';
+
               return (
                 <button
                   key={prop.id}
@@ -216,7 +232,19 @@ export function GoogleAssetsHubSection({ hub, periodDays = 30, onSelectPeriod }:
                     {hasTraffic ? (
                       <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                        Live
+                        GA4 Live
+                      </span>
+                    ) : isConfirmedZero ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
+                        Xác nhận: 0
+                      </span>
+                    ) : isNotSynced ? (
+                      <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-medium">
+                        Chưa đồng bộ
+                      </span>
+                    ) : isNotConnected ? (
+                      <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">
+                        Chưa kết nối
                       </span>
                     ) : (
                       <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">
@@ -229,13 +257,13 @@ export function GoogleAssetsHubSection({ hub, periodDays = 30, onSelectPeriod }:
                     <div>
                       <span className="text-[11px] text-slate-500 block">Người dùng</span>
                       <strong className="text-emerald-700 text-base font-display font-extrabold">
-                        {prop.activeUsers.toLocaleString('vi-VN')}
+                        {prop.activeUsers !== null ? prop.activeUsers.toLocaleString('vi-VN') : '--'}
                       </strong>
                     </div>
                     <div>
                       <span className="text-[11px] text-slate-500 block">Lượt xem</span>
                       <strong className="text-slate-900 text-base font-display font-extrabold">
-                        {prop.pageViews.toLocaleString('vi-VN')}
+                        {prop.pageViews !== null ? prop.pageViews.toLocaleString('vi-VN') : '--'}
                       </strong>
                     </div>
                   </div>
@@ -243,6 +271,20 @@ export function GoogleAssetsHubSection({ hub, periodDays = 30, onSelectPeriod }:
               );
             })}
           </div>
+
+          {/* Traceable Metadata & Explanation */}
+          {currentGa4 && (
+            <div className="text-[11px] text-slate-500 flex flex-wrap items-center justify-between gap-2 px-1">
+              <span>
+                Nguồn: <strong>{currentGa4.source || `GA4 (${currentGa4.id})`}</strong> • Kỳ: <strong>{currentGa4.reportingPeriod || `${periodDays} ngày qua`}</strong> • {currentGa4.statusMessage}
+              </span>
+              {currentGa4.isEstimatedPeriodUsers && (
+                <span className="text-amber-700 italic">
+                  * Lượt người dùng hiển thị là tổng tích lũy daily active users (chưa khử trùng lặp khách ghé lại giữa các ngày)
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Detailed Landing Pages for Selected GA4 Website */}
           {currentGa4 && (
@@ -332,10 +374,14 @@ export function GoogleAssetsHubSection({ hub, periodDays = 30, onSelectPeriod }:
 
           {currentSc && (
             <div className="border border-slate-200 rounded-xl overflow-hidden">
-              <div className="bg-slate-100/80 px-4 py-2.5 flex items-center justify-between text-xs font-semibold text-slate-700">
-                <span>Website: <strong>{currentSc.siteUrl}</strong></span>
+              <div className="bg-slate-100/80 px-4 py-2.5 flex items-center justify-between text-xs font-semibold text-slate-700 flex-wrap gap-2">
+                <span>Website: <strong>{currentSc.siteUrl}</strong> ({currentSc.source || 'Search Console API'})</span>
                 <span className="text-slate-500">
-                  {currentSc.totalQueries} từ khóa • {currentSc.totalClicks} Lượt click • {currentSc.totalImpressions.toLocaleString('vi-VN')} Lượt hiển thị
+                  {currentSc.totalQueries} từ khóa đã crawl • {
+                    currentSc.totalClicks !== null
+                      ? `${currentSc.totalClicks.toLocaleString('vi-VN')} Lượt click • ${(currentSc.totalImpressions ?? 0).toLocaleString('vi-VN')} Lượt hiển thị`
+                      : currentSc.statusMessage || 'Chưa có bản ghi tổng site'
+                  }
                 </span>
               </div>
 
@@ -379,47 +425,61 @@ export function GoogleAssetsHubSection({ hub, periodDays = 30, onSelectPeriod }:
         <div className="p-5 space-y-4">
           <div>
             <h4 className="font-bold text-slate-800 text-sm sm:text-base flex items-center gap-2">
-              <span>Google Trends — Phân Tích Xu Hướng Ngành Hàng Màn Hình LED</span>
+              <TrendingUp className="w-4 h-4 text-slate-600" />
+              <span>Google Trends — Phân Tích Xu Hướng Ngành Hàng</span>
             </h4>
             <p className="text-xs text-slate-500">
-              Đo lường mức độ quan tâm của thị trường Việt Nam đối với các dòng sản phẩm của Công ty Toàn Trung:
+              Trạng thái tích hợp: {hub.googleTrends.marketCluster}
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {hub.googleTrends.topics.map((t, tIdx) => (
-              <div key={tIdx} className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-bold text-sm text-slate-800">{t.topic}</span>
-                  <span
-                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${t.trend === 'rising'
-                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                        : 'bg-blue-100 text-blue-800 border border-blue-300'
-                      }`}
-                  >
-                    {t.trend === 'rising' ? '▲ Tăng trưởng' : '• Ổn định'}
+          {(!hub.googleTrends.topics || hub.googleTrends.topics.length === 0) ? (
+            <div className="p-6 rounded-xl border border-slate-200 bg-slate-50/80 text-center space-y-2">
+              <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-slate-200 text-slate-600 mb-1">
+                <HelpCircle className="w-5 h-5" />
+              </div>
+              <h5 className="font-bold text-sm text-slate-800">Chưa kết nối Google Trends API chính thức</h5>
+              <p className="text-xs text-slate-500 max-w-lg mx-auto">
+                Google không cung cấp REST API công khai cho Google Trends qua xác thực OAuth thông thường. 
+                Hệ thống chỉ báo cáo số liệu thực tế được xác minh từ Google Analytics 4 và Search Console, không tự động sinh dữ liệu xu hướng giả lập.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {hub.googleTrends.topics.map((t, tIdx) => (
+                <div key={tIdx} className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-sm text-slate-800">{t.topic}</span>
+                    <span
+                      className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${t.trend === 'rising'
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                          : 'bg-blue-100 text-blue-800 border border-blue-300'
+                        }`}
+                    >
+                      {t.trend === 'rising' ? '▲ Tăng trưởng' : '• Ổn định'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs text-slate-500">
+                      <span>Mức độ quan tâm thị trường</span>
+                      <strong className="text-ink font-bold">{t.interestScore}/100</strong>
+                    </div>
+                    <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                      <div
+                        className="bg-brand h-full rounded-full transition-all duration-500"
+                        style={{ width: `${t.interestScore}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  <span className="text-[11px] text-slate-500 block">
+                    Cụm từ khóa đo lường: <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">{t.searchQuery}</code>
                   </span>
                 </div>
-
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-xs text-slate-500">
-                    <span>Mức độ quan tâm thị trường</span>
-                    <strong className="text-ink font-bold">{t.interestScore}/100</strong>
-                  </div>
-                  <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
-                    <div
-                      className="bg-brand h-full rounded-full transition-all duration-500"
-                      style={{ width: `${t.interestScore}%` }}
-                    />
-                  </div>
-                </div>
-
-                <span className="text-[11px] text-slate-500 block">
-                  Cụm từ khóa đo lường: <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">{t.searchQuery}</code>
-                </span>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

@@ -78,9 +78,14 @@ export function TrackingWorkspace() {
   const [reconcileNotes, setReconcileNotes] = useState<Record<number, string>>({});
   const [realtimePolling, setRealtimePolling] = useState<boolean>(false);
   const [lastPolledAt, setLastPolledAt] = useState<Date>(new Date());
+  const inFlightRef = useRef<boolean>(false);
+  const dataRef = useRef<ExtendedTrackingDashboardDto | null>(null);
+  dataRef.current = data;
 
   const fetchDashboard = useCallback(async (forceFresh = false) => {
-    setLoading((prev) => (data ? false : true));
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setLoading(!dataRef.current);
     setRealtimePolling(true);
     setErrorMsg(null);
     try {
@@ -93,14 +98,15 @@ export function TrackingWorkspace() {
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Không thể tải dữ liệu Tracking.');
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
       setRealtimePolling(false);
     }
-  }, [periodDays, data]);
+  }, [periodDays]);
 
   useEffect(() => {
     void fetchDashboard(true);
-    // Continuous Realtime Live Auto-Polling (every 15s) with live motion updates
+    // Auto-refresh CRM data every 15s when tab is active
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
         void fetchDashboard(true);
@@ -385,19 +391,19 @@ export function TrackingWorkspace() {
           <span>Xuất Excel (.xlsx)</span>
         </a>
 
-        {/* Realtime Live Motion Indicator with dynamic countdown & auto-refresh */}
+        {/* Auto-refresh CRM indicator with countdown */}
         <RealtimeLiveMotionIndicator
           isPolling={realtimePolling}
           lastUpdated={data?.lastSyncedAt || lastPolledAt}
           intervalSec={15}
           onRefresh={() => void fetchDashboard(true)}
-          label="Realtime Live"
-          subLabel="Đồng bộ liên tục 15s"
+          label="Làm mới hệ thống"
+          subLabel="Tự động cập nhật 15s"
           size="md"
         />
       </div>
 
-      {/* Live Stream Activity Ticker Banner */}
+      {/* Activity Ticker Banner */}
       <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-teal-950 text-white rounded-2xl px-4 py-2.5 shadow-sm border border-emerald-500/30 flex items-center justify-between gap-3 overflow-hidden">
         <div className="flex items-center gap-2.5 shrink-0">
           <span className="relative flex h-2.5 w-2.5">
@@ -405,16 +411,16 @@ export function TrackingWorkspace() {
             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
           </span>
           <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
-            Live Stream
+            Hệ Thống Theo Dõi
           </span>
         </div>
         <div className="flex-1 text-xs text-slate-300 font-medium truncate flex items-center gap-3">
           <span>
-            🟢 <strong>GA4 Multi-Site:</strong> Đang giám sát luồng truy cập thời gian thực trên 4 website
+            🟢 <strong>GA4 Multi-Site:</strong> Thuộc tính website công ty Toàn Trung
           </span>
           <span className="text-slate-600">•</span>
           <span>
-            🔍 <strong>Search Console:</strong> Tra cứu từ khóa click thực tế
+            🔍 <strong>Search Console:</strong> Tra cứu lượt click & hiển thị tìm kiếm thực tế
           </span>
           <span className="text-slate-600">•</span>
           <span>

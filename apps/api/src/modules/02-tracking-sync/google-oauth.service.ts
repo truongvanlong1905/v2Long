@@ -593,9 +593,8 @@ export async function handleGoogleOAuthCallback(code: string, origin: string, st
 
   await saveGoogleConnection(updatedConn);
 
-  // Purge any leftover demo/mock data and trigger initial real discovery & sync across modules
+  // Non-destructive initial connection test & initial sync
   try {
-    await purgeDemoMetrics();
     await testGoogleConnection();
     await syncAllGoogleDataAcrossModules('FULL_0200');
   } catch {
@@ -718,45 +717,78 @@ export async function syncAllGoogleDataAcrossModules(slot: 'FULL_0200' | 'LIGHT_
   let realGa4Count = 0;
   let realScCount = 0;
 
-  // Attempt REAL Google APIs sync if live token is available
-  if (token && !conn?.isSandboxDemo && token !== 'DEMO_SANDBOX_TOKEN') {
-    // Purge any residual mock/demo metrics so only 100% REAL Google data exists
-    try {
-      await purgeDemoMetrics();
-    } catch {
-      // non-fatal
-    }
+  let ga4Outcome: { success: boolean; synced: number; error?: string } = {
+    success: false,
+    synced: 0,
+    error: 'Chưa cấu hình hoặc thiếu token',
+  };
+  let scOutcome: { success: boolean; synced: number; error?: string } = {
+    success: false,
+    synced: 0,
+    error: 'Chưa cấu hình hoặc thiếu token',
+  };
 
+  // Attempt verified Google APIs sync if live token is available
+  if (token && !conn?.isSandboxDemo && token !== 'DEMO_SANDBOX_TOKEN') {
     try {
-      realGa4Count = await syncRealGoogleAnalytics(token, conn);
+      ga4Outcome = await syncRealGoogleAnalytics(token, conn, windowDays);
+      realGa4Count = ga4Outcome.synced;
       syncedRecords += realGa4Count;
     } catch (err) {
-      console.warn('Real GA4 sync skipped:', err);
+      ga4Outcome = {
+        success: false,
+        synced: 0,
+        error: err instanceof Error ? err.message : 'Lỗi đồng bộ GA4',
+      };
+      console.warn('Real GA4 sync error:', err);
     }
 
     try {
-      realScCount = await syncRealSearchConsole(token);
+      scOutcome = await syncRealSearchConsole(token, conn, windowDays);
+      realScCount = scOutcome.synced;
       syncedRecords += realScCount;
     } catch (err) {
-      console.warn('Real Search Console sync skipped:', err);
+      scOutcome = {
+        success: false,
+        synced: 0,
+        error: err instanceof Error ? err.message : 'Lỗi đồng bộ Search Console',
+      };
+      console.warn('Real Search Console sync error:', err);
     }
-  }
 
-  // Log sync execution
-  await prisma.platformSyncLog.create({
-    data: {
-      platform: 'google_ads',
-      accountPropertyId: conn?.detectedGadsCustomerId || conn?.detectedGa4PropertyId || 'REAL_GOOGLE_SYNC',
-      runType: slot === 'FULL_0200' ? 'full' : 'light',
-      windowStartDate: startStr,
-      windowEndDate: todayStr,
-      recordsSynced: syncedRecords,
-      status: 'success',
-      consecutiveFailures: 0,
-      startedAt: new Date(),
-      completedAt: new Date(),
-    },
-  });
+    // Log sync execution separately per provider to maintain truthful status
+    await prisma.platformSyncLog.create({
+      data: {
+        platform: 'ga4',
+        accountPropertyId: conn?.detectedGa4PropertyId || conn?.selectedGa4PropertyId || 'GA4_MULTI_PROPERTY',
+        runType: slot === 'FULL_0200' ? 'full' : 'light',
+        windowStartDate: startStr,
+        windowEndDate: todayStr,
+        recordsSynced: realGa4Count,
+        status: ga4Outcome.success ? 'success' : 'failed',
+        errorMessage: ga4Outcome.success ? null : (ga4Outcome.error?.slice(0, 500) || 'Lỗi không xác định'),
+        consecutiveFailures: ga4Outcome.success ? 0 : 1,
+        startedAt: new Date(),
+        completedAt: new Date(),
+      },
+    });
+
+    await prisma.platformSyncLog.create({
+      data: {
+        platform: 'search_console',
+        accountPropertyId: conn?.selectedGscSiteUrl || 'SC_MULTI_SITE',
+        runType: slot === 'FULL_0200' ? 'full' : 'light',
+        windowStartDate: startStr,
+        windowEndDate: todayStr,
+        recordsSynced: realScCount,
+        status: scOutcome.success ? 'success' : 'failed',
+        errorMessage: scOutcome.success ? null : (scOutcome.error?.slice(0, 500) || 'Lỗi không xác định'),
+        consecutiveFailures: scOutcome.success ? 0 : 1,
+        startedAt: new Date(),
+        completedAt: new Date(),
+      },
+    });
+  }
 
   // 6. GCLID Attribution & Matching
   const gclidResult = await retryUnresolvedGclids();
@@ -764,162 +796,87 @@ export async function syncAllGoogleDataAcrossModules(slot: 'FULL_0200' | 'LIGHT_
   // 7. Refresh Module 03 Keyword & Ads Derived Cache
   await refreshKeywordDerivedCacheFromCanonicalMetrics({ force: true });
 
-  // 8. Update connection lastSyncAt
+  // 8. Update connection timestamps: record attempt time always, lastSyncAt ONLY if at least one provider succeeded
   if (conn) {
-    conn.lastSyncAt = new Date().toISOString();
+    (conn as any).lastAttemptAt = new Date().toISOString();
+    if (ga4Outcome.success || scOutcome.success) {
+      conn.lastSyncAt = new Date().toISOString();
+    }
     await saveGoogleConnection(conn);
   }
 
   return {
-    success: true,
+    success: ga4Outcome.success || scOutcome.success,
     slot,
     syncedRecords,
     realGa4Count,
     realScCount,
+    ga4Status: ga4Outcome.success ? 'success' : 'failed',
+    scStatus: scOutcome.success ? 'success' : 'failed',
     gclidResolved: gclidResult.resolved,
-    lastSyncAt: new Date().toISOString(),
+    lastSyncAt: conn?.lastSyncAt || null,
     connectionEmail: conn?.connectedEmail || null,
     isSandboxDemo: Boolean(conn?.isSandboxDemo),
   };
 }
 
+/**
+ * DEPRECATED: Non-destructive stub to protect business records.
+ * Destructive deletion of leads, campaigns, designs, and keywords has been permanently disabled.
+ */
 export async function purgeDemoMetrics() {
-  // 1. Delete mock metrics from PlatformDailyMetric
-  await prisma.platformDailyMetric.deleteMany({
-    where: {
-      OR: [
-        { accountPropertyId: 'GADS-TT-01' },
-        { accountPropertyId: 'GA4-TOANTRUNG-MAIN' },
-        { accountPropertyId: 'sc-domain:toantrung.com.vn' },
-        { accountPropertyId: '213025502' },
-        { accountPropertyId: '889-102-4451' },
-        { campaignExternalId: { in: ['CAMP_LED_INDOOR_P25_Q4', 'CAMP_LED_OUTDOOR_P4_Q4', 'CAMP_BOARD_FACTORY_2026', 'gads_test_p25', 'gads_test_outdoor', 'ga4_test_organic'] } },
-      ],
-    },
-  });
-
-  // 2. Delete mock LeadReconciliation & PlatformSyncLog rows
-  await prisma.leadReconciliation.deleteMany({
-    where: { accountPropertyId: 'GADS-TT-01' },
-  });
-  await prisma.platformSyncLog.deleteMany({
-    where: {
-      accountPropertyId: { in: ['GADS-TT-01', 'GA4-TOANTRUNG-MAIN'] },
-    },
-  });
-
-  // 3. Delete synthetic seed Leads (and their child records)
-  const demoLeads = await prisma.lead.findMany({
-    where: {
-      OR: [
-        { leadCode: { in: ['TT-20261101-0001', 'TT-20261102-0002', 'TT-20261104-0003', 'TT-20261105-0004', 'TT-20261105-0005'] } },
-        { companyName: { contains: '(Dữ liệu tổng hợp)' } },
-        { companyName: { contains: '(Nghi khảo giá)' } },
-        { email: { contains: 'synthetic.vn' } },
-      ],
-    },
-    select: { id: true },
-  });
-  if (demoLeads.length > 0) {
-    const demoLeadIds = demoLeads.map((l) => l.id);
-    const demoDesigns = await prisma.designRequest.findMany({
-      where: { leadId: { in: demoLeadIds } },
-      select: { id: true },
-    });
-    if (demoDesigns.length > 0) {
-      const dIds = demoDesigns.map((d) => d.id);
-      await prisma.designRequest.updateMany({ where: { id: { in: dIds } }, data: { approvedVersionId: null } });
-      await prisma.designAssetVersion.deleteMany({ where: { designRequestId: { in: dIds } } });
-      await prisma.aiUsageLog.deleteMany({ where: { designRequestId: { in: dIds } } });
-      await prisma.designRequest.deleteMany({ where: { id: { in: dIds } } });
-    }
-    await prisma.priceCheckAlert.deleteMany({ where: { leadId: { in: demoLeadIds } } });
-    await prisma.leadAttachment.deleteMany({ where: { leadId: { in: demoLeadIds } } });
-    await prisma.leadActivity.deleteMany({ where: { leadId: { in: demoLeadIds } } });
-    await prisma.leadProduct.deleteMany({ where: { leadId: { in: demoLeadIds } } });
-    await prisma.marketingTracking.deleteMany({ where: { leadId: { in: demoLeadIds } } });
-    await prisma.lead.deleteMany({ where: { id: { in: demoLeadIds } } });
-  }
-
-  // 4. Unlink and delete mock Campaigns
-  const demoCampaigns = await prisma.campaign.findMany({
-    where: {
-      OR: [
-        { campaignCode: { in: ['CAMP_LED_INDOOR_P25_Q4', 'CAMP_LED_OUTDOOR_P4_Q4', 'CAMP_BOARD_FACTORY_2026', 'gads_test_p25', 'gads_test_outdoor', 'ga4_test_organic'] } },
-        { accountExternalId: { in: ['GADS-TT-01', 'FB-TT-FANPAGE', '889-102-4451', '213025502'] } },
-        { campaignName: { contains: '[Test ' } },
-      ],
-    },
-    select: { id: true },
-  });
-  if (demoCampaigns.length > 0) {
-    const campIds = demoCampaigns.map((c) => c.id);
-    await prisma.marketingTracking.updateMany({
-      where: { campaignId: { in: campIds } },
-      data: { campaignId: null },
-    });
-    await prisma.platformDailyMetric.deleteMany({
-      where: { campaignId: { in: campIds } },
-    });
-    await prisma.campaign.deleteMany({
-      where: { id: { in: campIds } },
-    });
-  }
-
-  // 5. Delete mock SeoArticles & SeoKeywords with [Test GA4/Ads or demo seed phrases
-  const demoKws = await prisma.seoKeyword.findMany({
-    where: {
-      OR: [
-        { keyword: { contains: '[Test GA4/Ads' } },
-        { keyword: 'báo giá màn hình led hội trường P2.5' },
-        { keyword: 'bảng điện tử năng suất nhà máy may' },
-      ],
-    },
-    select: { id: true },
-  });
-  if (demoKws.length > 0) {
-    const kwIds = demoKws.map((k) => k.id);
-    const demoArticles = await prisma.seoArticle.findMany({
-      where: { keywordId: { in: kwIds } },
-      select: { id: true },
-    });
-    if (demoArticles.length > 0) {
-      const artIds = demoArticles.map((a) => a.id);
-      await prisma.seoArticle.updateMany({
-        where: { id: { in: artIds } },
-        data: { currentRevisionId: null, approvedRevisionId: null },
-      });
-      await prisma.seoArticleRevision.deleteMany({ where: { articleId: { in: artIds } } });
-      await prisma.aiUsageLog.deleteMany({ where: { seoArticleId: { in: artIds } } });
-      await prisma.seoArticle.deleteMany({ where: { id: { in: artIds } } });
-    }
-    await prisma.seoKeyword.deleteMany({
-      where: { id: { in: kwIds } },
-    });
-  }
+  console.info('[DataSafety] purgeDemoMetrics is permanently disabled to preserve company business records.');
+  return { success: true, message: 'Purge disabled for safety.' };
 }
 
-async function syncRealGoogleAnalytics(token: string, conn: StoredGoogleConnection | null): Promise<number> {
+async function syncRealGoogleAnalytics(
+  token: string,
+  conn: StoredGoogleConnection | null,
+  windowDays = 30,
+): Promise<{ success: boolean; synced: number; error?: string }> {
   let synced = 0;
   const todayStr = new Date().toISOString().slice(0, 10);
-  try {
-    const resAdmin = await fetch('https://analyticsadmin.googleapis.com/v1beta/accountSummaries', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!resAdmin.ok) return 0;
-    const adminData = (await resAdmin.json()) as {
-      accountSummaries?: Array<{
-        displayName?: string;
-        propertySummaries?: Array<{
-          property: string;
-          displayName: string;
-        }>;
-      }>;
-    };
 
-    const properties = adminData.accountSummaries?.flatMap((a) => a.propertySummaries || []) || [];
-    for (const prop of properties) {
-      const propId = prop.property.replace('properties/', '');
+  const resAdmin = await fetch('https://analyticsadmin.googleapis.com/v1beta/accountSummaries', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resAdmin.ok) {
+    const errText = await resAdmin.text();
+    return {
+      success: false,
+      synced: 0,
+      error: `GA4 Admin API (${resAdmin.status}): ${errText.slice(0, 200)}`,
+    };
+  }
+
+  const adminData = (await resAdmin.json()) as {
+    accountSummaries?: Array<{
+      displayName?: string;
+      propertySummaries?: Array<{
+        property: string;
+        displayName: string;
+      }>;
+    }>;
+  };
+
+  const allProps = adminData.accountSummaries?.flatMap((a) => a.propertySummaries || []) || [];
+
+  // Scope filtering: only synchronize company properties or explicitly selected property
+  const companyKeywords = ['toantrung', 'toan trung', 'manhinhled', 'bangled'];
+  const properties = allProps.filter((p) => {
+    const propId = p.property.replace('properties/', '');
+    if (conn?.selectedGa4PropertyId && conn.selectedGa4PropertyId === propId) return true;
+    const lowerName = (p.displayName || '').toLowerCase();
+    return companyKeywords.some((k) => lowerName.includes(k));
+  });
+
+  const targetProps = properties.length > 0 ? properties : allProps.slice(0, 5);
+
+  for (const prop of targetProps) {
+    const propId = prop.property.replace('properties/', '');
+
+    // 1. Query daily account metrics with dimension "date" so daily facts represent their actual date
+    try {
       const reportResp = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propId}:runReport`, {
         method: 'POST',
         headers: {
@@ -927,7 +884,8 @@ async function syncRealGoogleAnalytics(token: string, conn: StoredGoogleConnecti
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          dateRanges: [{ startDate: '30daysAgo', endDate: 'today' }],
+          dateRanges: [{ startDate: `${windowDays}daysAgo`, endDate: 'today' }],
+          dimensions: [{ name: 'date' }],
           metrics: [
             { name: 'activeUsers' },
             { name: 'screenPageViews' },
@@ -940,190 +898,187 @@ async function syncRealGoogleAnalytics(token: string, conn: StoredGoogleConnecti
       if (reportResp.ok) {
         const repData = (await reportResp.json()) as {
           rows?: Array<{
+            dimensionValues: Array<{ value: string }>;
             metricValues: Array<{ value: string }>;
           }>;
         };
-        const row = repData.rows?.[0];
-        const activeUsers = parseInt(row?.metricValues?.[0]?.value || '0', 10);
-        const pageViews = parseInt(row?.metricValues?.[1]?.value || '0', 10);
-        const eventCount = parseInt(row?.metricValues?.[2]?.value || '0', 10);
-        const totalDuration = parseFloat(row?.metricValues?.[3]?.value || '0');
-        const avgTime = activeUsers > 0 ? totalDuration / activeUsers : 0;
 
-        await upsertPlatformMetricIdempotent(prisma, {
-          platform: 'ga4',
-          accountPropertyId: propId,
-          metricDate: todayStr,
-          grain: 'account',
-          clicks: activeUsers,
-          impressions: eventCount,
-          pageViews: pageViews,
-          avgTimeOnPageSec: Math.round(avgTime * 10) / 10,
-          isFinalized: false,
-        });
-        synced++;
+        for (const row of repData.rows || []) {
+          const dateVal = row.dimensionValues?.[0]?.value || '';
+          if (!dateVal || dateVal.length !== 8) continue;
+          const metricDate = `${dateVal.slice(0, 4)}-${dateVal.slice(4, 6)}-${dateVal.slice(6, 8)}`;
+          const activeUsers = parseInt(row.metricValues?.[0]?.value || '0', 10);
+          const pageViews = parseInt(row.metricValues?.[1]?.value || '0', 10);
+          const eventCount = parseInt(row.metricValues?.[2]?.value || '0', 10);
+          const totalDuration = parseFloat(row.metricValues?.[3]?.value || '0');
+          const avgTime = activeUsers > 0 ? totalDuration / activeUsers : 0;
+
+          await upsertPlatformMetricIdempotent(prisma, {
+            platform: 'ga4',
+            accountPropertyId: propId,
+            metricDate,
+            grain: 'account',
+            clicks: activeUsers,
+            impressions: eventCount,
+            pageViews,
+            avgTimeOnPageSec: Math.round(avgTime * 10) / 10,
+            isFinalized: false,
+          });
+          synced++;
+        }
 
         if (conn && (!conn.detectedGa4PropertyId || prop.displayName.toLowerCase().includes('toantrung'))) {
           conn.detectedGa4PropertyId = propId;
         }
       }
-
-      // Also fetch page-level report for top landing pages
-      try {
-        const pageResp = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propId}:runReport`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            dateRanges: [{ startDate: '30daysAgo', endDate: 'today' }],
-            dimensions: [{ name: 'pagePath' }],
-            metrics: [
-              { name: 'screenPageViews' },
-              { name: 'userEngagementDuration' },
-            ],
-            limit: 10,
-          }),
-        });
-        if (pageResp.ok) {
-          const pageData = (await pageResp.json()) as {
-            rows?: Array<{
-              dimensionValues: Array<{ value: string }>;
-              metricValues: Array<{ value: string }>;
-            }>;
-          };
-          for (const pRow of pageData.rows || []) {
-            const path = pRow.dimensionValues?.[0]?.value || '/';
-            const views = parseInt(pRow.metricValues?.[0]?.value || '0', 10);
-            const dur = parseFloat(pRow.metricValues?.[1]?.value || '0');
-            await upsertPlatformMetricIdempotent(prisma, {
-              platform: 'ga4',
-              accountPropertyId: propId,
-              metricDate: todayStr,
-              grain: 'page',
-              pageUrlRaw: `https://${prop.displayName.toLowerCase().replace(/[^a-z0-9.-]/g, '')}${path}`,
-              pageViews: views,
-              avgTimeOnPageSec: views > 0 ? Math.round((dur / views) * 10) / 10 : 0,
-              isFinalized: false,
-            });
-            synced++;
-          }
-        }
-      } catch {
-        // non-fatal
-      }
-
-      // Also fetch real traffic channels & linked Google Ads campaigns from GA4
-      try {
-        const trafficResp = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propId}:runReport`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            dateRanges: [{ startDate: '90daysAgo', endDate: 'today' }],
-            dimensions: [{ name: 'sessionCampaignName' }, { name: 'sessionSourceMedium' }],
-            metrics: [
-              { name: 'sessions' },
-              { name: 'totalUsers' },
-              { name: 'screenPageViews' },
-              { name: 'conversions' },
-            ],
-            limit: 25,
-          }),
-        });
-        if (trafficResp.ok) {
-          const trafficData = (await trafficResp.json()) as {
-            rows?: Array<{
-              dimensionValues: Array<{ value: string }>;
-              metricValues: Array<{ value: string }>;
-            }>;
-          };
-          for (const tRow of trafficData.rows || []) {
-            const rawCamp = tRow.dimensionValues?.[0]?.value || '(not set)';
-            const sourceMedium = tRow.dimensionValues?.[1]?.value || 'google / organic';
-            const sessions = parseInt(tRow.metricValues?.[0]?.value || '0', 10);
-            const users = parseInt(tRow.metricValues?.[1]?.value || '0', 10);
-            const views = parseInt(tRow.metricValues?.[2]?.value || '0', 10);
-            const conv = Math.round(parseFloat(tRow.metricValues?.[3]?.value || '0'));
-            if (sessions === 0 && users === 0) continue;
-
-            const accountExtId = `GA4-${propId}`;
-            const campTitle =
-              rawCamp && rawCamp !== '(not set)' && rawCamp !== '(direct)' && rawCamp !== '(organic)'
-                ? `[GA4 ${prop.displayName}] ${rawCamp} (${sourceMedium})`
-                : `[GA4 ${prop.displayName}] Lưu lượng ${sourceMedium}`;
-            const campCode = `ga4_${propId}_${campTitle.toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 50)}`;
-
-            const campRow = await prisma.campaign.upsert({
-              where: {
-                uq_campaign_platform_account_code: {
-                  platform: 'google_ads',
-                  accountExternalId: accountExtId,
-                  campaignCode: campCode,
-                },
-              },
-              update: {
-                campaignName: campTitle,
-                isActive: true,
-              },
-              create: {
-                platform: 'google_ads',
-                accountExternalId: accountExtId,
-                campaignCode: campCode,
-                campaignName: campTitle,
-                utmCampaignSlug: campCode,
-                currencyCode: 'VND',
-                dailyBudgetMicros: 0n,
-                isActive: true,
-              },
-            });
-
-            await upsertPlatformMetricIdempotent(prisma, {
-              platform: 'google_ads',
-              accountPropertyId: accountExtId,
-              metricDate: todayStr,
-              grain: 'campaign',
-              campaignExternalId: campCode,
-              campaignId: campRow.id,
-              campaignName: campTitle,
-              currencyCode: 'VND',
-              clicks: sessions,
-              impressions: Math.max(views, users, sessions),
-              spendMicros: 0n,
-              conversionsMicros: BigInt(conv) * 1_000_000n,
-              isFinalized: false,
-            });
-            synced++;
-          }
-        }
-      } catch {
-        // non-fatal
-      }
+    } catch (err) {
+      console.warn(`GA4 property ${propId} report error:`, err);
     }
-  } catch (err) {
-    console.warn('Real GA4 sync error:', err);
+
+    // 2. Query daily page-level report for top landing pages
+    try {
+      const pageResp = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propId}:runReport`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          dateRanges: [{ startDate: `${windowDays}daysAgo`, endDate: 'today' }],
+          dimensions: [{ name: 'date' }, { name: 'pagePath' }],
+          metrics: [
+            { name: 'screenPageViews' },
+            { name: 'userEngagementDuration' },
+          ],
+          limit: 100,
+        }),
+      });
+
+      if (pageResp.ok) {
+        const pageData = (await pageResp.json()) as {
+          rows?: Array<{
+            dimensionValues: Array<{ value: string }>;
+            metricValues: Array<{ value: string }>;
+          }>;
+        };
+        for (const pRow of pageData.rows || []) {
+          const dateVal = pRow.dimensionValues?.[0]?.value || '';
+          if (!dateVal || dateVal.length !== 8) continue;
+          const metricDate = `${dateVal.slice(0, 4)}-${dateVal.slice(4, 6)}-${dateVal.slice(6, 8)}`;
+          const path = pRow.dimensionValues?.[1]?.value || '/';
+          const views = parseInt(pRow.metricValues?.[0]?.value || '0', 10);
+          const dur = parseFloat(pRow.metricValues?.[1]?.value || '0');
+
+          await upsertPlatformMetricIdempotent(prisma, {
+            platform: 'ga4',
+            accountPropertyId: propId,
+            metricDate,
+            grain: 'page',
+            pageUrlRaw: `https://${prop.displayName.toLowerCase().replace(/[^a-z0-9.-]/g, '')}${path}`,
+            pageViews: views,
+            avgTimeOnPageSec: views > 0 ? Math.round((dur / views) * 10) / 10 : 0,
+            isFinalized: false,
+          });
+          synced++;
+        }
+      }
+    } catch {
+      // non-fatal
+    }
   }
-  return synced;
+
+  return { success: true, synced };
 }
 
-async function syncRealSearchConsole(token: string): Promise<number> {
+async function syncRealSearchConsole(
+  token: string,
+  conn: StoredGoogleConnection | null,
+  windowDays = 30,
+): Promise<{ success: boolean; synced: number; error?: string }> {
   let synced = 0;
   const todayStr = new Date().toISOString().slice(0, 10);
-  const startStr = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  try {
-    const resSC = await fetch('https://www.googleapis.com/webmasters/v3/sites', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!resSC.ok) return 0;
-    const scData = (await resSC.json()) as {
-      siteEntry?: Array<{ siteUrl: string }>;
-    };
+  const startStr = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-    const sites = scData.siteEntry || [];
-    for (const site of sites) {
+  const resSC = await fetch('https://www.googleapis.com/webmasters/v3/sites', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resSC.ok) {
+    const errText = await resSC.text();
+    return {
+      success: false,
+      synced: 0,
+      error: `Search Console API (${resSC.status}): ${errText.slice(0, 200)}`,
+    };
+  }
+
+  const scData = (await resSC.json()) as {
+    siteEntry?: Array<{ siteUrl: string }>;
+  };
+
+  const allSites = scData.siteEntry || [];
+
+  // Scope filtering: only sync company sites or explicitly selected site
+  const companyDomains = ['toantrung.com.vn', 'manhinhled.net.vn', 'bangled.vn'];
+  const sites = allSites.filter((s) => {
+    if (conn?.selectedGscSiteUrl && conn.selectedGscSiteUrl === s.siteUrl) return true;
+    return companyDomains.some((d) => s.siteUrl.includes(d));
+  });
+
+  const targetSites = sites.length > 0 ? sites : allSites;
+
+  for (const site of targetSites) {
+    // 1. Query daily site performance with dimension "date"
+    try {
+      const dailyResp = await fetch(
+        `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(site.siteUrl)}/searchAnalytics/query`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            startDate: startStr,
+            endDate: todayStr,
+            dimensions: ['date'],
+            rowLimit: 100,
+          }),
+        },
+      );
+
+      if (dailyResp.ok) {
+        const dailyData = (await dailyResp.json()) as {
+          rows?: Array<{
+            keys: string[];
+            clicks: number;
+            impressions: number;
+            ctr: number;
+            position: number;
+          }>;
+        };
+
+        for (const row of dailyData.rows || []) {
+          const rowDate = row.keys?.[0];
+          if (!rowDate) continue;
+          await upsertPlatformMetricIdempotent(prisma, {
+            platform: 'search_console',
+            accountPropertyId: site.siteUrl,
+            metricDate: rowDate,
+            grain: 'account',
+            clicks: row.clicks,
+            impressions: row.impressions,
+            avgPosition: Math.round(row.position * 10) / 10,
+            isFinalized: false,
+          });
+          synced++;
+        }
+      }
+    } catch (err) {
+      console.warn(`Search Console site ${site.siteUrl} daily query error:`, err);
+    }
+
+    // 2. Query top search queries (keywords) for SEO
+    try {
       const qResp = await fetch(
         `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(site.siteUrl)}/searchAnalytics/query`,
         {
@@ -1168,7 +1123,7 @@ async function syncRealSearchConsole(token: string): Promise<number> {
           });
           synced++;
 
-          // Upsert into SeoKeyword table for Module 03 SEO & Keywords with real Impressions & Clicks
+          // Upsert into SeoKeyword table for Module 03 SEO & Keywords
           try {
             const norm = kw.toLowerCase().trim();
             await prisma.seoKeyword.upsert({
@@ -1201,9 +1156,10 @@ async function syncRealSearchConsole(token: string): Promise<number> {
           }
         }
       }
+    } catch {
+      // non-fatal
     }
-  } catch (err) {
-    console.warn('Real Search Console sync error:', err);
   }
-  return synced;
+
+  return { success: true, synced };
 }

@@ -281,6 +281,12 @@ export async function GET(request: Request) {
     });
 
     const campaigns: any[] = await prisma.campaign.findMany({
+      where: {
+        NOT: [
+          { accountExternalId: { startsWith: 'GA4-' } },
+          { campaignCode: { startsWith: 'ga4_' } },
+        ],
+      },
       include: {
         trackings: {
           include: { lead: true },
@@ -292,6 +298,10 @@ export async function GET(request: Request) {
     const dailyMetrics: any[] = await prisma.platformDailyMetric.findMany({
       where: {
         platform: { in: ['google_ads', 'facebook', 'facebook_ads', 'search_console'] },
+        NOT: [
+          { accountPropertyId: { startsWith: 'GA4-' } },
+          { campaignExternalId: { startsWith: 'ga4_' } },
+        ],
       },
     });
 

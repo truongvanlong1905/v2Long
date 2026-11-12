@@ -481,6 +481,8 @@ function formatRatioPct(numerator: number, denominator: number): string {
 
 export async function getTrackingDashboardData(periodDays = 30): Promise<TrackingDashboardDto> {
   const cutoffDate = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000);
+  const cutoffDateStr = cutoffDate.toISOString().slice(0, 10);
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   const [leads, campaigns, syncLogs, reconciliations, webhookErrors] = await Promise.all([
     prisma.lead.findMany({
@@ -511,12 +513,30 @@ export async function getTrackingDashboardData(periodDays = 30): Promise<Trackin
       orderBy: { createdAt: 'desc' },
     }),
     prisma.campaign.findMany({
+      where: {
+        NOT: [
+          { accountExternalId: { startsWith: 'GA4-' } },
+          { campaignCode: { startsWith: 'ga4_' } },
+        ],
+      },
       include: {
         dailyMetrics: {
-          where: { grain: 'campaign' },
+          where: {
+            grain: 'campaign',
+            metricDate: { gte: cutoffDateStr, lte: todayStr },
+            NOT: [
+              { accountPropertyId: { startsWith: 'GA4-' } },
+              { campaignExternalId: { startsWith: 'ga4_' } },
+            ],
+          },
           select: { grain: true, spendMicros: true },
         },
         trackings: {
+          where: {
+            lead: {
+              createdAt: { gte: cutoffDate },
+            },
+          },
           select: {
             isRepeatLead: true,
             lead: {
@@ -792,13 +812,25 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
     // ignore
   }
 
-  // Query all real GA4 metrics
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const windowDays = Math.max(1, periodDays || 30);
+  const windowStartDate = new Date(Date.now() - (windowDays - 1) * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  // Query verified GA4 metrics within the requested period window
   const ga4Metrics = await prisma.platformDailyMetric.findMany({
-    where: { platform: 'ga4' },
-    orderBy: { pageViews: 'desc' },
+    where: {
+      platform: 'ga4',
+      metricDate: {
+        gte: windowStartDate,
+        lte: todayStr,
+      },
+    },
+    orderBy: { metricDate: 'desc' },
   });
 
-  // Discover properties from connection accessibleResources + DB metrics
+  // Discover properties from connection accessibleResources or approved company properties
   const defaultProps = [
     { id: '512879968', name: 'toantrung.com.vn', domain: 'toantrung.com.vn', url: 'https://toantrung.com.vn' },
     { id: '509190194', name: 'manhinhled.net.vn', domain: 'manhinhled.net.vn', url: 'https://manhinhled.net.vn' },
@@ -826,56 +858,81 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
 
   const ga4Properties = ga4PropertiesDefs.map((def) => {
     const propMetrics = ga4Metrics.filter((m) => m.accountPropertyId === def.id);
-    const accountRow = propMetrics.find((m) => m.grain === 'account');
+    const accountRows = propMetrics.filter((m) => m.grain === 'account');
     const pageRows = propMetrics.filter((m) => m.grain === 'page');
 
-    const base90Views = accountRow?.pageViews ?? pageRows.reduce((sum, r) => sum + r.pageViews, 0);
-    const base90Users = accountRow?.clicks ?? 0;
-    const base90Events = accountRow?.impressions ?? 0;
+    const hasAccountRows = accountRows.length > 0;
+    const totalViews = hasAccountRows ? accountRows.reduce((sum, r) => sum + r.pageViews, 0) : null;
+    const totalEvents = hasAccountRows ? accountRows.reduce((sum, r) => sum + r.impressions, 0) : null;
+    // For 1 day (today), activeUsers is the exact daily unique active users.
+    // For multi-day periods, summing daily activeUsers is non-deduplicated (same visitor on multiple days counted multiple times).
+    const activeUsers = hasAccountRows ? accountRows.reduce((sum, r) => sum + r.clicks, 0) : null;
 
-    let users = base90Users;
-    let totalViews = base90Views;
-    let events = base90Events;
+    let status: 'HAS_DATA' | 'CONFIRMED_ZERO' | 'NOT_SYNCED' | 'NOT_CONNECTED' = 'NOT_SYNCED';
+    let statusMessage = 'Chưa có bản ghi đồng bộ cho khoảng thời gian này (Bấm Đồng bộ ngay)';
 
-    if (periodDays <= 7) {
-      if (def.id === '538179128') { users = 88; totalViews = 457; events = 1200; }
-      else if (def.id === '509190194') { users = 298; totalViews = 1100; events = 3700; }
-      else if (def.id === '512879968') { users = 182; totalViews = 786; events = 2450; }
-      else { users = Math.round(base90Users * 0.22); totalViews = Math.round(base90Views * 0.22); events = Math.round(base90Events * 0.22); }
-    } else if (periodDays <= 30) {
-      if (def.id === '538179128') { users = 105; totalViews = 483; events = 1266; }
-      else if (def.id === '509190194') { users = 437; totalViews = 1500; events = 4800; }
-      else if (def.id === '512879968') { users = 236; totalViews = 865; events = 2765; }
-      else { users = Math.round(base90Users * 0.42); totalViews = Math.round(base90Views * 0.42); events = Math.round(base90Events * 0.42); }
-    } else {
-      if (def.id === '538179128') { users = 286; totalViews = 1605; events = 4100; }
-      else if (def.id === '509190194') { users = 1233; totalViews = 3592; events = 11200; }
-      else if (def.id === '512879968') { users = 614; totalViews = 2654; events = 7800; }
-      else { users = base90Users; totalViews = base90Views; events = base90Events; }
+    if (!conn?.connected) {
+      status = 'NOT_CONNECTED';
+      statusMessage = 'Chưa liên kết tài khoản Google OAuth';
+    } else if (hasAccountRows) {
+      if ((totalViews ?? 0) === 0 && (activeUsers ?? 0) === 0) {
+        status = 'CONFIRMED_ZERO';
+        statusMessage = 'Xác nhận từ GA4: 0 lượt truy cập trong kỳ';
+      } else {
+        status = 'HAS_DATA';
+        statusMessage = periodDays <= 1
+          ? 'Xác minh từ GA4: Người dùng hoạt động thực tế trong ngày'
+          : 'Xác minh từ GA4: Lượt người dùng hoạt động cộng dồn theo ngày (chưa khử trùng lặp đa ngày)';
+      }
     }
 
-    const pageScale = periodDays <= 7 ? 0.25 : periodDays <= 30 ? 0.45 : 1.0;
+    // Group top landing pages
+    const pageMap = new Map<string, { views: number; totalDur: number }>();
+    for (const p of pageRows) {
+      const url = p.pageUrlRaw || '/';
+      const cur = pageMap.get(url) || { views: 0, totalDur: 0 };
+      cur.views += p.pageViews;
+      cur.totalDur += (p.avgTimeOnPageSec || 0) * p.pageViews;
+      pageMap.set(url, cur);
+    }
+    const topPages = Array.from(pageMap.entries())
+      .sort((a, b) => b[1].views - a[1].views)
+      .slice(0, 6)
+      .map(([path, stats]) => ({
+        path,
+        views: stats.views,
+        avgDurationSec: stats.views > 0 ? Math.round((stats.totalDur / stats.views) * 10) / 10 : 0,
+      }));
 
     return {
       id: def.id,
       name: def.name,
       domain: def.domain,
       url: def.url,
-      activeUsers: users,
+      activeUsers,
       pageViews: totalViews,
-      eventCount: events,
-      topPages: pageRows.slice(0, 6).map((p) => ({
-        path: p.pageUrlRaw || '/',
-        views: Math.max(1, Math.round(p.pageViews * pageScale)),
-        avgDurationSec: p.avgTimeOnPageSec || 0,
-      })),
+      eventCount: totalEvents,
+      status,
+      statusMessage,
+      source: `Google Analytics 4 API (property/${def.id})`,
+      reportingPeriod: `${windowStartDate} đến ${todayStr}`,
+      lastSyncAt: conn?.lastSyncAt || null,
+      isEstimatedPeriodUsers: periodDays > 1,
+      isPartialDay: periodDays <= 1,
+      topPages,
     };
   });
 
-  // Query Search Console metrics
+  // Query verified Search Console metrics within the requested period window
   const scMetrics = await prisma.platformDailyMetric.findMany({
-    where: { platform: 'search_console' },
-    orderBy: [{ clicks: 'desc' }, { impressions: 'desc' }],
+    where: {
+      platform: 'search_console',
+      metricDate: {
+        gte: windowStartDate,
+        lte: todayStr,
+      },
+    },
+    orderBy: { metricDate: 'desc' },
   });
 
   const discoveredScSites: Array<{ id: string; name: string }> = Array.isArray(conn?.accessibleResources)
@@ -889,66 +946,99 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
 
   const searchConsoleSites = sitesDefs.map((siteUrl) => {
     const siteRows = scMetrics.filter((m) => m.accountPropertyId === siteUrl);
-    const baseClicks = siteRows.reduce((sum, r) => sum + r.clicks, 0);
-    const baseImpressions = siteRows.reduce((sum, r) => sum + r.impressions, 0);
+    const siteAccountRows = siteRows.filter((m) => m.grain === 'account');
+    const siteKeywordRows = siteRows.filter((m) => m.grain === 'keyword');
 
-    let clicks = baseClicks;
-    let impressions = baseImpressions;
+    const hasAccountRows = siteAccountRows.length > 0;
+    const totalClicks = hasAccountRows
+      ? siteAccountRows.reduce((sum, r) => sum + r.clicks, 0)
+      : null;
+    const totalImpressions = hasAccountRows
+      ? siteAccountRows.reduce((sum, r) => sum + r.impressions, 0)
+      : null;
 
-    if (periodDays <= 7) {
-      if (siteUrl.includes('bangled.vn')) { clicks = 4; impressions = 710; }
-      else if (siteUrl.includes('manhinhled.net.vn')) { clicks = 72; impressions = 3150; }
-      else if (siteUrl.includes('toantrung.com.vn')) { clicks = 35; impressions = 860; }
-      else { clicks = Math.round(baseClicks * 0.25); impressions = Math.round(baseImpressions * 0.25); }
-    } else if (periodDays <= 30) {
-      if (siteUrl.includes('bangled.vn')) { clicks = 15; impressions = 3045; }
-      else if (siteUrl.includes('manhinhled.net.vn')) { clicks = 298; impressions = 13316; }
-      else if (siteUrl.includes('toantrung.com.vn')) { clicks = 145; impressions = 3632; }
-      else { clicks = baseClicks; impressions = baseImpressions; }
-    } else {
-      if (siteUrl.includes('bangled.vn')) { clicks = 162; impressions = 10200; }
-      else if (siteUrl.includes('manhinhled.net.vn')) { clicks = 890; impressions = 38000; }
-      else if (siteUrl.includes('toantrung.com.vn')) { clicks = 480; impressions = 12000; }
-      else { clicks = Math.round(baseClicks * 3.1); impressions = Math.round(baseImpressions * 3.1); }
+    let status: 'HAS_DATA' | 'CONFIRMED_ZERO' | 'KEYWORD_ONLY' | 'NOT_SYNCED' | 'NOT_CONNECTED' = 'NOT_SYNCED';
+    let statusMessage = 'Chưa có bản ghi đồng bộ tổng site trong khoảng thời gian này';
+
+    if (!conn?.connected) {
+      status = 'NOT_CONNECTED';
+      statusMessage = 'Chưa liên kết tài khoản Google OAuth';
+    } else if (hasAccountRows) {
+      if ((totalClicks ?? 0) === 0 && (totalImpressions ?? 0) === 0) {
+        status = 'CONFIRMED_ZERO';
+        statusMessage = 'Xác nhận từ Search Console: 0 click & 0 hiển thị trong kỳ';
+      } else {
+        status = 'HAS_DATA';
+        statusMessage = 'Dữ liệu xác minh từ Google Search Console';
+      }
+    } else if (siteKeywordRows.length > 0) {
+      status = 'KEYWORD_ONLY';
+      statusMessage = 'Đã có danh sách từ khóa, chưa có bản ghi tổng hợp site theo ngày';
     }
 
-    const kwScale = clicks / (baseClicks || 1);
+    // Group keywords
+    const kwMap = new Map<string, { clicks: number; impressions: number }>();
+    for (const r of siteKeywordRows) {
+      const kw = r.keywordRaw || '';
+      if (!kw) continue;
+      const cur = kwMap.get(kw) || { clicks: 0, impressions: 0 };
+      cur.clicks += r.clicks;
+      cur.impressions += r.impressions;
+      kwMap.set(kw, cur);
+    }
+
+    const topQueries = Array.from(kwMap.entries())
+      .sort((a, b) => b[1].clicks - a[1].clicks || b[1].impressions - a[1].impressions)
+      .slice(0, 10)
+      .map(([keyword, stats]) => ({
+        keyword,
+        clicks: stats.clicks,
+        impressions: stats.impressions,
+        ctrText: stats.impressions > 0 ? `${((stats.clicks / stats.impressions) * 100).toFixed(1)}%` : '0%',
+      }));
 
     return {
       siteUrl,
       domain: siteUrl.replace(/^https?:\/\//, '').replace(/\/$/, ''),
-      totalQueries: siteRows.length,
-      totalClicks: clicks,
-      totalImpressions: impressions,
-      topQueries: siteRows.slice(0, 10).map((r) => {
-        const qClicks = Math.max(0, Math.round(r.clicks * kwScale));
-        const qImpr = Math.max(1, Math.round(r.impressions * (impressions / (baseImpressions || 1))));
-        return {
-          keyword: r.keywordRaw || '',
-          clicks: qClicks,
-          impressions: qImpr,
-          ctrText: qImpr > 0 ? `${((qClicks / qImpr) * 100).toFixed(1)}%` : '0%',
-        };
-      }),
+      totalQueries: kwMap.size,
+      totalClicks,
+      totalImpressions,
+      status,
+      statusMessage,
+      source: `Google Search Console API (${siteUrl})`,
+      reportingPeriod: `${windowStartDate} đến ${todayStr}`,
+      lastSyncAt: conn?.lastSyncAt || null,
+      topQueries,
     };
   });
 
-  // Query real Google Ads campaigns & spend
+  // Query verified Google Ads campaigns & spend (Excluding contaminated GA4 campaigns)
   const realAdsCampaigns = await prisma.campaign.findMany({
-    where: { platform: 'google_ads', isActive: true },
+    where: {
+      platform: 'google_ads',
+      isActive: true,
+      NOT: [
+        { accountExternalId: { startsWith: 'GA4-' } },
+        { campaignCode: { startsWith: 'ga4_' } },
+      ],
+    },
   });
   const realAdsMetrics = await prisma.platformDailyMetric.findMany({
-    where: { platform: 'google_ads', grain: 'campaign' },
+    where: {
+      platform: 'google_ads',
+      grain: 'campaign',
+      metricDate: {
+        gte: windowStartDate,
+        lte: todayStr,
+      },
+      NOT: [
+        { accountPropertyId: { startsWith: 'GA4-' } },
+        { campaignExternalId: { startsWith: 'ga4_' } },
+      ],
+    },
   });
   const totalAdsSpendMicros = realAdsMetrics.reduce((sum, m) => sum + (m.spendMicros || 0n), 0n);
   const totalAdsSpendVnd = Number(totalAdsSpendMicros / 1_000_000n);
-
-  // Build Google Trends topics dynamically from real Search Console / SeoKeywords in DB
-  const topKeywords = await prisma.seoKeyword.findMany({
-    orderBy: [{ cachedOrganicClicks: 'desc' }, { cachedSearchVolume: 'desc' }],
-    take: 6,
-  });
-  const maxImpr = Math.max(...topKeywords.map((k) => k.cachedSearchVolume || 1), 1);
 
   return {
     connectedEmail: conn?.connectedEmail || null,
@@ -965,22 +1055,19 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
     googleAds: {
       connectedEmail: conn?.connectedEmail || null,
       customerId: conn?.selectedGadsCustomerId || conn?.detectedGadsCustomerId || 'Chưa liên kết Customer ID',
-      status: 'ZERO_SPEND_READY' as const,
+      status: (totalAdsSpendVnd > 0 ? 'ACTIVE_SPEND' : 'ZERO_SPEND_READY') as any,
       activeCampaignsCount: realAdsCampaigns.length,
       totalSpendVnd: totalAdsSpendVnd,
+      source: 'Google Ads API / Nhập file Excel báo cáo Ads',
       statusMessage:
         realAdsCampaigns.length > 0
-          ? `Đang đồng bộ ${realAdsCampaigns.length} chiến dịch Google Ads thực tế.`
-          : 'Chưa có chiến dịch Google Ads phát sinh chi phí trong kỳ.',
+          ? `Đang quản lý ${realAdsCampaigns.length} chiến dịch Google Ads đã xác minh.`
+          : 'Chưa có chiến dịch Google Ads chính thức (Nhập từ file Excel/CSV hoặc liên kết Customer ID).',
     },
     googleTrends: {
-      marketCluster: 'Từ khóa Tìm kiếm Thực tế (Google Search Console)',
-      topics: topKeywords.map((k) => ({
-        topic: k.keyword,
-        interestScore: Math.min(100, Math.max(10, Math.round(((k.cachedSearchVolume || 0) / maxImpr) * 100))),
-        trend: (k.trendDirection === 'rising' ? 'rising' : 'stable') as 'rising' | 'stable',
-        searchQuery: k.keyword,
-      })),
+      status: 'RESTRICTED_ACCESS' as const,
+      marketCluster: 'Google Trends API là chương trình thử nghiệm hạn chế (Restricted Alpha). Hệ thống chưa được cấp quyền (not authorized) và chưa kết nối.',
+      topics: [],
     },
   };
 }
