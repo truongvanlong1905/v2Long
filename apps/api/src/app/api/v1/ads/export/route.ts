@@ -27,6 +27,15 @@ interface GoogleRealtimeStoredConfig {
   lastActiveUsers30m?: number;
   lastActivePages?: Array<{ page: string; users: number }>;
   lastActiveEvents?: Array<{ event: string; count: number }>;
+  propertyCache?: Record<
+    string,
+    {
+      lastRealtimeSyncAt?: string;
+      lastActiveUsers30m?: number;
+      activePages?: Array<{ page: string; users: number }>;
+      activeEvents?: Array<{ event: string; count: number }>;
+    }
+  >;
 }
 
 function getRealtimeConfigPath(): string {
@@ -888,6 +897,7 @@ export async function POST(request: Request) {
           activeUsers30m: isLiveConnected ? cfg.lastActiveUsers30m || 0 : 0,
           activePages: isLiveConnected ? cfg.lastActivePages || [] : [],
           activeEvents: isLiveConnected ? cfg.lastActiveEvents || [] : [],
+          propertyCache: cfg.propertyCache || {},
         });
       }
 
@@ -1206,20 +1216,37 @@ export async function POST(request: Request) {
         }
 
         const nowIso = new Date().toISOString();
+        const currentCfg = readRealtimeConfig();
+        const updatedCache = {
+          ...(currentCfg.propertyCache || {}),
+          ...(cleanPropId
+            ? {
+                [cleanPropId]: {
+                  lastRealtimeSyncAt: nowIso,
+                  lastActiveUsers30m: activeUsers30m,
+                  activePages,
+                  activeEvents,
+                },
+              }
+            : {}),
+        };
         writeRealtimeConfig({
           lastRealtimeSyncAt: nowIso,
           lastActiveUsers30m: activeUsers30m,
           lastActivePages: activePages,
           lastActiveEvents: activeEvents,
+          propertyCache: updatedCache,
         });
 
         return jsonSuccess({
           connected: activeSources.length > 0,
+          propertyId: cleanPropId,
           sources: activeSources,
           lastRealtimeSyncAt: nowIso,
           activeUsers30m,
           activePages,
           activeEvents,
+          propertyCache: updatedCache,
           importedCampaigns: totalImportedCampaigns,
           importedKeywords: totalImportedKeywords,
           errors,

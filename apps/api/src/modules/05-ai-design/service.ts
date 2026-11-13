@@ -58,6 +58,38 @@ import {
   validateGeneratedImageBuffer,
 } from './perspective-compositor';
 
+async function getNextDesignAssetVersionNumber(designRequestId: number): Promise<number> {
+  const latest = await prisma.designAssetVersion.findFirst({
+    where: { designRequestId },
+    orderBy: { versionNumber: 'desc' },
+    select: { versionNumber: true },
+  });
+  return (latest?.versionNumber ?? 0) + 1;
+}
+
+async function createDesignAssetVersionSafe(
+  designRequestId: number,
+  buildData: (
+    versionNumber: number
+  ) => Parameters<typeof prisma.designAssetVersion.create>[0]['data']
+) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const versionNumber = await getNextDesignAssetVersionNumber(designRequestId);
+    try {
+      return await prisma.designAssetVersion.create({
+        data: buildData(versionNumber),
+      });
+    } catch (err: unknown) {
+      const code = (err as { code?: string } | null)?.code;
+      if (code === 'P2002' && attempt < 4) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Không thể cấp số phiên bản thiết kế mới do xung đột đồng thời.');
+}
+
 // Default fallback image only when required by internal provider execution
 const DEFAULT_SHOWROOM_PHOTO = '/brand/toantrung-led-wall.png';
 
@@ -702,7 +734,7 @@ export async function createDesignRequestWithAiDraft(
           chatMode: 'consultant_free',
           suggestedTaoAnhPrompt:
             input.designType === 'banner'
-              ? `@TaoAnhPoster: Thiết kế Poster quảng cáo LED cho dự án ${input.projectName || 'Toàn Trung'} (${input.bannerWidthPx || 1920}×${input.bannerHeightPx || 1080}px)`
+              ? `@TaoAnhPoster: Thiết kế Poster quảng cáo LED chuyên nghiệp (${input.bannerWidthPx || 1920}×${input.bannerHeightPx || 1080}px)`
               : `@TaoAnh: Ghép màn hình LED P2.5 kích thước ${Math.round(dimensionsData.widthM * 1000)}×${Math.round(dimensionsData.heightM * 1000)}mm vào các điểm chạm đã chấm trên ảnh hiện trạng, kèm đường gióng kích thước kỹ thuật (mm)`,
           modelUsed: 'AI Tư vấn Toàn Trung (Gemini Flash Free)',
           cost: '$0.00',
@@ -2130,42 +2162,40 @@ export async function processChatDesignRequest(
     status: 'success',
   });
 
-  const createdVersion = await prisma.designAssetVersion.create({
-    data: {
-      designRequestId: requestId,
-      versionNumber: nextVersionNumber,
-      versionType: 'ai_draft',
-      storageObjectKey: savedFile.storageObjectKey,
-      mimeType: savedFile.mimeType,
-      fileSizeBytes: savedFile.fileSizeBytes,
-      promptUsed: input.prompt,
-      parametersJson: JSON.stringify({
-        regeneratedFromVersion: existing.version,
-        sourceOrigin: sourceImageOrigin,
-        sourcePhotoId: activePhotoObj?.id ?? null,
-        sourceVersionId: sourceVersionObj?.id ?? null,
-        compositingMode: effectiveCompositingMode,
-        placementQuad: effectiveQuad,
-        screenDimensionsMm: {
-          widthMm: Math.round(effectiveWidthM * 1000),
-          heightMm: Math.round(effectiveHeightM * 1000),
-        },
-        bannerResolutionPx:
-          dbType === 'banner'
-            ? { widthPx: effectiveBannerW, heightPx: effectiveBannerH }
-            : undefined,
-        curvedDistortionWarning,
-        bannerResizeExplanation,
-        bannerTypographyWarning,
-        quality: input.quality,
-        providerId: providerResult.provider,
-        modelUsed: providerResult.modelUsed,
-      }),
-      aiUsageLogId: aiLog.log.id,
-      uploadedByUserId: actor.id,
-      isApprovedFinal: false,
-    },
-  });
+  const createdVersion = await createDesignAssetVersionSafe(requestId, (versionNumber) => ({
+    designRequestId: requestId,
+    versionNumber,
+    versionType: 'ai_draft',
+    storageObjectKey: savedFile.storageObjectKey,
+    mimeType: savedFile.mimeType,
+    fileSizeBytes: savedFile.fileSizeBytes,
+    promptUsed: input.prompt,
+    parametersJson: JSON.stringify({
+      regeneratedFromVersion: existing.version,
+      sourceOrigin: sourceImageOrigin,
+      sourcePhotoId: activePhotoObj?.id ?? null,
+      sourceVersionId: sourceVersionObj?.id ?? null,
+      compositingMode: effectiveCompositingMode,
+      placementQuad: effectiveQuad,
+      screenDimensionsMm: {
+        widthMm: Math.round(effectiveWidthM * 1000),
+        heightMm: Math.round(effectiveHeightM * 1000),
+      },
+      bannerResolutionPx:
+        dbType === 'banner'
+          ? { widthPx: effectiveBannerW, heightPx: effectiveBannerH }
+          : undefined,
+      curvedDistortionWarning,
+      bannerResizeExplanation,
+      bannerTypographyWarning,
+      quality: input.quality,
+      providerId: providerResult.provider,
+      modelUsed: providerResult.modelUsed,
+    }),
+    aiUsageLogId: aiLog.log.id,
+    uploadedByUserId: actor.id,
+    isApprovedFinal: false,
+  }));
 
   designContext.fields.activeVersionId = createdVersion.id;
 
@@ -2197,12 +2227,12 @@ export async function processChatDesignRequest(
       id: `msg-ai-${Date.now() + 1}`,
       role: 'assistant',
       text: [
-        `Đã kết xuất phiên bản thiết kế mới (v${nextVersionNumber} · ${providerResult.modelUsed}) và cập nhật lên màn hình chính.`,
+        `Đã kết xuất phiên bản thiết kế mới (v${createdVersion.versionNumber} · ${providerResult.modelUsed}) và cập nhật lên màn hình chính.`,
         ...extraNotices,
       ].join('\n'),
       timestamp: new Date().toISOString(),
       chatMode: 'image_generator',
-      versionNumber: nextVersionNumber,
+      versionNumber: createdVersion.versionNumber,
       versionId: createdVersion.id,
       providerId: providerResult.provider,
       modelUsed: providerResult.modelUsed,
@@ -2784,28 +2814,26 @@ export async function saveCompositedDraftVersion(
     originalFileName: params.fileName,
   });
 
-  const nextVersionNumber = (existing.assetVersions[0]?.versionNumber ?? 0) + 1;
   const currentMeta = parseProjectMetadata(existing.installPositionJson);
 
-  const createdVersion = await prisma.designAssetVersion.create({
-    data: {
-      designRequestId: requestId,
-      versionNumber: nextVersionNumber,
-      versionType: 'ai_draft',
-      storageObjectKey: savedFile.storageObjectKey,
-      mimeType: savedFile.mimeType,
-      fileSizeBytes: savedFile.fileSizeBytes,
-      promptUsed: params.note || `Bản ghép phối cảnh 3D trực tiếp trên ảnh hiện trạng (v${nextVersionNumber})`,
-      parametersJson: JSON.stringify({
-        studioComposite: true,
-        providerId: 'local_sandbox',
-        modelUsed: 'Toàn Trung Live 3D Compositor',
-        placementQuad: params.placementQuad || currentMeta.placementQuad,
-      }),
-      uploadedByUserId: actor.id,
-      isApprovedFinal: false,
-    },
-  });
+  const createdVersion = await createDesignAssetVersionSafe(requestId, (versionNumber) => ({
+    designRequestId: requestId,
+    versionNumber,
+    versionType: 'ai_draft',
+    storageObjectKey: savedFile.storageObjectKey,
+    mimeType: savedFile.mimeType,
+    fileSizeBytes: savedFile.fileSizeBytes,
+    promptUsed: params.note || `Bản ghép phối cảnh 3D trực tiếp trên ảnh hiện trạng (v${versionNumber})`,
+    parametersJson: JSON.stringify({
+      studioComposite: true,
+      providerId: 'local_sandbox',
+      modelUsed: 'Toàn Trung Live 3D Compositor',
+      placementQuad: params.placementQuad || currentMeta.placementQuad,
+    }),
+    uploadedByUserId: actor.id,
+    isApprovedFinal: false,
+  }));
+  const nextVersionNumber = createdVersion.versionNumber;
 
   const existingChat = currentMeta.chatMessages || [];
   const isTaoAnhCommand = params.note ? /^@/i.test(params.note.trim()) : false;
@@ -2900,22 +2928,18 @@ export async function uploadDesignerFinalRender(
     allowPdfOrDoc: true,
   });
 
-  const nextVersionNumber = (existing.assetVersions[0]?.versionNumber ?? 0) + 1;
-
-  const finalVer = await prisma.designAssetVersion.create({
-    data: {
-      designRequestId: requestId,
-      versionNumber: nextVersionNumber,
-      versionType: 'final_render',
-      storageObjectKey: savedFile.storageObjectKey,
-      mimeType: savedFile.mimeType,
-      fileSizeBytes: savedFile.fileSizeBytes,
-      promptUsed: params.note || 'Bản thiết kế hoàn thiện tải lên bởi Designer (Photoshop/3DsMax)',
-      parametersJson: JSON.stringify({ manualDesignerUpload: true }),
-      uploadedByUserId: actor.id,
-      isApprovedFinal: true,
-    },
-  });
+  const finalVer = await createDesignAssetVersionSafe(requestId, (versionNumber) => ({
+    designRequestId: requestId,
+    versionNumber,
+    versionType: 'final_render',
+    storageObjectKey: savedFile.storageObjectKey,
+    mimeType: savedFile.mimeType,
+    fileSizeBytes: savedFile.fileSizeBytes,
+    promptUsed: params.note || 'Bản thiết kế hoàn thiện tải lên bởi Designer (Photoshop/3DsMax)',
+    parametersJson: JSON.stringify({ manualDesignerUpload: true }),
+    uploadedByUserId: actor.id,
+    isApprovedFinal: true,
+  }));
 
   await prisma.designRequest.update({
     where: { id: requestId },

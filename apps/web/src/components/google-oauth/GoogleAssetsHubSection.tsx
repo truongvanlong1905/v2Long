@@ -88,9 +88,10 @@ export interface GoogleAssetsHubDto {
   googleAds: {
     connectedEmail: string | null;
     customerId: string | null;
-    status: 'ACTIVE_SPEND' | 'ZERO_SPEND_READY' | 'DISCONNECTED';
+    status: 'ACTIVE_SPEND' | 'ZERO_SPEND_READY' | 'CONFIRMED_ZERO' | 'UNAVAILABLE' | 'UNCONFIGURED' | 'DISCONNECTED';
     activeCampaignsCount: number;
-    totalSpendVnd: number;
+    totalSpendVnd: number | null;
+    spendVndText?: string;
     statusMessage: string;
   };
   googleTrends: {
@@ -536,9 +537,11 @@ export function GoogleAssetsHubSection({ hub, periodDays = 30, onSelectPeriod }:
             </div>
 
             <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm">
-              <span className="text-xs text-slate-500 block">Chi phí Google Ads tháng này</span>
+              <span className="text-xs text-slate-500 block">Chi phí Google Ads trong kỳ</span>
               <strong className="text-base font-bold text-slate-900 block mt-1">
-                {hub.googleAds.totalSpendVnd.toLocaleString('vi-VN')} đ
+                {hub.googleAds.totalSpendVnd !== null
+                  ? `${hub.googleAds.totalSpendVnd.toLocaleString('vi-VN')} đ`
+                  : (hub.googleAds.spendVndText || '—')}
               </strong>
             </div>
 

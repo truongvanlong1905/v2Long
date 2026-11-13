@@ -202,6 +202,7 @@ export function AiDesignWorkspace() {
 
   // Quick Gmail Gemini Free Connection & Live Test States
   const [gmailGeminiKeyInput, setGmailGeminiKeyInput] = useState('');
+  const [quickCustomEndpoint, setQuickCustomEndpoint] = useState('');
   const [gmailGeminiModelId, setGmailGeminiModelId] = useState('gemini-3.5-flash-lite');
   const [showGmailKeyPlain, setShowGmailKeyPlain] = useState(false);
   const [testingAiConnection, setTestingAiConnection] = useState(false);
@@ -2238,8 +2239,37 @@ export function AiDesignWorkspace() {
         await loadData(activeProj.id, true);
       }
     } catch (err) {
+      const errTxt = err instanceof Error ? err.message : 'Lỗi gửi yêu cầu chat AI.';
       setChatPrompt(rawText);
-      setError(err instanceof Error ? err.message : 'Lỗi gửi yêu cầu chat AI.');
+      setError(errTxt);
+      if (currentProject) {
+        const targetProjId = currentProject.id;
+        setRequests((prev) =>
+          prev.map((r) =>
+            r.id === targetProjId
+              ? {
+                  ...r,
+                  chatMessages: [
+                    ...r.chatMessages,
+                    {
+                      id: `msg-user-err-${Date.now()}`,
+                      role: 'user',
+                      text: rawText,
+                      timestamp: new Date().toISOString(),
+                    },
+                    {
+                      id: `msg-ai-err-${Date.now() + 1}`,
+                      role: 'assistant',
+                      text: `⚠️ Không thể xuất ảnh (${errTxt}). Đã hoàn trả lại câu lệnh vào ô nhập để bạn thử lại với Model **GPT-Image 2** (Khuyên dùng).`,
+                      timestamp: new Date().toISOString(),
+                      status: 'failed',
+                    },
+                  ],
+                }
+              : r
+          )
+        );
+      }
     } finally {
       setPendingUserPrompt(null);
       setSubmitting(false);
@@ -2665,13 +2695,32 @@ export function AiDesignWorkspace() {
   // Auto-detect provider from any pasted API Key & read all classified models supported by that Key
   const handleQuickConnectGmailGemini = async () => {
     const trimmedKey = gmailGeminiKeyInput.trim();
+    let cleanEndpoint = quickCustomEndpoint.trim();
+    if (cleanEndpoint) {
+      cleanEndpoint = cleanEndpoint
+        .replace(/\.+$/, '')
+        .replace(/\/images\/generations\/?$/i, '')
+        .replace(/\/chat\/completions\/?$/i, '')
+        .replace(/\/models\/?$/i, '')
+        .replace(/\/$/, '');
+    }
+
     // Auto-detect provider from pasted API Key prefix
     let detectedPid: AiProviderId = selectedProviderId || 'google_imagen';
     if (trimmedKey) {
       if (trimmedKey.startsWith('AIza') || trimmedKey.startsWith('AQ.')) {
         detectedPid = 'google_imagen';
-      } else if (trimmedKey.startsWith('sk-or-') || trimmedKey.startsWith('gsk_')) {
+      } else if (
+        trimmedKey.startsWith('sk-or-') ||
+        trimmedKey.startsWith('gsk_') ||
+        trimmedKey.startsWith('sk-jy-') ||
+        trimmedKey.startsWith('sk-cx-') ||
+        Boolean(cleanEndpoint)
+      ) {
         detectedPid = 'custom_endpoint';
+        if (!cleanEndpoint && (trimmedKey.startsWith('sk-jy-') || trimmedKey.startsWith('sk-cx-'))) {
+          cleanEndpoint = 'https://api.ccpro.cn/v1';
+        }
       } else if (trimmedKey.startsWith('sk-')) {
         detectedPid = 'openai_dalle';
       }
@@ -2682,7 +2731,7 @@ export function AiDesignWorkspace() {
     );
     if (!trimmedKey && !anyConnectedCat?.hasApiKey) {
       setError(
-        'Vui lòng dán mã API Key (Google AIza... hoặc OpenAI sk-...) vào ô bên dưới để hệ thống tự đọc danh sách Model!'
+        'Vui lòng dán mã API Key (Google AIza... hoặc OpenAI/Codex sk-...) vào ô bên dưới để hệ thống tự đọc danh sách Model!'
       );
       return;
     }
@@ -2708,6 +2757,7 @@ export function AiDesignWorkspace() {
           action: 'test_ai_connection',
           providerId: detectedPid,
           apiKey: trimmedKey || undefined,
+          apiEndpoint: cleanEndpoint || undefined,
           modelId: consultantModelId || gmailGeminiModelId,
         },
       });
@@ -3749,10 +3799,12 @@ export function AiDesignWorkspace() {
     );
   };
 
-  const canvasRatio = (() => {
+  const [naturalImageRatio, setNaturalImageRatio] = useState<number | null>(null);
+  const projectAspectRatio = (() => {
     const [w, h] = String(currentProject?.aspectRatio || '16:9').split(':').map(Number);
     return w > 0 && h > 0 ? w / h : 16 / 9;
   })();
+  const canvasRatio = naturalImageRatio || projectAspectRatio;
   const aiConnected = Boolean(providerStatus?.isConfigured);
 
   return (
@@ -4879,7 +4931,7 @@ export function AiDesignWorkspace() {
                           type="button"
                           onClick={() => {
                             handlePromptChange(
-                              `@TaoAnhPoster: Thiết kế Poster quảng cáo LED cho dự án ${currentProject?.projectName || 'Toàn Trung'} (${computedLiveSpecs.resW}×${computedLiveSpecs.resH}px)`
+                              `@TaoAnhPoster: Thiết kế Poster quảng cáo tỷ lệ ${paramForm.aspectRatio} (${computedLiveSpecs.resW}×${computedLiveSpecs.resH}px)`
                             );
                           }}
                           className="inline-flex items-center gap-1.5 rounded-xl bg-pink-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-md hover:bg-pink-700 transition"
@@ -4929,7 +4981,13 @@ export function AiDesignWorkspace() {
                             data-testid="canvas-result-image"
                             src={versionImageUrl}
                             alt={`Phiên bản AI v${currentVersion.versionNumber}`}
-                            className="h-full w-full object-cover"
+                            onLoad={(e) => {
+                              const img = e.currentTarget;
+                              if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                                setNaturalImageRatio(img.naturalWidth / img.naturalHeight);
+                              }
+                            }}
+                            className="h-full w-full object-contain bg-slate-950"
                           />
                           {/* Clipped Original Site Photo (Before) as top layer */}
                           <div
@@ -4940,7 +4998,7 @@ export function AiDesignWorkspace() {
                               data-testid="canvas-original-image"
                               src={sitePhotoUrl}
                               alt={selectedPhoto.name}
-                              className="h-full w-full object-cover"
+                              className="h-full w-full object-contain bg-slate-950"
                             />
                           </div>
                           {/* Labels */}
@@ -4965,7 +5023,13 @@ export function AiDesignWorkspace() {
                           data-testid="canvas-original-image"
                           src={sitePhotoUrl}
                           alt={selectedPhoto?.name || 'Ảnh dự án'}
-                          className="h-full w-full object-cover"
+                          onLoad={(e) => {
+                            const img = e.currentTarget;
+                            if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                              setNaturalImageRatio(img.naturalWidth / img.naturalHeight);
+                            }
+                          }}
+                          className="h-full w-full object-contain bg-slate-950"
                         />
                       ) : (
                         <img
@@ -4976,7 +5040,13 @@ export function AiDesignWorkspace() {
                               ? `Phiên bản AI v${currentVersion.versionNumber}`
                               : 'Ảnh sau khi AI sửa'
                           }
-                          className="h-full w-full object-cover"
+                          onLoad={(e) => {
+                            const img = e.currentTarget;
+                            if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                              setNaturalImageRatio(img.naturalWidth / img.naturalHeight);
+                            }
+                          }}
+                          className="h-full w-full object-contain bg-slate-950"
                         />
                       )}
 
@@ -5444,7 +5514,7 @@ export function AiDesignWorkspace() {
                             <img
                               src={thumbUrl}
                               alt="Kết quả AI sửa ảnh"
-                              className="h-full w-full object-cover"
+                              className="h-full w-full object-contain bg-slate-950"
                             />
                             <div className="absolute inset-x-2.5 bottom-2.5 flex items-center justify-between gap-2">
                               <button
@@ -5540,7 +5610,7 @@ export function AiDesignWorkspace() {
                     </div>
                     <div className="flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-3.5 py-2.5 text-xs font-bold text-emerald-900">
                       <RefreshCw className="h-3.5 w-3.5 animate-spin text-[#0BAF7C]" />
-                      <span>AI ({consultantModelName}) đang phân tích &amp; trả lời...</span>
+                      <span>AI ({consultantModelName}) đang kết xuất ảnh từ Gateway (thời gian xử lý ~35-45s)...</span>
                     </div>
                   </>
                 )}
@@ -5643,7 +5713,7 @@ export function AiDesignWorkspace() {
                       const defaultBannerPrompt =
                         activeProductPhotos.length > 0
                           ? `Tạo banner quảng cáo nổi bật có chèn ảnh sản phẩm "${activeProductPhotos[0]?.name.replace(/^\[Sản phẩm\]\s*/i, '')}" tỷ lệ ${paramForm.aspectRatio} (${paramForm.bannerWidthPx}×${paramForm.bannerHeightPx}px)`
-                          : `Tạo banner quảng cáo chuyên nghiệp cho dự án "${paramForm.projectName}" tỷ lệ ${paramForm.aspectRatio} (${paramForm.bannerWidthPx}×${paramForm.bannerHeightPx}px)`;
+                          : `Tạo banner quảng cáo chuyên nghiệp tỷ lệ ${paramForm.aspectRatio} (${paramForm.bannerWidthPx}×${paramForm.bannerHeightPx}px) với nội dung: `;
                       handlePromptChange(clean || defaultBannerPrompt);
                     }}
                     className="rounded-lg bg-pink-600 px-2.5 py-1.5 text-[11px] font-bold text-white shadow-2xs hover:bg-pink-700 transition"
@@ -6418,35 +6488,57 @@ export function AiDesignWorkspace() {
                         🔑 Gắn mã API Key — Tự động nhận diện hãng &amp; đọc đúng loại Model
                       </span>
                       <span className="text-[11px] text-slate-600">
-                        Hỗ trợ tự phân biệt Key <strong>Google Gemini/Imagen (`AIza...`)</strong>, <strong>OpenAI GPT 2.5 Image (`sk-...`)</strong>, <strong>OpenRouter (`sk-or-...`)</strong>.
+                        Hỗ trợ tự phân biệt Key <strong>Google Gemini/Imagen (`AIza...`)</strong>, <strong>OpenAI (`sk-...`)</strong>, <strong>Codex / DiDi (`sk-jy-cx...`)</strong>, <strong>OpenRouter (`sk-or-...`)</strong>.
                       </span>
                     </div>
                   </div>
 
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <input
-                      data-testid="gmail-gemini-key-input"
-                      type="password"
-                      autoComplete="off"
-                      value={gmailGeminiKeyInput}
-                      onChange={(e) => setGmailGeminiKeyInput(e.target.value)}
-                      placeholder="Dán mã API Key (VD: AIza... của Google hoặc sk-... của OpenAI)"
-                      className="flex-1 rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 font-mono text-xs text-slate-900 focus:border-[#1553A2] focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      data-testid="gmail-gemini-connect-btn"
-                      disabled={testingAiConnection || savingAiConfig}
-                      onClick={handleQuickConnectGmailGemini}
-                      className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#1553A2] px-4 py-2.5 font-extrabold text-white hover:bg-[#1E3A8A] disabled:opacity-50 shadow-2xs"
-                    >
-                      <Sparkles className="h-3.5 w-3.5" />
-                      <span>
-                        {testingAiConnection
-                          ? 'Đang nhận diện & đọc Model...'
-                          : 'Kết nối & Tự đọc Model'}
-                      </span>
-                    </button>
+                  <div className="space-y-2">
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        data-testid="gmail-gemini-key-input"
+                        type="password"
+                        autoComplete="off"
+                        value={gmailGeminiKeyInput}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setGmailGeminiKeyInput(val);
+                          if (
+                            (val.startsWith('sk-jy-') || val.startsWith('sk-cx-')) &&
+                            !quickCustomEndpoint
+                          ) {
+                            setQuickCustomEndpoint('https://api.ccpro.cn/v1');
+                          }
+                        }}
+                        placeholder="Dán mã API Key (VD: sk-jy-cx... của DiDi/Codex, AIza... của Google, sk-... của OpenAI)"
+                        className="flex-1 rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 font-mono text-xs text-slate-900 focus:border-[#1553A2] focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        data-testid="gmail-gemini-connect-btn"
+                        disabled={testingAiConnection || savingAiConfig}
+                        onClick={handleQuickConnectGmailGemini}
+                        className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#1553A2] px-4 py-2.5 font-extrabold text-white hover:bg-[#1E3A8A] disabled:opacity-50 shadow-2xs"
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        <span>
+                          {testingAiConnection
+                            ? 'Đang nhận diện & đọc Model...'
+                            : 'Kết nối & Tự đọc Model'}
+                        </span>
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <span className="text-[11px] text-slate-500 font-medium shrink-0">Gateway / Proxy URL (tùy chọn):</span>
+                      <input
+                        type="text"
+                        value={quickCustomEndpoint}
+                        onChange={(e) => setQuickCustomEndpoint(e.target.value)}
+                        placeholder="Tự động nhận diện (hoặc nhập: https://api.ccpro.cn/v1)"
+                        className="flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 font-mono text-[11px] text-slate-800 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
                   </div>
 
                   {testAiResult && (

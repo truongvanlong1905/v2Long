@@ -1,6 +1,12 @@
 import { prisma } from '@toantrung/database';
 import { buildStandardXlsxBuffer } from '../../core/export/xlsx-builder';
-import { getCanonicalDateRange, getCustomCanonicalDateRange } from '../../core/reporting-dates';
+import {
+  getCanonicalDateRange,
+  getCustomCanonicalDateRange,
+  getVietnamDateParts,
+  formatVietnamDateTime,
+  formatVietnamDate,
+} from '../../core/reporting-dates';
 import {
   CONTACT_CHANNEL_LABELS,
   PIPELINE_STATUS_LABELS,
@@ -304,7 +310,7 @@ export async function getScopedReportsDashboard(
     { totalL1: number; validL2: number; wonCount: number }
   >();
   for (const lead of leads) {
-    const dayKey = lead.createdAt.toISOString().slice(0, 10);
+    const dayKey = getVietnamDateParts(lead.createdAt).dateStr;
     const cur = trendMap.get(dayKey) ?? { totalL1: 0, validL2: 0, wonCount: 0 };
     cur.totalL1 += 1;
     if (isL2Valid(lead)) {
@@ -686,8 +692,8 @@ export async function getScopedReportsDashboard(
     scopeRole,
     scopeDescription,
     preset: query.preset,
-    fromDate: fromDate.toISOString(),
-    toDate: toDate.toISOString(),
+    fromDate: fromDateStr,
+    toDate: toDateStr,
     generatedAt: new Date().toISOString(),
     isSmallSample,
     smallSampleNotice: isSmallSample
@@ -824,7 +830,7 @@ export async function generateScopedReportExportBuffer(
         [
           row.stt,
           row.leadCode,
-          row.receivedAt.slice(0, 16).replace('T', ' '),
+          formatVietnamDateTime(row.receivedAt),
           row.assignedSalesName,
           row.companyOrCustomer,
           row.phone,
@@ -874,7 +880,7 @@ export async function generateScopedReportExportBuffer(
       rows: dashboard.detailedLeads.map((r) => ({
         stt: r.stt,
         leadCode: r.leadCode,
-        receivedAt: r.receivedAt.slice(0, 16).replace('T', ' '),
+        receivedAt: formatVietnamDateTime(r.receivedAt),
         assignedSalesName: r.assignedSalesName,
         companyOrCustomer: r.companyOrCustomer,
         phone: r.phone,

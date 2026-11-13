@@ -10,6 +10,7 @@ import type {
   SelectGoogleResourcesDto,
 } from '@toantrung/contracts';
 import { encryptSecret, decryptSecret, maskSecret } from '../../core/security/vault';
+import { getCanonicalDateRange } from '../../core/reporting-dates';
 import { retryUnresolvedGclids } from './service';
 import { refreshKeywordDerivedCacheFromCanonicalMetrics } from '../03-keywords-ads/service';
 
@@ -723,11 +724,10 @@ export const ALLOWED_COMPANY_GSC_SITES = [
 export async function syncAllGoogleDataAcrossModules(slot: 'FULL_0200' | 'LIGHT_1100' | 'LIGHT_1700' | 'MANUAL_RETRY' = 'MANUAL_RETRY') {
   const token = await getValidAccessToken();
   const conn = await getGoogleConnection();
-  const todayStr = new Date().toISOString().slice(0, 10);
   const windowDays = slot === 'FULL_0200' ? 30 : 2;
-  const startStr = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
+  const dateRange = getCanonicalDateRange(windowDays);
+  const startStr = dateRange.startDateStr;
+  const todayStr = dateRange.endDateStr;
 
   let syncedRecords = 0;
   let realGa4Count = 0;
@@ -785,6 +785,18 @@ export async function syncAllGoogleDataAcrossModules(slot: 'FULL_0200' | 'LIGHT_
     });
     const scConsecutive = scOutcome.success ? 0 : ((lastScLog?.consecutiveFailures ?? 0) + 1);
 
+    const ga4LogStatus = !ga4Outcome.success
+      ? 'failed'
+      : ga4Outcome.isPartial
+        ? 'partial'
+        : 'success';
+
+    const scLogStatus = !scOutcome.success
+      ? 'failed'
+      : scOutcome.isPartial
+        ? 'partial'
+        : 'success';
+
     // Log sync execution separately per provider to maintain truthful status
     await prisma.platformSyncLog.create({
       data: {
@@ -794,8 +806,10 @@ export async function syncAllGoogleDataAcrossModules(slot: 'FULL_0200' | 'LIGHT_
         windowStartDate: startStr,
         windowEndDate: todayStr,
         recordsSynced: realGa4Count,
-        status: ga4Outcome.success ? 'success' : 'failed',
-        errorMessage: ga4Outcome.success ? null : (ga4Outcome.error?.slice(0, 500) || 'Lỗi không xác định'),
+        status: ga4LogStatus,
+        errorMessage: ga4Outcome.success
+          ? (ga4Outcome.isPartial ? ga4Outcome.error?.slice(0, 500) || null : null)
+          : (ga4Outcome.error?.slice(0, 500) || 'Lỗi không xác định'),
         consecutiveFailures: ga4Consecutive,
         startedAt: new Date(),
         completedAt: new Date(),
@@ -810,8 +824,10 @@ export async function syncAllGoogleDataAcrossModules(slot: 'FULL_0200' | 'LIGHT_
         windowStartDate: startStr,
         windowEndDate: todayStr,
         recordsSynced: realScCount,
-        status: scOutcome.success ? 'success' : 'failed',
-        errorMessage: scOutcome.success ? null : (scOutcome.error?.slice(0, 500) || 'Lỗi không xác định'),
+        status: scLogStatus,
+        errorMessage: scOutcome.success
+          ? (scOutcome.isPartial ? scOutcome.error?.slice(0, 500) || null : null)
+          : (scOutcome.error?.slice(0, 500) || 'Lỗi không xác định'),
         consecutiveFailures: scConsecutive,
         startedAt: new Date(),
         completedAt: new Date(),
@@ -888,7 +904,9 @@ async function syncRealGoogleAnalytics(
   windowDays = 30,
 ): Promise<{ success: boolean; synced: number; isPartial?: boolean; isEmpty?: boolean; error?: string }> {
   let synced = 0;
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const dateRange = getCanonicalDateRange(windowDays);
+  const startStr = dateRange.startDateStr;
+  const todayStr = dateRange.endDateStr;
 
   const resAdmin = await fetch('https://analyticsadmin.googleapis.com/v1beta/accountSummaries', {
     headers: { Authorization: `Bearer ${token}` },
@@ -942,12 +960,13 @@ async function syncRealGoogleAnalytics(
     }
   }
 
-  const propOutcomes: Array<{ propId: string; ok: boolean; count: number; error?: string }> = [];
+  const propOutcomes: Array<{ propId: string; ok: boolean; count: number; error?: string; secondaryError?: string }> = [];
 
   for (const prop of targetProps) {
     const propId = prop.property.replace('properties/', '');
     let propSynced = 0;
     let propError: string | undefined;
+    const propSecondaryErrors: string[] = [];
 
     // 1. Query daily account metrics with dimension "date" so daily facts represent their actual date
     try {
@@ -958,7 +977,7 @@ async function syncRealGoogleAnalytics(
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          dateRanges: [{ startDate: `${windowDays}daysAgo`, endDate: 'today' }],
+          dateRanges: [{ startDate: startStr, endDate: todayStr }],
           dimensions: [{ name: 'date' }],
           metrics: [
             { name: 'activeUsers' },
@@ -1013,55 +1032,65 @@ async function syncRealGoogleAnalytics(
       propError = err instanceof Error ? err.message : 'Lỗi kết nối GA4 Data API';
     }
 
-    // 2. Query period-level deduplicated unique users (no date dimension) to avoid summing daily users
+    // 2. Query period-level deduplicated unique users (no date dimension) for standard windows (windowDays, 7d, 30d)
     if (!propError) {
-      try {
-        const periodResp = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propId}:runReport`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            dateRanges: [{ startDate: `${windowDays}daysAgo`, endDate: 'today' }],
-            metrics: [
-              { name: 'activeUsers' },
-              { name: 'screenPageViews' },
-              { name: 'eventCount' },
-            ],
-          }),
-        });
+      const targetWindows = Array.from(new Set([windowDays, 7, 30]));
+      for (const sDays of targetWindows) {
+        const sRange = getCanonicalDateRange(sDays);
+        try {
+          const periodResp = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${propId}:runReport`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              dateRanges: [{ startDate: sRange.startDateStr, endDate: sRange.endDateStr }],
+              metrics: [
+                { name: 'activeUsers' },
+                { name: 'screenPageViews' },
+                { name: 'eventCount' },
+              ],
+            }),
+          });
 
-        if (periodResp.ok) {
-          const pData = (await periodResp.json()) as {
-            rows?: Array<{
-              metricValues: Array<{ value: string }>;
-            }>;
-          };
-          const periodRow = pData.rows?.[0];
-          if (periodRow) {
-            const periodUsers = parseInt(periodRow.metricValues?.[0]?.value || '0', 10);
-            const periodViews = parseInt(periodRow.metricValues?.[1]?.value || '0', 10);
-            const periodEvents = parseInt(periodRow.metricValues?.[2]?.value || '0', 10);
+          if (periodResp.ok) {
+            const pData = (await periodResp.json()) as {
+              rows?: Array<{
+                metricValues: Array<{ value: string }>;
+              }>;
+            };
+            const periodRow = pData.rows?.[0];
+            if (periodRow) {
+              const periodUsers = parseInt(periodRow.metricValues?.[0]?.value || '0', 10);
+              const periodViews = parseInt(periodRow.metricValues?.[1]?.value || '0', 10);
+              const periodEvents = parseInt(periodRow.metricValues?.[2]?.value || '0', 10);
 
-            // Store period-level deduplicated snapshot safely under grain: 'account' with distinct campaignExternalId
-            await upsertPlatformMetricIdempotent(prisma, {
-              platform: 'ga4',
-              accountPropertyId: propId,
-              metricDate: todayStr,
-              grain: 'account',
-              campaignExternalId: 'PERIOD_SNAPSHOT',
-              clicks: periodUsers, // Deduplicated unique users for the entire period
-              impressions: periodEvents,
-              pageViews: periodViews,
-              isFinalized: false,
-            });
-            propSynced++;
-            synced++;
+              // Store period-level deduplicated snapshot safely with exact period metadata encoded
+              const snapshotKey = `PERIOD_SNAPSHOT:${sDays}D:${sRange.startDateStr}_${sRange.endDateStr}`;
+              await upsertPlatformMetricIdempotent(prisma, {
+                platform: 'ga4',
+                accountPropertyId: propId,
+                metricDate: todayStr,
+                grain: 'account',
+                campaignExternalId: snapshotKey,
+                clicks: periodUsers, // Deduplicated unique users for this period
+                impressions: periodEvents,
+                pageViews: periodViews,
+                isFinalized: false,
+              });
+              propSynced++;
+              synced++;
+            }
+          } else if (sDays === windowDays) {
+            const errText = await periodResp.text();
+            propSecondaryErrors.push(`Snapshot toàn kỳ lỗi HTTP ${periodResp.status}: ${errText.slice(0, 100)}`);
+          }
+        } catch (err) {
+          if (sDays === windowDays) {
+            propSecondaryErrors.push(`Snapshot toàn kỳ lỗi kết nối: ${err instanceof Error ? err.message : 'Unknown'}`);
           }
         }
-      } catch {
-        // non-fatal period snapshot query
       }
     }
 
@@ -1075,7 +1104,7 @@ async function syncRealGoogleAnalytics(
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            dateRanges: [{ startDate: `${windowDays}daysAgo`, endDate: 'today' }],
+            dateRanges: [{ startDate: startStr, endDate: todayStr }],
             dimensions: [{ name: 'date' }, { name: 'pagePath' }],
             metrics: [
               { name: 'screenPageViews' },
@@ -1113,9 +1142,12 @@ async function syncRealGoogleAnalytics(
             propSynced++;
             synced++;
           }
+        } else {
+          const errText = await pageResp.text();
+          propSecondaryErrors.push(`Top trang lỗi HTTP ${pageResp.status}: ${errText.slice(0, 100)}`);
         }
-      } catch {
-        // non-fatal
+      } catch (err) {
+        propSecondaryErrors.push(`Top trang lỗi kết nối: ${err instanceof Error ? err.message : 'Unknown'}`);
       }
     }
 
@@ -1124,13 +1156,15 @@ async function syncRealGoogleAnalytics(
       ok: !propError,
       count: propSynced,
       error: propError,
+      secondaryError: propSecondaryErrors.length > 0 ? propSecondaryErrors.join('; ') : undefined,
     });
   }
 
   const failedProps = propOutcomes.filter((p) => !p.ok);
   const successProps = propOutcomes.filter((p) => p.ok);
+  const secondaryErrorProps = propOutcomes.filter((p) => p.ok && p.secondaryError);
 
-  // If ALL properties failed report requests, return failure! Never swallow and return success!
+  // If ALL properties failed primary report requests, return failure! Never swallow and return success!
   if (successProps.length === 0) {
     const errDetails = failedProps.map((p) => `${p.propId}: ${p.error}`).join('; ');
     return {
@@ -1140,13 +1174,20 @@ async function syncRealGoogleAnalytics(
     };
   }
 
-  // Partial success when some properties failed
-  if (failedProps.length > 0) {
+  // Partial success when some properties failed or secondary queries failed
+  if (failedProps.length > 0 || secondaryErrorProps.length > 0) {
+    const msgParts: string[] = [];
+    if (failedProps.length > 0) {
+      msgParts.push(`${failedProps.length} thuộc tính bị lỗi chính (${failedProps.map((p) => p.propId).join(', ')})`);
+    }
+    if (secondaryErrorProps.length > 0) {
+      msgParts.push(`Báo cáo phụ bị gián đoạn: ${secondaryErrorProps.map((p) => `${p.propId}: ${p.secondaryError}`).join('; ')}`);
+    }
     return {
       success: true,
       synced,
       isPartial: true,
-      error: `Đồng bộ một phần: ${failedProps.length} thuộc tính bị lỗi (${failedProps.map((p) => p.propId).join(', ')})`,
+      error: `Đồng bộ một phần: ${msgParts.join(' | ')}`,
     };
   }
 
@@ -1159,8 +1200,9 @@ async function syncRealSearchConsole(
   windowDays = 30,
 ): Promise<{ success: boolean; synced: number; isPartial?: boolean; isEmpty?: boolean; error?: string }> {
   let synced = 0;
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const startStr = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const dateRange = getCanonicalDateRange(windowDays);
+  const startStr = dateRange.startDateStr;
+  const todayStr = dateRange.endDateStr;
 
   const resSC = await fetch('https://www.googleapis.com/webmasters/v3/sites', {
     headers: { Authorization: `Bearer ${token}` },
@@ -1205,11 +1247,12 @@ async function syncRealSearchConsole(
     }
   }
 
-  const siteOutcomes: Array<{ siteUrl: string; ok: boolean; count: number; error?: string }> = [];
+  const siteOutcomes: Array<{ siteUrl: string; ok: boolean; count: number; error?: string; secondaryError?: string }> = [];
 
   for (const site of targetSites) {
     let siteSynced = 0;
     let siteError: string | undefined;
+    const siteSecondaryErrors: string[] = [];
 
     // 1. Query daily site performance with dimension "date"
     try {
@@ -1296,6 +1339,8 @@ async function syncRealSearchConsole(
             }>;
           };
 
+          const kwAggMap = new Map<string, { keyword: string; clicks: number; impressions: number; totalPos: number; count: number }>();
+
           for (const row of qData.rows || []) {
             const rowDate = row.keys?.[0];
             const kw = row.keys?.[1];
@@ -1316,41 +1361,55 @@ async function syncRealSearchConsole(
             siteSynced++;
             synced++;
 
-            // Update SeoKeyword 30-day window cache snapshot
+            // Aggregate keyword across dates for 30-day SeoKeyword cache snapshot
+            const norm = kw.toLowerCase().trim();
+            const existing = kwAggMap.get(norm) || { keyword: kw, clicks: 0, impressions: 0, totalPos: 0, count: 0 };
+            existing.clicks += row.clicks;
+            existing.impressions += row.impressions;
+            existing.totalPos += row.position;
+            existing.count += 1;
+            kwAggMap.set(norm, existing);
+          }
+
+          // Populate SeoKeyword cache with aggregated totals across the window
+          for (const [norm, agg] of kwAggMap.entries()) {
+            const avgPos = agg.count > 0 ? Math.round((agg.totalPos / agg.count) * 10) / 10 : 0;
             try {
-              const norm = kw.toLowerCase().trim();
               await prisma.seoKeyword.upsert({
                 where: { keywordNorm: norm },
                 update: {
-                  cachedSearchVolume: row.impressions,
-                  cachedOrganicClicks: row.clicks,
-                  cachedAvgPosition: Math.round(row.position * 10) / 10,
+                  cachedSearchVolume: agg.impressions,
+                  cachedOrganicClicks: agg.clicks,
+                  cachedAvgPosition: avgPos,
                   cacheSourceAccountKey: site.siteUrl,
                   cacheWindowStartDate: startStr,
                   cacheWindowEndDate: todayStr,
                   cacheRefreshedAt: new Date(),
-                  trendDirection: row.clicks > 0 ? 'rising' : 'stable',
+                  trendDirection: agg.clicks > 0 ? 'rising' : 'stable',
                 },
                 create: {
-                  keyword: kw,
+                  keyword: agg.keyword,
                   keywordNorm: norm,
-                  cachedSearchVolume: row.impressions,
-                  cachedOrganicClicks: row.clicks,
-                  cachedAvgPosition: Math.round(row.position * 10) / 10,
+                  cachedSearchVolume: agg.impressions,
+                  cachedOrganicClicks: agg.clicks,
+                  cachedAvgPosition: avgPos,
                   cacheSourceAccountKey: site.siteUrl,
                   cacheWindowStartDate: startStr,
                   cacheWindowEndDate: todayStr,
                   cacheRefreshedAt: new Date(),
-                  trendDirection: row.clicks > 0 ? 'rising' : 'stable',
+                  trendDirection: agg.clicks > 0 ? 'rising' : 'stable',
                 },
               });
             } catch {
-              // non-fatal
+              // non-fatal cache refresh
             }
           }
+        } else {
+          const errText = await qResp.text();
+          siteSecondaryErrors.push(`Từ khóa lỗi HTTP ${qResp.status}: ${errText.slice(0, 100)}`);
         }
-      } catch {
-        // non-fatal keyword query
+      } catch (err) {
+        siteSecondaryErrors.push(`Từ khóa lỗi kết nối: ${err instanceof Error ? err.message : 'Unknown'}`);
       }
     }
 
@@ -1359,11 +1418,13 @@ async function syncRealSearchConsole(
       ok: !siteError,
       count: siteSynced,
       error: siteError,
+      secondaryError: siteSecondaryErrors.length > 0 ? siteSecondaryErrors.join('; ') : undefined,
     });
   }
 
   const failedSites = siteOutcomes.filter((s) => !s.ok);
   const successSites = siteOutcomes.filter((s) => s.ok);
+  const secondaryErrorSites = siteOutcomes.filter((s) => s.ok && s.secondaryError);
 
   // If ALL sites failed report requests, return failure!
   if (successSites.length === 0) {
@@ -1375,12 +1436,19 @@ async function syncRealSearchConsole(
     };
   }
 
-  if (failedSites.length > 0) {
+  if (failedSites.length > 0 || secondaryErrorSites.length > 0) {
+    const msgParts: string[] = [];
+    if (failedSites.length > 0) {
+      msgParts.push(`${failedSites.length} website bị lỗi chính (${failedSites.map((s) => s.siteUrl).join(', ')})`);
+    }
+    if (secondaryErrorSites.length > 0) {
+      msgParts.push(`Báo cáo từ khóa bị gián đoạn: ${secondaryErrorSites.map((s) => `${s.siteUrl}: ${s.secondaryError}`).join('; ')}`);
+    }
     return {
       success: true,
       synced,
       isPartial: true,
-      error: `Đồng bộ một phần: ${failedSites.length} website Search Console bị lỗi (${failedSites.map((s) => s.siteUrl).join(', ')})`,
+      error: `Đồng bộ một phần: ${msgParts.join(' | ')}`,
     };
   }
 

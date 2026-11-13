@@ -84,6 +84,7 @@ export async function refreshKeywordDerivedCacheFromCanonicalMetrics(options?: {
         where: {
           keywordTextNorm: { in: norms },
           metricDate: { gte: startStr, lte: endStr },
+          id: { gt: 1000 },
         },
       })
     : [];

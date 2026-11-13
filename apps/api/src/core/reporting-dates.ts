@@ -18,6 +18,10 @@ export const getVietnamDateParts: (referenceDate?: Date) => {
   dateStr: string;
 } = impl.getVietnamDateParts;
 
+export const formatVietnamDate: (date?: Date | string | null) => string = impl.formatVietnamDate;
+
+export const formatVietnamDateTime: (date?: Date | string | null) => string = impl.formatVietnamDateTime;
+
 export const getCanonicalDateRange: (
   periodDays: number,
   referenceDate?: Date,
@@ -25,7 +29,7 @@ export const getCanonicalDateRange: (
 ) => CanonicalDateRange = impl.getCanonicalDateRange;
 
 export const getCustomCanonicalDateRange: (
-  fromStr: string,
-  toStr: string,
+  fromStr?: string,
+  toStr?: string,
   timezone?: string,
 ) => CanonicalDateRange = impl.getCustomCanonicalDateRange;

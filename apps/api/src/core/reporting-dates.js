@@ -5,15 +5,39 @@
  */
 
 function getVietnamDateParts(referenceDate = new Date()) {
+  const d = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Ho_Chi_Minh',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
   });
-  const parts = formatter.format(referenceDate); // "YYYY-MM-DD"
+  const parts = formatter.format(d); // "YYYY-MM-DD"
   const [year, month, day] = parts.split('-').map((v) => parseInt(v, 10));
   return { year, month, day, dateStr: parts };
+}
+
+function formatVietnamDate(date) {
+  if (!date) return '—';
+  const d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) return '—';
+  return getVietnamDateParts(d).dateStr;
+}
+
+function formatVietnamDateTime(date) {
+  if (!date) return '—';
+  const d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) return '—';
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  return formatter.format(d).replace(',', '');
 }
 
 function getCanonicalDateRange(periodDays, referenceDate = new Date(), timezone = 'Asia/Ho_Chi_Minh') {
@@ -41,8 +65,25 @@ function getCanonicalDateRange(periodDays, referenceDate = new Date(), timezone 
 }
 
 function getCustomCanonicalDateRange(fromStr, toStr, timezone = 'Asia/Ho_Chi_Minh') {
-  const cleanFrom = fromStr.slice(0, 10);
-  const cleanTo = toStr.slice(0, 10);
+  if (!fromStr || !toStr) {
+    return getCanonicalDateRange(30, new Date(), timezone);
+  }
+  let cleanFrom = fromStr.slice(0, 10);
+  let cleanTo = toStr.slice(0, 10);
+
+  // Validate date format YYYY-MM-DD
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(cleanFrom) || !dateRegex.test(cleanTo)) {
+    return getCanonicalDateRange(30, new Date(), timezone);
+  }
+
+  // Handle reversed dates (if from > to, swap them)
+  if (cleanFrom > cleanTo) {
+    const temp = cleanFrom;
+    cleanFrom = cleanTo;
+    cleanTo = temp;
+  }
+
   const { dateStr: todayStr } = getVietnamDateParts();
 
   const startDateTime = new Date(`${cleanFrom}T00:00:00.000+07:00`);
@@ -65,7 +106,8 @@ function getCustomCanonicalDateRange(fromStr, toStr, timezone = 'Asia/Ho_Chi_Min
 
 module.exports = {
   getVietnamDateParts,
+  formatVietnamDate,
+  formatVietnamDateTime,
   getCanonicalDateRange,
   getCustomCanonicalDateRange,
 };
-

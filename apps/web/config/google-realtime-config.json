@@ -3,58 +3,100 @@
   "ga4AccessToken": "VAULT_PROTECTED_TOKEN",
   "gadsCustomerId": "889-102-4451",
   "autoRealtimeEnabled": true,
-  "lastRealtimeSyncAt": "2026-11-12T12:23:11.203Z",
-  "lastActiveUsers30m": 0,
+  "lastRealtimeSyncAt": "2026-11-13T04:25:33.196Z",
+  "lastActiveUsers30m": 12,
   "lastActivePages": [
     {
-      "page": "/ (30 ngày)",
-      "users": 267
+      "page": "Màn hình LED Toàn Trung - Đơn vị thi công màn hình LED 20+ năm kinh nghiệm",
+      "users": 7
     },
     {
-      "page": "/du-an/ (30 ngày)",
-      "users": 157
+      "page": "LED Ngoài Trời Archives - Toàn Trung",
+      "users": 2
     },
     {
-      "page": "/du-an/doanh-nghiep/ (30 ngày)",
-      "users": 67
+      "page": "LED Trong Nhà Archives - Toàn Trung",
+      "users": 2
     },
     {
-      "page": "/gioi-thieu-don-vi-thi-cong-man-hinh-led-uy-tin/ (30 ngày)",
-      "users": 52
-    },
-    {
-      "page": "/nang-luc-san-xuat-man-hinh-led/ (30 ngày)",
-      "users": 46
-    },
-    {
-      "page": "/lien-he-bao-gia-man-hinh-led/ (30 ngày)",
-      "users": 45
+      "page": "Công ty màn hình LED uy tín | Báo giá màn hình LED mới nhất 2026",
+      "users": 1
     }
   ],
   "lastActiveEvents": [
     {
-      "event": "page_view (30d)",
-      "count": 2675
+      "event": "page_view",
+      "count": 20
     },
     {
-      "event": "user_engagement (30d)",
-      "count": 1808
+      "event": "user_engagement",
+      "count": 12
     },
     {
-      "event": "users10s (30d)",
-      "count": 1561
+      "event": "users10s",
+      "count": 11
     },
     {
-      "event": "session_start (30d)",
-      "count": 1069
+      "event": "session_start",
+      "count": 9
     },
     {
-      "event": "scroll (30d)",
-      "count": 829
+      "event": "first_visit",
+      "count": 5
     },
     {
-      "event": "first_visit (30d)",
-      "count": 592
+      "event": "GA4_Form",
+      "count": 1
     }
-  ]
+  ],
+  "propertyCache": {
+    "512879968": {
+      "lastRealtimeSyncAt": "2026-11-13T04:25:33.196Z",
+      "lastActiveUsers30m": 12,
+      "activePages": [
+        {
+          "page": "Màn hình LED Toàn Trung - Đơn vị thi công màn hình LED 20+ năm kinh nghiệm",
+          "users": 7
+        },
+        {
+          "page": "LED Ngoài Trời Archives - Toàn Trung",
+          "users": 2
+        },
+        {
+          "page": "LED Trong Nhà Archives - Toàn Trung",
+          "users": 2
+        },
+        {
+          "page": "Công ty màn hình LED uy tín | Báo giá màn hình LED mới nhất 2026",
+          "users": 1
+        }
+      ],
+      "activeEvents": [
+        {
+          "event": "page_view",
+          "count": 20
+        },
+        {
+          "event": "user_engagement",
+          "count": 12
+        },
+        {
+          "event": "users10s",
+          "count": 11
+        },
+        {
+          "event": "session_start",
+          "count": 9
+        },
+        {
+          "event": "first_visit",
+          "count": 5
+        },
+        {
+          "event": "GA4_Form",
+          "count": 1
+        }
+      ]
+    }
+  }
 }

@@ -686,7 +686,13 @@ export class AiDesignProviderFactory {
     if (rawInputKey && !rawInputKey.includes('••••')) {
       if (rawInputKey.startsWith('AIza') || rawInputKey.startsWith('AQ.')) {
         detectedPid = 'google_imagen';
-      } else if (rawInputKey.startsWith('sk-or-') || rawInputKey.startsWith('gsk_')) {
+      } else if (
+        rawInputKey.startsWith('sk-or-') ||
+        rawInputKey.startsWith('gsk_') ||
+        rawInputKey.startsWith('sk-jy-') ||
+        rawInputKey.startsWith('sk-cx-') ||
+        Boolean(input.apiEndpoint?.trim())
+      ) {
         detectedPid = 'custom_endpoint';
       } else if (rawInputKey.startsWith('sk-')) {
         detectedPid = 'openai_dalle';
@@ -935,31 +941,52 @@ export class AiDesignProviderFactory {
       }
     }
 
-    // Auto-detect & Probe Usable Models for OpenAI (GPT 2.5 Image / GPT-Image-1 / DALL-E 3 / GPT-4o) or OpenRouter / Groq
-    const autoBaseUrl = effectiveKey.startsWith('sk-or-')
-      ? 'https://openrouter.ai/api/v1'
-      : effectiveKey.startsWith('gsk_')
-        ? 'https://api.groq.com/openai/v1'
-        : detectedPid === 'openai_dalle' || effectiveKey.startsWith('sk-')
-          ? 'https://api.openai.com/v1'
-          : 'https://openrouter.ai/api/v1';
-
-    const rawEndpoint =
-      input.apiEndpoint?.trim() || config.providers[detectedPid]?.apiEndpoint || autoBaseUrl;
-
-    const baseApiUrl = rawEndpoint
-      .replace(/\/images\/generations\/?$/i, '')
-      .replace(/\/chat\/completions\/?$/i, '')
-      .replace(/\/completions\/?$/i, '')
-      .replace(/\/models\/?$/i, '')
-      .replace(/\/$/, '');
+    // Auto-detect & Probe Usable Models for OpenAI, Custom Gateway (DiDi/CCPro, OpenRouter, Groq)
+    const candidateBaseUrls: string[] = [];
+    if (input.apiEndpoint?.trim()) {
+      candidateBaseUrls.push(input.apiEndpoint.trim());
+    } else if (config.providers[detectedPid]?.apiEndpoint) {
+      candidateBaseUrls.push(config.providers[detectedPid]!.apiEndpoint!);
+    }
+    if (effectiveKey.startsWith('sk-jy-') || effectiveKey.startsWith('sk-cx-')) {
+      candidateBaseUrls.unshift(
+        'https://api.ccpro.cn/v1',
+        'https://ccpro.cn/v1',
+        'https://gateway.ccpro.cn/v1'
+      );
+    } else if (effectiveKey.startsWith('sk-or-')) {
+      candidateBaseUrls.push('https://openrouter.ai/api/v1');
+    } else if (effectiveKey.startsWith('gsk_')) {
+      candidateBaseUrls.push('https://api.groq.com/openai/v1');
+    } else if (detectedPid === 'openai_dalle' || effectiveKey.startsWith('sk-')) {
+      candidateBaseUrls.push('https://api.openai.com/v1');
+    } else {
+      candidateBaseUrls.push('https://openrouter.ai/api/v1');
+    }
 
     let discoveredOpenAiModels: AiModelOptionDto[] = [];
     let totalOtherScanned = 0;
+    let successfulBaseUrl = candidateBaseUrls[0];
+    let listJson: {
+      data?: Array<{ id?: string; name?: string; description?: string }>;
+      models?: Array<{ id?: string; name?: string; description?: string }>;
+    } = {};
+    let lastErrStatus = 401;
+    let lastErrTxt = '';
+    let probeSucceeded = false;
 
-    if (baseApiUrl) {
+    for (const rawCandidate of candidateBaseUrls) {
+      const baseApiUrl = (rawCandidate || '')
+        .trim()
+        .replace(/\.+$/, '')
+        .replace(/\/images\/generations\/?$/i, '')
+        .replace(/\/chat\/completions\/?$/i, '')
+        .replace(/\/completions\/?$/i, '')
+        .replace(/\/models\/?$/i, '')
+        .replace(/\/$/, '');
+
       try {
-        const listRes = await fetch(`${baseApiUrl}/models`, {
+        let listRes = await fetch(`${baseApiUrl}/models`, {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${effectiveKey}`,
@@ -968,101 +995,184 @@ export class AiDesignProviderFactory {
           signal: AbortSignal.timeout(8000),
         });
 
-        if (!listRes.ok) {
-          const errTxt = await listRes.text();
-          return {
-            ok: false,
-            connected: false,
-            providerId: detectedPid,
-            modelTested: 'gpt-2.5-image',
-            latencyMs: Date.now() - started,
-            replyText: `Mã API Key (${detectedPid === 'openai_dalle' ? 'OpenAI' : 'Custom API'}) không hợp lệ hoặc bị từ chối [HTTP ${listRes.status}]: ${errTxt.slice(0, 140)}`,
-            maskedKey: maskKey(effectiveKey),
-          };
+        // DiDi / Codex / CCPro Gateway requires an initial chat conversation to activate the license key:
+        // "密钥尚未激活，请先在客户端发起一次对话完成激活后再查询 / Key not activated - start a conversation in your client first"
+        if (listRes.status === 403 || !listRes.ok) {
+          const errBody = await listRes.text();
+          lastErrTxt = errBody;
+          lastErrStatus = listRes.status;
+
+          if (
+            errBody.includes('激活') ||
+            errBody.includes('not activated') ||
+            errBody.includes('客户端发起一次对话')
+          ) {
+            try {
+              const pingRes = await fetch(`${baseApiUrl}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${effectiveKey}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  model: 'gpt-4o-mini',
+                  messages: [{ role: 'user', content: 'ping' }],
+                  max_tokens: 5,
+                }),
+                signal: AbortSignal.timeout(10000),
+              });
+
+              if (pingRes.ok) {
+                const retryListRes = await fetch(`${baseApiUrl}/models`, {
+                  method: 'GET',
+                  headers: {
+                    Authorization: `Bearer ${effectiveKey}`,
+                    Accept: 'application/json',
+                  },
+                  signal: AbortSignal.timeout(8000),
+                });
+                if (retryListRes.ok) {
+                  listJson = (await retryListRes.json()) as typeof listJson;
+                  successfulBaseUrl = baseApiUrl;
+                  probeSucceeded = true;
+                  break;
+                }
+              }
+            } catch {
+              // Ignore ping error and continue fallback
+            }
+          }
+        } else {
+          listJson = (await listRes.json()) as typeof listJson;
+          successfulBaseUrl = baseApiUrl;
+          probeSucceeded = true;
+          break;
         }
-
-        const listJson = (await listRes.json()) as {
-          data?: Array<{ id?: string; name?: string; description?: string }>;
-          models?: Array<{ id?: string; name?: string; description?: string }>;
-        };
-        const items = listJson.data || listJson.models || [];
-        totalOtherScanned = items.length;
-
-        const normalizedItems = items
-          .map((m) => ({
-            id: (m.id || m.name || '').trim(),
-            name: m.name || m.id || '',
-            description: m.description || '',
-          }))
-          .filter((m) => Boolean(m.id));
-
-        // 1. Separate Image Generation / Multi-Image Edit models on this API key
-        const openAiImagePriority = ['gpt-2.5-image', 'gpt-image-1', 'dall-e-3', 'dall-e-2'];
-        const imageCandidates = normalizedItems
-          .filter(
-            (m) =>
-              openAiImagePriority.includes(m.id) ||
-              /gpt-.*image|dall-e|flux|stable-diffusion|sdxl|imagen/i.test(m.id)
-          )
-          .sort((a, b) => {
-            const iA = openAiImagePriority.indexOf(a.id);
-            const iB = openAiImagePriority.indexOf(b.id);
-            return (iA === -1 ? 99 : iA) - (iB === -1 ? 99 : iB);
-          })
-          .slice(0, 6);
-
-        // If OpenAI key is valid and has gpt-image-1, also surface gpt-2.5-image alias if not explicitly listed yet
-        if (
-          detectedPid === 'openai_dalle' &&
-          !imageCandidates.some((m) => m.id === 'gpt-2.5-image')
-        ) {
-          imageCandidates.unshift({
-            id: 'gpt-2.5-image',
-            name: 'GPT 2.5 Image',
-            description: 'Model ghép ảnh sản phẩm công ty vào hiện trường & tạo Banner (OpenAI Image API).',
-          });
-        }
-
-        // 2. Separate Vision & Chat models on this API key
-        const openAiChatPriority = ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini'];
-        const chatCandidates = normalizedItems
-          .filter(
-            (m) =>
-              !/embedding|tts|whisper|moderation|audio|realtime|dall-e|gpt-.*image|babbage|davinci|instruct/i.test(
-                m.id
-              ) &&
-              (openAiChatPriority.includes(m.id) ||
-                /^(gpt-4o|gpt-4\.1|chatgpt-4o|claude-3|gemini-|deepseek)/i.test(m.id))
-          )
-          .sort((a, b) => {
-            const iA = openAiChatPriority.indexOf(a.id);
-            const iB = openAiChatPriority.indexOf(b.id);
-            return (iA === -1 ? 99 : iA) - (iB === -1 ? 99 : iB);
-          })
-          .slice(0, 6);
-
-        discoveredOpenAiModels = [
-          ...imageCandidates.map((m) => ({
-            id: m.id,
-            name: m.id === 'gpt-2.5-image' ? 'GPT 2.5 Image' : m.id === 'gpt-image-1' ? 'GPT-Image 1' : m.name || m.id,
-            badge: '🎨 Tạo & Ghép ảnh',
-            costPerImageUsd: 0.04,
-            supportsInpainting: true,
-            description: m.description || 'Model Tạo phối cảnh, ghép sản phẩm & thiết kế Banner.',
-          })),
-          ...chatCandidates.map((m) => ({
-            id: m.id,
-            name: m.name && m.name !== m.id ? `${m.name} (${m.id})` : m.id,
-            badge: '💬 Chat & Phân tích ảnh',
-            costPerImageUsd: 0.0,
-            supportsInpainting: true,
-            description: m.description || 'Model Trò chuyện & phân tích ảnh hiện trường.',
-          })),
-        ];
-      } catch {
-        // Ignore network/parse error if custom endpoint doesn't expose /models
+      } catch (e) {
+        lastErrTxt = e instanceof Error ? e.message : 'Lỗi kết nối';
       }
     }
+
+    if (!probeSucceeded) {
+      return {
+        ok: false,
+        connected: false,
+        providerId: detectedPid,
+        modelTested: 'gpt-image-2',
+        latencyMs: Date.now() - started,
+        replyText: `Mã API Key (${detectedPid === 'openai_dalle' ? 'OpenAI' : 'Custom API'}) không hợp lệ hoặc bị từ chối [HTTP ${lastErrStatus}]: ${lastErrTxt.slice(0, 140)}`,
+        maskedKey: maskKey(effectiveKey),
+      };
+    }
+
+    const items = listJson.data || listJson.models || [];
+    totalOtherScanned = items.length;
+
+    const normalizedItems = items
+      .map((m) => ({
+        id: (m.id || m.name || '').trim(),
+        name: m.name || m.id || '',
+        description: m.description || '',
+      }))
+      .filter((m) => Boolean(m.id));
+
+    // 1. Separate Image Generation / Multi-Image Edit models on this API key
+    const openAiImagePriority = [
+      'gpt-image-2',
+      'gpt-image-2-4k',
+      'gpt-image-2.5',
+      'gpt-image-2.5-flare',
+      'gpt-image-2.5-sunburst',
+      'gpt-image-2-4k-high',
+      'gpt-image-2.6-flare-4k',
+      'gpt-image-2.6-sunburst-4k',
+      'gpt-2.5-image',
+      'gpt-image-1',
+      'dall-e-3',
+      'dall-e-2',
+    ];
+    const imageCandidates = normalizedItems
+      .filter(
+        (m) =>
+          openAiImagePriority.includes(m.id) ||
+          /gpt-.*image|dall-e|flux|stable-diffusion|sdxl|imagen/i.test(m.id)
+      )
+      .sort((a, b) => {
+        const iA = openAiImagePriority.indexOf(a.id);
+        const iB = openAiImagePriority.indexOf(b.id);
+        return (iA === -1 ? 99 : iA) - (iB === -1 ? 99 : iB);
+      })
+      .slice(0, 8);
+
+    // If OpenAI key is valid and has gpt-image-1, also surface gpt-2.5-image alias if not explicitly listed yet
+    if (
+      detectedPid === 'openai_dalle' &&
+      !imageCandidates.some((m) => m.id === 'gpt-2.5-image')
+    ) {
+      imageCandidates.unshift({
+        id: 'gpt-2.5-image',
+        name: 'GPT 2.5 Image',
+        description: 'Model ghép ảnh sản phẩm công ty vào hiện trường & tạo Banner (OpenAI Image API).',
+      });
+    }
+
+    // 2. Separate Vision & Chat models on this API key
+    const openAiChatPriority = [
+      'gpt-5.4',
+      'gpt-5.4-mini',
+      'gpt-5.5',
+      'gpt-5.6',
+      'gpt-6',
+      'gpt-4o',
+      'gpt-4o-mini',
+      'gpt-4.1',
+      'gpt-4.1-mini',
+    ];
+    const chatCandidates = normalizedItems
+      .filter(
+        (m) =>
+          !/embedding|tts|whisper|moderation|audio|realtime|dall-e|gpt-.*image|babbage|davinci|instruct/i.test(
+            m.id
+          ) &&
+          (openAiChatPriority.includes(m.id) ||
+            /^(gpt-5|gpt-6|gpt-4o|gpt-4\.1|chatgpt-4o|claude-3|gemini-|deepseek)/i.test(m.id))
+      )
+      .sort((a, b) => {
+        const iA = openAiChatPriority.indexOf(a.id);
+        const iB = openAiChatPriority.indexOf(b.id);
+        return (iA === -1 ? 99 : iA) - (iB === -1 ? 99 : iB);
+      })
+      .slice(0, 6);
+
+    discoveredOpenAiModels = [
+      ...imageCandidates.map((m) => ({
+        id: m.id,
+        name:
+          m.id === 'gpt-image-2'
+            ? 'GPT-Image 2 (Codex AI)'
+            : m.id === 'gpt-image-2-4k'
+              ? 'GPT-Image 2 4K Ultra'
+              : m.id === 'gpt-image-2.5'
+                ? 'GPT-Image 2.5 Pro'
+                : m.id === 'gpt-2.5-image'
+                  ? 'GPT 2.5 Image'
+                  : m.id === 'gpt-image-1'
+                    ? 'GPT-Image 1'
+                    : m.name || m.id,
+        badge: '🎨 Tạo & Ghép ảnh',
+        costPerImageUsd: 0.04,
+        supportsInpainting: true,
+        description: m.description || 'Model Tạo phối cảnh, ghép sản phẩm & thiết kế Banner.',
+      })),
+      ...chatCandidates.map((m) => ({
+        id: m.id,
+        name: m.name && m.name !== m.id ? `${m.name} (${m.id})` : m.id,
+        badge: '💬 Chat & Phân tích ảnh',
+        costPerImageUsd: 0.0,
+        supportsInpainting: true,
+        description: m.description || 'Model Trò chuyện & phân tích ảnh hiện trường.',
+      })),
+    ];
 
     const chosenOtherModel =
       input.modelId?.trim() ||
@@ -1075,6 +1185,7 @@ export class AiDesignProviderFactory {
     currentCfg.providers[detectedPid] = {
       ...prevEntry,
       apiKey: effectiveKey,
+      apiEndpoint: `${successfulBaseUrl}/images/generations`,
       activeModel: chosenOtherModel,
       ...(discoveredOpenAiModels.length > 0 ? { discoveredModels: discoveredOpenAiModels } : {}),
     };
@@ -1085,11 +1196,13 @@ export class AiDesignProviderFactory {
     const providerLabel =
       detectedPid === 'openai_dalle'
         ? 'OpenAI API'
-        : effectiveKey.startsWith('sk-or-')
-          ? 'OpenRouter API'
-          : effectiveKey.startsWith('gsk_')
-            ? 'Groq API'
-            : 'Custom API';
+        : effectiveKey.startsWith('sk-jy-') || effectiveKey.startsWith('sk-cx-')
+          ? 'DiDi / CCPro Gateway'
+          : effectiveKey.startsWith('sk-or-')
+            ? 'OpenRouter API'
+            : effectiveKey.startsWith('gsk_')
+              ? 'Groq API'
+              : 'Custom API';
 
     return {
       ok: true,

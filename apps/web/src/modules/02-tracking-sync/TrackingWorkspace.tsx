@@ -83,29 +83,49 @@ export function TrackingWorkspace() {
   activePeriodRef.current = periodDays;
   const dataRef = useRef<ExtendedTrackingDashboardDto | null>(null);
   dataRef.current = data;
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const isFetchingRef = useRef<boolean>(false);
 
   const fetchDashboard = useCallback(async (forceFresh = false) => {
+    // If background polling triggers while another request is actively in-flight, avoid duplicate pileup
+    if (isFetchingRef.current && !forceFresh) {
+      return;
+    }
+
+    // Cancel any previous in-flight request on filter switch or forced refresh
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     const thisRequestId = ++requestIdRef.current;
     const requestedPeriod = periodDays;
+    isFetchingRef.current = true;
     setLoading(!dataRef.current);
     setRealtimePolling(true);
     setErrorMsg(null);
     try {
       const res = await apiRequest<ExtendedTrackingDashboardDto>(
         `/api/v1/tracking?periodDays=${requestedPeriod}`,
-        { skipCache: forceFresh },
+        { skipCache: forceFresh, signal: controller.signal },
       );
       // Guard against race condition: only apply if this is still the active request and active period filter
       if (thisRequestId === requestIdRef.current && requestedPeriod === activePeriodRef.current) {
         setData(res);
         setLastPolledAt(new Date());
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || err?.message?.includes('aborted')) {
+        // Quietly ignore aborted requests from filter changes
+        return;
+      }
       if (thisRequestId === requestIdRef.current) {
         setErrorMsg(err instanceof Error ? err.message : 'Không thể tải dữ liệu Tracking.');
       }
     } finally {
       if (thisRequestId === requestIdRef.current) {
+        isFetchingRef.current = false;
         setLoading(false);
         setRealtimePolling(false);
       }
@@ -117,10 +137,15 @@ export function TrackingWorkspace() {
     // Auto-refresh CRM data every 15s when tab is active
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        void fetchDashboard(true);
+        void fetchDashboard(false);
       }
     }, 15000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   }, [fetchDashboard]);
 
   const handleTriggerSync = async (slot: 'FULL_0200' | 'LIGHT_1100' | 'MANUAL_RETRY') => {
@@ -131,6 +156,10 @@ export function TrackingWorkspace() {
       const res = await apiRequest<{
         recordsSynced: number;
         gclidRetryResult: { scanned: number; resolved: number };
+        ga4Status?: 'success' | 'partial' | 'failed';
+        scStatus?: 'success' | 'partial' | 'failed';
+        ga4Error?: string | null;
+        scError?: string | null;
       }>('/api/v1/tracking', {
         method: 'POST',
         csrfToken: user.csrfToken,
@@ -141,10 +170,19 @@ export function TrackingWorkspace() {
           runReconciliation: true,
         },
       });
-      setFeedbackMsg(
-        `Đồng bộ hoàn tất (${res.recordsSynced} bản ghi metric, quét lại ${res.gclidRetryResult.scanned} gclid, giải quyết ${res.gclidRetryResult.resolved}).`,
-      );
-      await fetchDashboard();
+
+      if (res.ga4Status === 'partial' || res.scStatus === 'partial') {
+        setFeedbackMsg(
+          `⚠️ Đồng bộ một phần (${res.recordsSynced} bản ghi): ${res.ga4Error || res.scError || 'Một số báo cáo con gặp lỗi hoặc bị giới hạn.'}`,
+        );
+      } else if (res.ga4Status === 'failed' && res.scStatus === 'failed') {
+        setErrorMsg(`❌ Đồng bộ thất bại: ${res.ga4Error || res.scError || 'Không thể kết nối Google APIs.'}`);
+      } else {
+        setFeedbackMsg(
+          `✅ Đồng bộ hoàn tất (${res.recordsSynced} bản ghi metric, quét lại ${res.gclidRetryResult.scanned} gclid, giải quyết ${res.gclidRetryResult.resolved}).`,
+        );
+      }
+      await fetchDashboard(true);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Lỗi chạy đồng bộ.');
     } finally {

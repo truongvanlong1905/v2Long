@@ -463,6 +463,10 @@ export async function triggerPlatformSyncExecution(input: TriggerPlatformSyncDto
     recordsSynced: syncRes.syncedRecords,
     gclidRetryResult,
     liveIntegrationMode: 'LIVE_CONFIGURED' as const,
+    ga4Status: syncRes.ga4Status,
+    scStatus: syncRes.scStatus,
+    ga4Error: syncRes.ga4Error,
+    scError: syncRes.scError,
   };
 }
 
@@ -894,9 +898,10 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
 
   const ga4Properties = ga4PropertiesDefs.map((def) => {
     const propMetrics = ga4Metrics.filter((m) => m.accountPropertyId === def.id);
-    const accountRows = propMetrics.filter((m) => m.grain === 'account' && m.campaignExternalId !== 'PERIOD_SNAPSHOT');
+    const snapshotKey = `PERIOD_SNAPSHOT:${dateRange.totalCalendarDays}D:${dateRange.startDateStr}_${dateRange.endDateStr}`;
+    const accountRows = propMetrics.filter((m) => m.grain === 'account' && !m.campaignExternalId?.startsWith('PERIOD_SNAPSHOT'));
     const pageRows = propMetrics.filter((m) => m.grain === 'page');
-    const periodSnapshot = propMetrics.find((m) => m.grain === 'account' && m.campaignExternalId === 'PERIOD_SNAPSHOT' && m.metricDate === todayStr);
+    const periodSnapshot = propMetrics.find((m) => m.grain === 'account' && m.campaignExternalId === snapshotKey && m.metricDate === todayStr);
 
     const hasAccountRows = accountRows.length > 0;
     const totalViews = hasAccountRows ? accountRows.reduce((sum, r) => sum + r.pageViews, 0) : null;
@@ -904,22 +909,27 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
 
     // Multi-day deduplication handling:
     // 1. For 1 day (today), daily activeUsers is the exact unique active users.
-    // 2. For multi-day periods, if periodSnapshot exists from provider, that is the true deduplicated count.
-    // 3. Otherwise, do NOT present the daily sum as period unique users. Keep sumDailyActiveUsers distinct.
+    // 2. For multi-day periods, if periodSnapshot exists from provider matching exact period metadata, that is the true deduplicated count.
+    // 3. If period snapshot is pending, fallback to sumDailyActiveUsers with isEstimatedPeriodUsers flag so UI is never blank.
     const sumDailyActiveUsers = hasAccountRows ? accountRows.reduce((sum, r) => sum + r.clicks, 0) : null;
     const deduplicatedPeriodUsers = periodSnapshot ? periodSnapshot.clicks : null;
 
     let activeUsers: number | null = null;
+    let isEstimatedPeriodUsers = false;
     if (periodDays <= 1) {
       activeUsers = sumDailyActiveUsers;
     } else if (deduplicatedPeriodUsers !== null) {
       activeUsers = deduplicatedPeriodUsers;
     } else {
-      activeUsers = null; // Honest null when multi-day deduplicated users not yet queried
+      activeUsers = sumDailyActiveUsers;
+      isEstimatedPeriodUsers = true;
     }
 
     let status: 'HAS_DATA' | 'CONFIRMED_ZERO' | 'FAILED_SYNC' | 'STALE_DATA_WITH_ERROR' | 'LEGACY_UNVERIFIED' | 'NOT_SYNCED' | 'NOT_CONNECTED' = 'NOT_SYNCED';
     let statusMessage = 'Chưa có bản ghi đồng bộ cho khoảng thời gian này (Bấm Đồng bộ ngay)';
+
+    const hasSuccessfulSyncLog = ga4Logs.some((l) => l.status === 'success' || l.status === 'partial');
+    const isHistoricalSnapshotOnly = !hasSuccessfulSyncLog && accountRows.length > 0;
 
     if (!conn?.connected) {
       status = 'NOT_CONNECTED';
@@ -928,11 +938,9 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
       status = hasAccountRows ? 'STALE_DATA_WITH_ERROR' : 'FAILED_SYNC';
       statusMessage = `Đồng bộ thất bại: ${latestGa4Log.errorMessage || 'Lỗi GA4 API'}`;
     } else if (hasAccountRows) {
-      // Check if all rows are historical aggregate snapshots on 2026-11-11
-      const isHistoricalSnapshotOnly = accountRows.every((r) => r.metricDate === '2026-11-11') && dateRange.totalCalendarDays > 1;
       if (isHistoricalSnapshotOnly) {
         status = 'LEGACY_UNVERIFIED';
-        statusMessage = 'Bản ghi lịch sử (Chưa đối soát qua phiên đồng bộ theo ngày)';
+        statusMessage = 'Bản ghi lịch sử (Chưa đối soát qua phiên đồng bộ Google API chính thức)';
       } else if ((totalViews ?? 0) === 0 && (sumDailyActiveUsers ?? 0) === 0) {
         status = 'CONFIRMED_ZERO';
         statusMessage = 'Xác minh từ GA4 API: 0 lượt truy cập trong kỳ';
@@ -942,7 +950,7 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
           ? 'Xác minh từ GA4 API: Người dùng hoạt động thực tế trong ngày'
           : deduplicatedPeriodUsers !== null
             ? 'Xác minh từ GA4 API: Người dùng duy nhất đã khử trùng lặp toàn kỳ'
-            : 'Xác minh từ GA4 API: Đã có số liệu xem trang (Người dùng đa ngày cần khử trùng lặp)';
+            : `Xác minh từ GA4 API: Đã có ${totalViews} lượt xem (Người dùng đa ngày cần snapshot khử trùng lặp khớp kỳ ${dateRange.startDateStr} đến ${dateRange.endDateStr})`;
       }
     }
 
@@ -1001,7 +1009,8 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
   const searchConsoleSites = sitesDefs.map((siteUrl) => {
     const siteRows = scMetrics.filter((m) => m.accountPropertyId === siteUrl);
     const siteAccountRows = siteRows.filter((m) => m.grain === 'account');
-    const siteKeywordRows = siteRows.filter((m) => m.grain === 'keyword');
+    // Exclude the 75 legacy cumulative snapshot rows (id <= 1000) that were incorrectly stored as daily records on 2026-11-11
+    const siteKeywordRows = siteRows.filter((m) => m.grain === 'keyword' && m.id > 1000);
 
     const hasAccountRows = siteAccountRows.length > 0;
     const totalClicks = hasAccountRows
@@ -1096,8 +1105,31 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
       ],
     },
   });
+  const hasAdsMetrics = realAdsMetrics.length > 0;
   const totalAdsSpendMicros = realAdsMetrics.reduce((sum, m) => sum + (m.spendMicros || 0n), 0n);
-  const totalAdsSpendVnd = Number(totalAdsSpendMicros / 1_000_000n);
+  const totalAdsSpendVnd = hasAdsMetrics ? Number(totalAdsSpendMicros / 1_000_000n) : null;
+
+  let adsStatus: 'ACTIVE_SPEND' | 'ZERO_SPEND_READY' | 'CONFIRMED_ZERO' | 'UNAVAILABLE' | 'UNCONFIGURED' = 'UNAVAILABLE';
+  let adsMessage = '';
+
+  if (!conn?.connected) {
+    adsStatus = 'UNCONFIGURED';
+    adsMessage = 'Chưa liên kết tài khoản Google OAuth';
+  } else if (!conn?.selectedGadsCustomerId && !conn?.detectedGadsCustomerId) {
+    adsStatus = 'UNCONFIGURED';
+    adsMessage = 'Chưa chọn Customer ID Google Ads trong cấu hình kết nối';
+  } else if (hasAdsMetrics) {
+    if (totalAdsSpendVnd !== null && totalAdsSpendVnd > 0) {
+      adsStatus = 'ACTIVE_SPEND';
+      adsMessage = `Đang quản lý ${realAdsCampaigns.length} chiến dịch Google Ads với chi phí ${totalAdsSpendVnd.toLocaleString('vi-VN')} đ trong kỳ`;
+    } else {
+      adsStatus = 'CONFIRMED_ZERO';
+      adsMessage = 'Xác minh từ Google Ads API: 0 đ chi phí trong kỳ';
+    }
+  } else {
+    adsStatus = 'UNAVAILABLE';
+    adsMessage = 'Chưa có bản ghi chi phí Google Ads cho kỳ này (Nhập từ file Excel/CSV hoặc kích hoạt Google Ads API)';
+  }
 
   return {
     connectedEmail: conn?.connectedEmail || null,
@@ -1114,14 +1146,12 @@ async function buildGoogleAssetsHub(periodDays: number = 30) {
     googleAds: {
       connectedEmail: conn?.connectedEmail || null,
       customerId: conn?.selectedGadsCustomerId || conn?.detectedGadsCustomerId || 'Chưa liên kết Customer ID',
-      status: (totalAdsSpendVnd > 0 ? 'ACTIVE_SPEND' : 'ZERO_SPEND_READY') as any,
+      status: adsStatus as any,
       activeCampaignsCount: realAdsCampaigns.length,
       totalSpendVnd: totalAdsSpendVnd,
+      spendVndText: totalAdsSpendVnd !== null ? `${totalAdsSpendVnd.toLocaleString('vi-VN')} đ` : '—',
       source: 'Google Ads API / Nhập file Excel báo cáo Ads',
-      statusMessage:
-        realAdsCampaigns.length > 0
-          ? `Đang quản lý ${realAdsCampaigns.length} chiến dịch Google Ads đã xác minh.`
-          : 'Chưa có chiến dịch Google Ads chính thức (Nhập từ file Excel/CSV hoặc liên kết Customer ID).',
+      statusMessage: adsMessage,
     },
     googleTrends: {
       status: 'RESTRICTED_ACCESS' as const,

@@ -50,6 +50,13 @@ import { GoogleOAuthManager } from '@/components/google-oauth/GoogleOAuthManager
 import { StandardDateRangeDropdown, type StandardDatePreset } from '@/components/common/StandardDateRangeDropdown';
 import { RealtimeLiveMotionIndicator } from '@/components/common/RealtimeLiveMotionIndicator';
 
+const COMPANY_PROPERTIES = [
+  { id: '512879968', name: 'toantrung.com.vn', label: 'toantrung.com.vn' },
+  { id: '509190194', name: 'manhinhled.net.vn', label: 'manhinhled.net.vn' },
+  { id: '538179128', name: 'bangled.vn', label: 'bangled.vn' },
+  { id: '508951192', name: 'Toàn Trung - Bảng điện tử', label: 'Bảng điện tử' },
+] as const;
+
 export function SeoKeywordsWorkspace() {
   const { user } = useSession();
   const [isAdsReadOnly, setIsAdsReadOnly] = useState(false);
@@ -96,6 +103,19 @@ export function SeoKeywordsWorkspace() {
   const [realtimeActivePages, setRealtimeActivePages] = useState<Array<{ page: string; users: number }>>([]);
   const [realtimeActiveEvents, setRealtimeActiveEvents] = useState<Array<{ event: string; count: number }>>([]);
   const [realtimeSources, setRealtimeSources] = useState<string[]>([]);
+  const [selectedRealtimePropertyId, setSelectedRealtimePropertyId] = useState<string>('512879968');
+  const [propertyRealtimeCache, setPropertyRealtimeCache] = useState<
+    Record<
+      string,
+      {
+        activeUsers30m: number;
+        activePages: Array<{ page: string; users: number }>;
+        activeEvents: Array<{ event: string; count: number }>;
+        lastRealtimeSyncAt?: string | null;
+      }
+    >
+  >({});
+  const [scTableWebsiteFilter, setScTableWebsiteFilter] = useState<string>('ALL');
 
   // Tab 2: Keyword Form & Filter State
   const [editingKeywordId, setEditingKeywordId] = useState<number | null>(null);
@@ -179,17 +199,28 @@ export function SeoKeywordsWorkspace() {
   }, [fetchSeoData]);
 
   const pollRealtimeData = useCallback(
-    async (silent = true) => {
+    async (silent = true, overridePropId?: string) => {
       if (!user) return;
+      const targetPropId = overridePropId || selectedRealtimePropertyId || '512879968';
       setRealtimePolling(true);
       try {
         const rt = await apiRequest<{
           connected: boolean;
+          propertyId?: string;
           sources: string[];
           lastRealtimeSyncAt: string;
           activeUsers30m: number;
           activePages: Array<{ page: string; users: number }>;
           activeEvents: Array<{ event: string; count: number }>;
+          propertyCache?: Record<
+            string,
+            {
+              lastRealtimeSyncAt?: string;
+              lastActiveUsers30m?: number;
+              activePages?: Array<{ page: string; users: number }>;
+              activeEvents?: Array<{ event: string; count: number }>;
+            }
+          >;
           importedCampaigns: number;
           importedKeywords: number;
           errors?: string[];
@@ -198,6 +229,7 @@ export function SeoKeywordsWorkspace() {
           csrfToken: user.csrfToken,
           body: {
             mode: 'poll_realtime',
+            propertyId: targetPropId,
           },
         });
         setLastRealtimeSyncAt(rt.lastRealtimeSyncAt);
@@ -205,6 +237,29 @@ export function SeoKeywordsWorkspace() {
         setRealtimeActivePages(rt.activePages || []);
         setRealtimeActiveEvents(rt.activeEvents || []);
         setRealtimeSources(rt.sources || []);
+
+        if (rt.propertyCache) {
+          const normalized: Record<string, any> = {};
+          for (const [k, v] of Object.entries(rt.propertyCache)) {
+            normalized[k] = {
+              activeUsers30m: v.lastActiveUsers30m || 0,
+              activePages: v.activePages || [],
+              activeEvents: v.activeEvents || [],
+              lastRealtimeSyncAt: v.lastRealtimeSyncAt || null,
+            };
+          }
+          setPropertyRealtimeCache(normalized);
+        } else {
+          setPropertyRealtimeCache((prev) => ({
+            ...prev,
+            [targetPropId]: {
+              activeUsers30m: rt.activeUsers30m || 0,
+              activePages: rt.activePages || [],
+              activeEvents: rt.activeEvents || [],
+              lastRealtimeSyncAt: rt.lastRealtimeSyncAt,
+            },
+          }));
+        }
 
         // Refresh workspace data silently from DB
         const res = await apiRequest<AdsWorkspacePayloadDto>('/api/v1/ads');
@@ -216,12 +271,13 @@ export function SeoKeywordsWorkspace() {
         setArticles(res.articles || []);
 
         if (!silent) {
+          const propName = COMPANY_PROPERTIES.find((p) => p.id === targetPropId)?.name || targetPropId;
           setFeedbackMsg(
             rt.sources?.length
-              ? `⚡ Đã đồng bộ Realtime từ ${rt.sources.join(' & ')} lúc ${new Date(
+              ? `⚡ Đã đồng bộ Realtime [${propName}] từ ${rt.sources.join(' & ')} lúc ${new Date(
                   rt.lastRealtimeSyncAt,
                 ).toLocaleTimeString('vi-VN')}.`
-              : `⚡ Đã làm mới dữ liệu Realtime từ Database lúc ${new Date().toLocaleTimeString('vi-VN')}.`,
+              : `⚡ Đã làm mới dữ liệu Realtime [${propName}] từ Database lúc ${new Date().toLocaleTimeString('vi-VN')}.`,
           );
         }
       } catch {
@@ -230,8 +286,21 @@ export function SeoKeywordsWorkspace() {
         setRealtimePolling(false);
       }
     },
-    [user],
+    [user, selectedRealtimePropertyId],
   );
+
+  const handleSelectRealtimeProperty = (propId: string) => {
+    setSelectedRealtimePropertyId(propId);
+    setGa4PropertyId(propId);
+    const cached = propertyRealtimeCache[propId];
+    if (cached) {
+      setRealtimeActiveUsers30m(cached.activeUsers30m || 0);
+      setRealtimeActivePages(cached.activePages || []);
+      setRealtimeActiveEvents(cached.activeEvents || []);
+      if (cached.lastRealtimeSyncAt) setLastRealtimeSyncAt(cached.lastRealtimeSyncAt);
+    }
+    void pollRealtimeData(false, propId);
+  };
 
   // Load saved realtime config on mount
   useEffect(() => {
@@ -248,17 +317,41 @@ export function SeoKeywordsWorkspace() {
           activeUsers30m: number;
           activePages: Array<{ page: string; users: number }>;
           activeEvents: Array<{ event: string; count: number }>;
+          propertyCache?: Record<
+            string,
+            {
+              lastRealtimeSyncAt?: string;
+              lastActiveUsers30m?: number;
+              activePages?: Array<{ page: string; users: number }>;
+              activeEvents?: Array<{ event: string; count: number }>;
+            }
+          >;
         }>('/api/v1/ads/export', {
           method: 'POST',
           csrfToken: user.csrfToken,
           body: { mode: 'get_realtime_config' },
         });
-        if (cfg.ga4PropertyId) setGa4PropertyId(cfg.ga4PropertyId);
+        if (cfg.ga4PropertyId) {
+          setGa4PropertyId(cfg.ga4PropertyId);
+          setSelectedRealtimePropertyId(cfg.ga4PropertyId);
+        }
         if (cfg.gsheetUrl) setGsheetUrl(cfg.gsheetUrl);
         if (cfg.lastRealtimeSyncAt) setLastRealtimeSyncAt(cfg.lastRealtimeSyncAt);
         setRealtimeActiveUsers30m(cfg.activeUsers30m || 0);
         setRealtimeActivePages(cfg.activePages || []);
         setRealtimeActiveEvents(cfg.activeEvents || []);
+        if (cfg.propertyCache) {
+          const normalized: Record<string, any> = {};
+          for (const [k, v] of Object.entries(cfg.propertyCache)) {
+            normalized[k] = {
+              activeUsers30m: v.lastActiveUsers30m || 0,
+              activePages: v.activePages || [],
+              activeEvents: v.activeEvents || [],
+              lastRealtimeSyncAt: v.lastRealtimeSyncAt || null,
+            };
+          }
+          setPropertyRealtimeCache(normalized);
+        }
       } catch {
         // ignore
       }
@@ -269,10 +362,10 @@ export function SeoKeywordsWorkspace() {
   useEffect(() => {
     if (!realtimeAutoEnabled || !user) return;
     const timer = setInterval(() => {
-      void pollRealtimeData(true);
+      void pollRealtimeData(true, selectedRealtimePropertyId);
     }, 15000);
     return () => clearInterval(timer);
-  }, [realtimeAutoEnabled, user, pollRealtimeData]);
+  }, [realtimeAutoEnabled, user, pollRealtimeData, selectedRealtimePropertyId]);
 
   const selectedArticle = useMemo(
     () => articles.find((a) => a.id === selectedArticleId) || null,
@@ -398,9 +491,9 @@ export function SeoKeywordsWorkspace() {
   }, [totalOrganicClicks, totalSearchVolume]);
 
   const avgCpcText = useMemo(() => {
-    if (!kpis?.totalClicks || !kpis?.totalSpendVndText) return '0 đ';
+    if (!kpis?.totalClicks || !kpis?.totalSpendVndText || kpis.totalSpendVndText === '—') return '—';
     const rawSpend = Number(kpis.totalSpendVndText.replace(/[^\d]/g, '')) || 0;
-    if (!rawSpend) return '0 đ';
+    if (!rawSpend) return '—';
     const cpc = Math.round(rawSpend / kpis.totalClicks);
     return `${cpc.toLocaleString('vi-VN')} đ`;
   }, [kpis]);
@@ -543,6 +636,13 @@ export function SeoKeywordsWorkspace() {
         return (b.cachedSearchVolume || 0) - (a.cachedSearchVolume || 0);
       });
   }, [keywords]);
+
+  const filteredSearchConsoleKeywords = useMemo(() => {
+    return topSearchConsoleKeywords.filter((k) => {
+      if (scTableWebsiteFilter === 'ALL') return true;
+      return k.targetWebsite === scTableWebsiteFilter;
+    });
+  }, [topSearchConsoleKeywords, scTableWebsiteFilter]);
 
   const handleSelectKeywordForWordStudio = (kw: SeoKeywordItemDto) => {
     setSelectedKeywordId(kw.id);
@@ -1502,7 +1602,7 @@ export function SeoKeywordsWorkspace() {
           </div>
 
           {/* Live GA4 Realtime Panel (Hiển thị khi có dữ liệu GA4 Realtime hoặc hướng dẫn kết nối nhanh) */}
-          <div className="bg-white border border-emerald-200/90 rounded-3xl p-5 shadow-2xs">
+          <div className="bg-white border border-emerald-200/90 rounded-3xl p-5 shadow-2xs space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -1511,26 +1611,46 @@ export function SeoKeywordsWorkspace() {
                 </h3>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {ga4PropertyId ? (
-                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-mono font-bold">
-                    GA4 Property: {ga4PropertyId}
-                  </span>
-                ) : (
-                  <a
-                    href="/api/v1/auth/google/authorize?redirect=true&returnPath=%2Fads"
-                    className="px-3.5 py-1.5 rounded-full bg-[#1E3A8A] hover:bg-blue-900 text-white text-xs font-bold shadow-2xs transition inline-flex items-center gap-1.5"
-                  >
-                    <span>🔗 Đăng nhập Google (OAuth 2.0) để tải dữ liệu thật về máy này</span>
-                  </a>
-                )}
+                <span className="text-xs text-slate-500 font-medium">Chọn website giám sát:</span>
+                <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-2xl">
+                  {COMPANY_PROPERTIES.map((site) => {
+                    const isSelected = selectedRealtimePropertyId === site.id;
+                    return (
+                      <button
+                        key={site.id}
+                        type="button"
+                        onClick={() => handleSelectRealtimeProperty(site.id)}
+                        className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                          isSelected
+                            ? 'bg-emerald-600 text-white shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                        }`}
+                        title={`GA4 Property ID: ${site.id}`}
+                      >
+                        <Globe className="w-3.5 h-3.5" />
+                        <span>{site.label}</span>
+                        <span
+                          className={`text-[10px] font-mono px-1.5 py-0.2 rounded-md ${
+                            isSelected ? 'bg-emerald-700 text-emerald-100' : 'bg-slate-200 text-slate-500'
+                          }`}
+                        >
+                          {site.id}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
               <div className="p-4 rounded-2xl bg-emerald-50/50 border border-emerald-100 flex flex-col justify-between">
-                <span className="text-xs font-bold text-emerald-800 uppercase">
-                  NGƯỜI DÙNG ĐANG HOẠT ĐỘNG (30 PHÚT QUA)
-                </span>
+                <div className="flex items-center justify-between text-xs font-bold text-emerald-800 uppercase">
+                  <span>NGƯỜI DÙNG HOẠT ĐỘNG (30 PHÚT QUA)</span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-mono lowercase">
+                    {COMPANY_PROPERTIES.find((p) => p.id === selectedRealtimePropertyId)?.label || selectedRealtimePropertyId}
+                  </span>
+                </div>
                 <div className="font-display text-3xl font-bold text-emerald-700 mt-2">
                   {realtimeActiveUsers30m}
                 </div>
@@ -1540,12 +1660,15 @@ export function SeoKeywordsWorkspace() {
               </div>
 
               <div className="p-4 rounded-2xl bg-slate-50/70 border border-slate-200/70 space-y-2">
-                <span className="text-xs font-bold text-slate-700 uppercase">
-                  TRANG ĐANG XEM TRỰC TIẾP
-                </span>
+                <div className="flex items-center justify-between text-xs font-bold text-slate-700 uppercase">
+                  <span>TRANG ĐANG XEM TRỰC TIẾP</span>
+                  <span className="text-[10px] text-slate-400 font-normal lowercase">
+                    {COMPANY_PROPERTIES.find((p) => p.id === selectedRealtimePropertyId)?.label || selectedRealtimePropertyId}
+                  </span>
+                </div>
                 {realtimeActivePages.length === 0 ? (
                   <p className="text-xs text-slate-400 pt-2">
-                    {ga4PropertyId
+                    {selectedRealtimePropertyId
                       ? 'Chưa ghi nhận lượt xem trang mới trong 30 phút qua'
                       : 'Kết nối GA4 Property ID để xem trang khách đang truy cập trực tiếp'}
                   </p>
@@ -1562,12 +1685,15 @@ export function SeoKeywordsWorkspace() {
               </div>
 
               <div className="p-4 rounded-2xl bg-slate-50/70 border border-slate-200/70 space-y-2">
-                <span className="text-xs font-bold text-slate-700 uppercase">
-                  SỰ KIỆN REALTIME (EVENTS)
-                </span>
+                <div className="flex items-center justify-between text-xs font-bold text-slate-700 uppercase">
+                  <span>SỰ KIỆN REALTIME (EVENTS)</span>
+                  <span className="text-[10px] text-slate-400 font-normal lowercase">
+                    {COMPANY_PROPERTIES.find((p) => p.id === selectedRealtimePropertyId)?.label || selectedRealtimePropertyId}
+                  </span>
+                </div>
                 {realtimeActiveEvents.length === 0 ? (
                   <p className="text-xs text-slate-400 pt-2">
-                    {ga4PropertyId
+                    {selectedRealtimePropertyId
                       ? 'Chưa có sự kiện mới trong 30 phút qua'
                       : 'Tự động ghi nhận page_view, click, form_submit, generate_lead'}
                   </p>
@@ -1633,7 +1759,9 @@ export function SeoKeywordsWorkspace() {
               </div>
               <div className="mt-4">
                 <div className="font-display text-3xl font-bold text-slate-900 tracking-tight">
-                  {kpis?.totalSpendVndText ? kpis.totalSpendVndText.replace(/\s*VND$/i, ' đ') : '0 đ'}
+                  {kpis?.totalSpendVndText && kpis.totalSpendVndText !== '—'
+                    ? kpis.totalSpendVndText.replace(/\s*VND$/i, ' đ')
+                    : '—'}
                 </div>
                 <p className="text-xs text-slate-400 mt-1.5">
                   Tổng ngân sách ghi nhận từ Google Ads
@@ -1749,9 +1877,30 @@ export function SeoKeywordsWorkspace() {
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                  {[
+                    { id: 'ALL', label: 'Tất cả 3 web' },
+                    { id: 'toantrung.com.vn', label: 'toantrung.com.vn' },
+                    { id: 'manhinhled.net.vn', label: 'manhinhled.net.vn' },
+                    { id: 'bangled.vn', label: 'bangled.vn' },
+                  ].map((btn) => (
+                    <button
+                      key={btn.id}
+                      type="button"
+                      onClick={() => setScTableWebsiteFilter(btn.id)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                        scTableWebsiteFilter === btn.id
+                          ? 'bg-white text-slate-900 shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {btn.label}
+                    </button>
+                  ))}
+                </div>
                 <span className="px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold">
-                  {topSearchConsoleKeywords.length} từ khóa ghi nhận lưu lượng thực tế
+                  {filteredSearchConsoleKeywords.length} từ khóa
                 </span>
               </div>
             </div>
@@ -1771,7 +1920,7 @@ export function SeoKeywordsWorkspace() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {topSearchConsoleKeywords.slice(0, 15).map((kw, idx) => {
+                  {filteredSearchConsoleKeywords.slice(0, 15).map((kw, idx) => {
                     const ctr =
                       kw.cachedSearchVolume && kw.cachedOrganicClicks
                         ? `${((kw.cachedOrganicClicks / kw.cachedSearchVolume) * 100).toFixed(1)}%`

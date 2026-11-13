@@ -167,8 +167,22 @@ export class OpenAiImageProvider implements AiDesignProvider {
 
       const json = await res.json();
       const b64 = json.data?.[0]?.b64_json;
+      let imgBuf: Buffer = Buffer.alloc(0);
+      if (b64) {
+        imgBuf = Buffer.from(b64, 'base64');
+      } else if (json.data?.[0]?.url) {
+        try {
+          const imgRes = await fetch(json.data[0].url);
+          if (imgRes.ok) {
+            imgBuf = Buffer.from(await imgRes.arrayBuffer());
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       return {
-        imageBuffer: Buffer.from(b64 || '', 'base64'),
+        imageBuffer: imgBuf,
         mimeType: 'image/png',
         durationMs,
         modelUsed: requestedModel,
@@ -178,7 +192,8 @@ export class OpenAiImageProvider implements AiDesignProvider {
         totalTokens: Math.round(input.prompt.length * 1.5) + 1024,
         costMicros: 40_000n,
         costCurrency: 'USD',
-        status: 'success',
+        status: imgBuf.length > 0 ? 'success' : 'failed',
+        errorMessage: imgBuf.length > 0 ? undefined : 'OpenAI không trả về dữ liệu ảnh hợp lệ.',
       };
     } catch (err) {
       return {
@@ -293,8 +308,22 @@ export class OpenAiImageProvider implements AiDesignProvider {
 
       const json = await res.json();
       const b64 = json.data?.[0]?.b64_json;
+      let imgBuf: Buffer = Buffer.alloc(0);
+      if (b64) {
+        imgBuf = Buffer.from(b64, 'base64');
+      } else if (json.data?.[0]?.url) {
+        try {
+          const imgRes = await fetch(json.data[0].url);
+          if (imgRes.ok) {
+            imgBuf = Buffer.from(await imgRes.arrayBuffer());
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       return {
-        imageBuffer: Buffer.from(b64 || '', 'base64'),
+        imageBuffer: imgBuf,
         mimeType: 'image/png',
         durationMs,
         modelUsed: requestedModel,
@@ -304,7 +333,8 @@ export class OpenAiImageProvider implements AiDesignProvider {
         totalTokens: Math.round(input.prompt.length * 1.5) + 1024,
         costMicros: 40_000n,
         costCurrency: 'USD',
-        status: 'success',
+        status: imgBuf.length > 0 ? 'success' : 'failed',
+        errorMessage: imgBuf.length > 0 ? undefined : 'OpenAI không trả về dữ liệu ảnh hợp lệ.',
       };
     } catch (err) {
       return {
