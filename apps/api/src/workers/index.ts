@@ -21,6 +21,10 @@ import {
   publishArticleViaWordPressAdapter,
   refreshKeywordDerivedCacheFromCanonicalMetrics,
 } from '../modules/03-keywords-ads/service';
+import {
+  getGmailLeadSyncConfig,
+  syncLeadsFromGmail,
+} from '../modules/01-leads/gmail-sync.service';
 
 /**
  * 1. Đồng bộ D3 đầy đủ (02:00) hoặc nhẹ (11:00 / 17:00)
@@ -231,12 +235,28 @@ export async function runDailyOverdueQuoteReminderJob() {
   return { scanned: overdueLeads.length, notifiedCount };
 }
 
+export async function runGmailLeadSyncJob(force = false) {
+  const cfg = await getGmailLeadSyncConfig();
+  if (!force && !cfg.enabled) {
+    return { skipped: true, reason: 'Chưa bật tự động đồng bộ Gmail.', created: 0, scanned: 0 };
+  }
+  const res = await syncLeadsFromGmail();
+  return {
+    skipped: false,
+    ok: res.ok,
+    message: res.message,
+    created: res.summary.created,
+    scanned: res.summary.scanned,
+  };
+}
+
 export type WorkerJobCode =
   | 'D3_SYNC_FULL'
   | 'GCLID_HOURLY_RETRY'
   | 'GOOGLE_LEAD_RECONCILE'
   | 'SEO_SCHEDULED_PUBLISH'
   | 'OVERDUE_QUOTE_REMINDER'
+  | 'GMAIL_LEAD_SYNC'
   | 'ALL_JOBS';
 
 export interface AdapterConnectionStatusItem {
@@ -338,6 +358,9 @@ export async function executeWorkerJobByCode(
   } else if (jobCode === 'OVERDUE_QUOTE_REMINDER') {
     const res = await runDailyOverdueQuoteReminderJob();
     summary = `Quét ${res.scanned} báo giá quá hạn > 7 ngày -> Đã gửi ${res.notifiedCount} thông báo nhắc NVKD.`;
+  } else if (jobCode === 'GMAIL_LEAD_SYNC') {
+    const res = await runGmailLeadSyncJob(true);
+    summary = res.message || `Quét ${res.scanned} thư Gmail -> Tạo ${res.created} Lead mới.`;
   } else {
     const [syncRes, gclidRes, seoRes, quoteRes] = await Promise.all([
       runScheduledD3SyncJob('LIGHT_1100'),

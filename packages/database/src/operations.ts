@@ -105,7 +105,7 @@ export function toJsonSafe<T>(input: T): unknown {
 }
 
 export interface WebhookLeadIntakeInput {
-  intakeSourceProvider: 'website_webhook' | 'google_lead_form' | 'manual';
+  intakeSourceProvider: 'website_webhook' | 'google_lead_form' | 'gmail_sync' | 'manual';
   intakeSourceAccountKey: string; // VD: 'toantrung.com.vn' | 'bangled.vn' | 'gads:123-456-7890' | 'internal'
   externalSubmissionId?: string | null;
   leadCode: string;
@@ -143,7 +143,7 @@ export interface WebhookLeadIntakeInput {
  */
 export function validateLeadIntakeByChannel(input: WebhookLeadIntakeInput): void {
   const phone = (input.phone || '').trim();
-  if (!phone) {
+  if (!phone && input.intakeSourceProvider !== 'gmail_sync') {
     throw new IntakeValidationError('Số điện thoại liên hệ là bắt buộc.');
   }
 
@@ -158,6 +158,14 @@ export function validateLeadIntakeByChannel(input: WebhookLeadIntakeInput): void
   } else if (input.intakeSourceProvider === 'google_lead_form') {
     if (!input.intakeSourceAccountKey || !input.externalSubmissionId) {
       throw new IntakeValidationError('Google Lead Form bắt buộc có mã tài khoản và externalSubmissionId.');
+    }
+  } else if (input.intakeSourceProvider === 'gmail_sync') {
+    const email = (input.email || '').trim();
+    if (!email) {
+      throw new IntakeValidationError('Lead đồng bộ từ Gmail bắt buộc có Email người gửi.');
+    }
+    if (!input.intakeSourceAccountKey || !input.externalSubmissionId) {
+      throw new IntakeValidationError('Lead đồng bộ từ Gmail bắt buộc có tài khoản Gmail và mã thư (externalSubmissionId).');
     }
   } else if (input.intakeSourceProvider === 'manual') {
     if (!input.createdByUserId) {

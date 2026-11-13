@@ -10,10 +10,13 @@ import {
   listLeadsForUser,
   setSalesReceivingStatus,
 } from '../../../../modules/01-leads/service';
+import { ensureGmailAutoSyncPollerStarted } from '../../../../modules/01-leads/gmail-sync.service';
 
 export async function GET(req: Request) {
   const auth = await requirePermissionSession(req, 'LEAD_VIEW_OWN');
   if (!auth.ok) return auth.response;
+
+  ensureGmailAutoSyncPollerStarted();
 
   try {
     const url = new URL(req.url);

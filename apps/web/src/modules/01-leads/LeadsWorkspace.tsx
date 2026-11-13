@@ -21,6 +21,7 @@ import {
   Info,
   Kanban,
   Layers,
+  Mail,
   MapPin,
   MessageSquarePlus,
   MoreHorizontal,
@@ -59,6 +60,7 @@ import {
 import { apiRequest, peekApiCache } from '@/core/http/client';
 import { useSession } from '@/core/session/SessionContext';
 import { ManualLeadModal } from './ManualLeadModal';
+import { GmailSyncModal } from './GmailSyncModal';
 import { LeadActivityTimeline } from './LeadActivityTimeline';
 import { StandardDateRangeDropdown, type StandardDatePreset } from '@/components/common/StandardDateRangeDropdown';
 import { RealtimeLiveMotionIndicator } from '@/components/common/RealtimeLiveMotionIndicator';
@@ -603,6 +605,7 @@ export function LeadsWorkspace() {
     'info' | 'pipeline' | 'attachments' | 'activity'
   >('info');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showGmailSyncModal, setShowGmailSyncModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importPreviewRows, setImportPreviewRows] = useState<
     Array<{
@@ -2211,6 +2214,19 @@ export function LeadsWorkspace() {
             </button>
           )}
 
+          {/* Đồng bộ Gmail */}
+          {canCreate && (
+            <button
+              type="button"
+              onClick={() => setShowGmailSyncModal(true)}
+              className="h-9 px-3 rounded-xl border border-rose-200 bg-rose-50/70 hover:bg-rose-100/80 text-rose-800 text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 shadow-2xs transition-colors"
+              title="Quét hộp thư Gmail và tự động tạo Lead khách hàng hỏi báo giá"
+            >
+              <Mail className="w-4 h-4 text-rose-600" />
+              <span>Đồng bộ Gmail</span>
+            </button>
+          )}
+
           {canCreate && (
             <button
               type="button"
@@ -3689,6 +3705,16 @@ export function LeadsWorkspace() {
         onCreatedSuccess={async (leadCode, assignedMsg) => {
           setFeedbackMsg(`Đã tạo thành công hồ sơ ${leadCode}. ${assignedMsg}`);
           await fetchLeads();
+        }}
+      />
+
+      {/* Modal Tạo Lead Tự Động Từ Gmail */}
+      <GmailSyncModal
+        open={showGmailSyncModal}
+        onClose={() => setShowGmailSyncModal(false)}
+        csrfToken={user?.csrfToken}
+        onSynced={() => {
+          void fetchLeads();
         }}
       />
 

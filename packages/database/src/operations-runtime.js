@@ -88,7 +88,7 @@ function toJsonSafe(input) {
 
 function validateLeadIntakeByChannel(input) {
   const phone = (input.phone || '').trim();
-  if (!phone) {
+  if (!phone && input.intakeSourceProvider !== 'gmail_sync') {
     throw new IntakeValidationError('Số điện thoại liên hệ là bắt buộc.');
   }
 
@@ -103,6 +103,14 @@ function validateLeadIntakeByChannel(input) {
   } else if (input.intakeSourceProvider === 'google_lead_form') {
     if (!input.intakeSourceAccountKey || !input.externalSubmissionId) {
       throw new IntakeValidationError('Google Lead Form bắt buộc có mã tài khoản và externalSubmissionId.');
+    }
+  } else if (input.intakeSourceProvider === 'gmail_sync') {
+    const email = (input.email || '').trim();
+    if (!email) {
+      throw new IntakeValidationError('Lead đồng bộ từ Gmail bắt buộc có Email người gửi.');
+    }
+    if (!input.intakeSourceAccountKey || !input.externalSubmissionId) {
+      throw new IntakeValidationError('Lead đồng bộ từ Gmail bắt buộc có tài khoản Gmail và mã thư (externalSubmissionId).');
     }
   } else if (input.intakeSourceProvider === 'manual') {
     if (!input.createdByUserId) {

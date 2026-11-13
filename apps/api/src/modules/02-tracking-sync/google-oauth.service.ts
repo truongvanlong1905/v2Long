@@ -501,6 +501,7 @@ export async function buildGoogleAuthorizeUrl(origin: string, returnPath = '/tra
     'https://www.googleapis.com/auth/analytics.readonly',
     'https://www.googleapis.com/auth/adwords',
     'https://www.googleapis.com/auth/webmasters.readonly',
+    'https://www.googleapis.com/auth/gmail.readonly',
   ].join(' ');
 
   const params = new URLSearchParams({
@@ -630,6 +631,7 @@ export async function connectSandboxDemo(email = 'toantrung.marketing@gmail.com'
       'https://www.googleapis.com/auth/analytics.readonly',
       'https://www.googleapis.com/auth/adwords',
       'https://www.googleapis.com/auth/webmasters.readonly',
+      'https://www.googleapis.com/auth/gmail.readonly',
       'openid',
       'email',
       'profile',

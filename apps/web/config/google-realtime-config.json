@@ -1,9 +1,9 @@
 {
   "ga4PropertyId": "512879968",
   "ga4AccessToken": "VAULT_PROTECTED_TOKEN",
-  "gadsCustomerId": "889-102-4451",
+  "gadsCustomerId": "",
   "autoRealtimeEnabled": true,
-  "lastRealtimeSyncAt": "2026-11-13T04:25:33.196Z",
+  "lastRealtimeSyncAt": "2026-11-13T05:48:21.534Z",
   "lastActiveUsers30m": 12,
   "lastActivePages": [
     {
