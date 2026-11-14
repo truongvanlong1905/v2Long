@@ -54,7 +54,7 @@ export interface GmailSyncRunResult {
 const DEFAULT_CONFIG: GmailLeadSyncConfig = {
   enabled: true,
   query: 'in:inbox newer_than:7d -category:promotions -category:social',
-  maxMessages: 20,
+  maxMessages: 30,
   onlyLeadKeywords: true,
   lastSyncAt: null,
   lastSyncSummary: null,
@@ -324,8 +324,16 @@ export function decodeGmailBody(payload?: GmailMimePart | null): string {
   return (plainText || htmlText).replace(/\r\n/g, '\n').trim();
 }
 
-export function parseStructuredFormEmailBody(subject: string, bodyText: string): {
+const FORM_FIELD_NEXT_LABELS =
+  '(?:Gửi đến từ|Nguồn form|Form|Khách hàng|Họ và tên|Họ tên|Tên khách hàng|Tên|Số điện thoại|SĐT|Điện thoại|Phone|Email|E-mail|Địa chỉ|Khu vực|Tỉnh\\/Thành|Sản phẩm|Nhu cầu|Màn hình|Ghi chú)';
+
+export function parseStructuredFormEmailBody(
+  subject: string,
+  bodyText: string,
+  fromHeader = '',
+): {
   isStructuredForm: boolean;
+  sourceWebsite: string | null;
   formSource: string | null;
   contactName: string | null;
   phone: string | null;
@@ -335,20 +343,22 @@ export function parseStructuredFormEmailBody(subject: string, bodyText: string):
   areaType: 'tphcm' | 'other_province' | null;
   province: string | null;
   productNote: string | null;
+  note: string | null;
 } {
   const normalizedBody = (bodyText || '')
     .replace(/\r\n/g, '\n')
     .replace(/--+\s*Thông báo biểu mẫu[\s\S]*$/i, '')
+    .replace(/--+\s*This is a notification that a contact form[\s\S]*$/i, '')
     .trim();
 
   const extractField = (labels: string[]): string | null => {
     const labelGroup = labels.join('|');
     const regex = new RegExp(
-      `(?:^|\\n|\\s-\\s*)(?:${labelGroup})\\s*:\\s*([^\\n]+?)(?=\\s+-\\s*(?:Gửi đến từ|Khách hàng|Họ tên|Tên|Số điện thoại|SĐT|Điện thoại|Email|Địa chỉ|Sản phẩm|Nhu cầu)\\s*:|\\n|$)`,
+      `(?:^|\\n|\\s+-\\s*|\\s+)(?:${labelGroup})\\s*:\\s*([^\\n]+?)(?=(?:\\s+-\\s*|\\s+)${FORM_FIELD_NEXT_LABELS}\\s*:|\\n|$)`,
       'i',
     );
     const match = normalizedBody.match(regex);
-    const val = match?.[1]?.trim();
+    const val = match?.[1]?.trim().replace(/^[-–—\s]+|[-–—\s]+$/g, '');
     return val || null;
   };
 
@@ -358,6 +368,7 @@ export function parseStructuredFormEmailBody(subject: string, bodyText: string):
   const rawEmail = extractField(['Email', 'E-mail']);
   const address = extractField(['Địa chỉ', 'Khu vực', 'Tỉnh/Thành']);
   const productNote = extractField(['Sản phẩm', 'Nhu cầu', 'Màn hình']);
+  const note = extractField(['Ghi chú']);
 
   const phoneExtract = rawPhone
     ? normalizeVietnamPhone(rawPhone)
@@ -390,6 +401,16 @@ export function parseStructuredFormEmailBody(subject: string, bodyText: string):
     }
   }
 
+  const originHint = `${fromHeader}\n${subject}\n${bodyText}`.toLowerCase();
+  let sourceWebsite: string | null = null;
+  if (originHint.includes('bangled')) {
+    sourceWebsite = 'bangled.vn';
+  } else if (originHint.includes('manhinhled.net.vn')) {
+    sourceWebsite = 'manhinhled.net.vn';
+  } else if (originHint.includes('toantrung')) {
+    sourceWebsite = 'toantrung.com.vn';
+  }
+
   const isStructuredForm = Boolean(
     formSource ||
       contactName ||
@@ -399,6 +420,7 @@ export function parseStructuredFormEmailBody(subject: string, bodyText: string):
 
   return {
     isStructuredForm,
+    sourceWebsite,
     formSource,
     contactName,
     phone: validPhone,
@@ -408,6 +430,7 @@ export function parseStructuredFormEmailBody(subject: string, bodyText: string):
     areaType,
     province,
     productNote,
+    note,
   };
 }
 
@@ -650,7 +673,7 @@ async function runSyncLeadsFromGmailInternal(options?: {
       const parsedFrom = parseEmailAddressHeader(fromHeader);
 
       const bodyText = decodeGmailBody(msgData.payload) || msgData.snippet || '';
-      const structured = parseStructuredFormEmailBody(subject, bodyText);
+      const structured = parseStructuredFormEmailBody(subject, bodyText, fromHeader);
       const fallbackPhone = extractVietnamPhoneFromText(`${subject}\n${bodyText}`);
       const resolvedPhone = structured.phone || fallbackPhone.normalizedPhone;
       const isPhoneUnstandardized = structured.phone
@@ -683,7 +706,14 @@ async function runSyncLeadsFromGmailInternal(options?: {
         continue;
       }
 
-      const leadEmail = structured.email || parsedFrom.email;
+      // For structured form notification emails, the From header is the website mailer (e.g. toantrungco@gmail.com),
+      // NOT the customer's email/company — only use customer email/company if explicitly present in the form body.
+      const leadEmail = structured.isStructuredForm
+        ? structured.email
+        : parsedFrom.email;
+      const leadCompanyName = structured.isStructuredForm
+        ? null
+        : parsedFrom.companyHint;
       const leadContactName = structured.contactName || parsedFrom.contactName;
       const leadProjectName = structured.productNote
         ? `${structured.productNote}${structured.formSource ? ` (${structured.formSource})` : ''}`.slice(0, 160)
@@ -693,7 +723,7 @@ async function runSyncLeadsFromGmailInternal(options?: {
       const dupCheck = await inspectDuplicateAndPriceCheck({
         phone: resolvedPhone || '',
         email: leadEmail,
-        companyName: parsedFrom.companyHint,
+        companyName: leadCompanyName,
         projectName: leadProjectName,
       });
 
@@ -709,14 +739,24 @@ async function runSyncLeadsFromGmailInternal(options?: {
         phone: phoneForLead,
         email: leadEmail,
         contactName: leadContactName,
-        companyName: parsedFrom.companyHint,
+        companyName: leadCompanyName,
         projectName: leadProjectName,
         areaType: structured.areaType,
         province: structured.province,
         installationAddress: structured.address,
-        selfReportedSource: structured.formSource || `Gmail (${conn.connectedEmail})`,
+        sourceWebsite: structured.sourceWebsite,
+        selfReportedSource:
+          structured.formSource ||
+          (structured.sourceWebsite ? `Form báo giá ${structured.sourceWebsite}` : `Gmail (${conn.connectedEmail})`),
         assignedSalesId: assignment.assignedSalesId,
-        marketingSource: structured.formSource ? 'Website Toàn Trung' : 'Email Dự án',
+        marketingSource:
+          structured.sourceWebsite === 'bangled.vn'
+            ? 'Website bangled.vn'
+            : structured.sourceWebsite === 'manhinhled.net.vn'
+              ? 'Website manhinhled.net.vn'
+              : structured.formSource || structured.isStructuredForm
+                ? 'Website Toàn Trung'
+                : 'Email Dự án',
         sourceResolutionMethod: 'gmail_sync',
       });
 

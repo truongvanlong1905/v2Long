@@ -606,6 +606,7 @@ export function LeadsWorkspace() {
   >('info');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showGmailSyncModal, setShowGmailSyncModal] = useState(false);
+  const [gmailAutoSyncLive, setGmailAutoSyncLive] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importPreviewRows, setImportPreviewRows] = useState<
     Array<{
@@ -876,6 +877,28 @@ export function LeadsWorkspace() {
       }
     }
   }, [debouncedSearchQuery, includeSpam, leads.length]);
+
+  useEffect(() => {
+    let active = true;
+    apiRequest<{
+      connected: boolean;
+      hasGmailScope: boolean;
+      isSandboxDemo: boolean;
+      config?: { enabled?: boolean };
+    }>('/api/v1/leads/gmail-sync')
+      .then((res) => {
+        if (!active) return;
+        setGmailAutoSyncLive(
+          Boolean(res.connected && res.hasGmailScope && !res.isSandboxDemo && res.config?.enabled),
+        );
+      })
+      .catch(() => {
+        // ignore status probe errors
+      });
+    return () => {
+      active = false;
+    };
+  }, [showGmailSyncModal]);
 
   useEffect(() => {
     void fetchLeads();
@@ -2219,11 +2242,25 @@ export function LeadsWorkspace() {
             <button
               type="button"
               onClick={() => setShowGmailSyncModal(true)}
-              className="h-9 px-3 rounded-xl border border-rose-200 bg-rose-50/70 hover:bg-rose-100/80 text-rose-800 text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 shadow-2xs transition-colors"
-              title="Quét hộp thư Gmail và tự động tạo Lead khách hàng hỏi báo giá"
+              className={`h-9 px-3 rounded-xl border text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 shadow-2xs transition-colors ${
+                gmailAutoSyncLive
+                  ? 'border-emerald-200 bg-emerald-50/80 hover:bg-emerald-100/80 text-emerald-800'
+                  : 'border-rose-200 bg-rose-50/70 hover:bg-rose-100/80 text-rose-800'
+              }`}
+              title={
+                gmailAutoSyncLive
+                  ? 'Gmail Auto-Sync đang chạy nền mỗi 20 giây'
+                  : 'Quét hộp thư Gmail và tự động tạo Lead khách hàng hỏi báo giá'
+              }
             >
-              <Mail className="w-4 h-4 text-rose-600" />
+              <Mail className={`w-4 h-4 ${gmailAutoSyncLive ? 'text-emerald-600' : 'text-rose-600'}`} />
               <span>Đồng bộ Gmail</span>
+              {gmailAutoSyncLive && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-600 text-white px-1.5 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                  AUTO
+                </span>
+              )}
             </button>
           )}
 

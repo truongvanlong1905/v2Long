@@ -19,10 +19,13 @@ import {
   getWorkerJobsHistory,
   type WorkerJobCode,
 } from '../../../../workers';
+import { triggerBackgroundTrackingSyncIfStale } from '../../../../modules/02-tracking-sync/google-oauth.service';
 
 export async function GET(req: Request) {
   const auth = await requirePermissionSession(req, 'TRACKING_ADS_OPTIMIZE');
   if (!auth.ok) return auth.response;
+
+  triggerBackgroundTrackingSyncIfStale();
 
   try {
     const url = new URL(req.url);

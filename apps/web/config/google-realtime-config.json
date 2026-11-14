@@ -3,97 +3,159 @@
   "ga4AccessToken": "VAULT_PROTECTED_TOKEN",
   "gadsCustomerId": "",
   "autoRealtimeEnabled": true,
-  "lastRealtimeSyncAt": "2026-11-13T05:48:21.534Z",
-  "lastActiveUsers30m": 12,
+  "lastRealtimeSyncAt": "2026-11-13T19:07:20.337Z",
+  "lastActiveUsers30m": 0,
   "lastActivePages": [
     {
-      "page": "Màn hình LED Toàn Trung - Đơn vị thi công màn hình LED 20+ năm kinh nghiệm",
-      "users": 7
+      "page": "/ (30 ngày)",
+      "users": 295
     },
     {
-      "page": "LED Ngoài Trời Archives - Toàn Trung",
-      "users": 2
+      "page": "/du-an/ (30 ngày)",
+      "users": 169
     },
     {
-      "page": "LED Trong Nhà Archives - Toàn Trung",
-      "users": 2
+      "page": "/du-an/doanh-nghiep/ (30 ngày)",
+      "users": 83
     },
     {
-      "page": "Công ty màn hình LED uy tín | Báo giá màn hình LED mới nhất 2026",
-      "users": 1
+      "page": "/du-an/quang-cao-ngoai-troi/ (30 ngày)",
+      "users": 52
+    },
+    {
+      "page": "/gioi-thieu-don-vi-thi-cong-man-hinh-led-uy-tin/ (30 ngày)",
+      "users": 50
+    },
+    {
+      "page": "/lien-he-bao-gia-man-hinh-led/ (30 ngày)",
+      "users": 47
     }
   ],
   "lastActiveEvents": [
     {
-      "event": "page_view",
-      "count": 20
+      "event": "page_view (30d)",
+      "count": 2851
     },
     {
-      "event": "user_engagement",
-      "count": 12
+      "event": "user_engagement (30d)",
+      "count": 1889
     },
     {
-      "event": "users10s",
-      "count": 11
+      "event": "users10s (30d)",
+      "count": 1621
     },
     {
-      "event": "session_start",
-      "count": 9
+      "event": "session_start (30d)",
+      "count": 1161
     },
     {
-      "event": "first_visit",
-      "count": 5
+      "event": "scroll (30d)",
+      "count": 834
     },
     {
-      "event": "GA4_Form",
-      "count": 1
+      "event": "first_visit (30d)",
+      "count": 664
     }
   ],
   "propertyCache": {
+    "509190194": {
+      "lastRealtimeSyncAt": "2026-11-13T17:40:54.240Z",
+      "lastActiveUsers30m": 0,
+      "activePages": [],
+      "activeEvents": []
+    },
     "512879968": {
-      "lastRealtimeSyncAt": "2026-11-13T04:25:33.196Z",
-      "lastActiveUsers30m": 12,
+      "lastRealtimeSyncAt": "2026-11-13T18:30:39.167Z",
+      "lastActiveUsers30m": 0,
       "activePages": [
         {
-          "page": "Màn hình LED Toàn Trung - Đơn vị thi công màn hình LED 20+ năm kinh nghiệm",
-          "users": 7
+          "page": "/ (30 ngày)",
+          "users": 295
         },
         {
-          "page": "LED Ngoài Trời Archives - Toàn Trung",
-          "users": 2
+          "page": "/du-an/ (30 ngày)",
+          "users": 169
         },
         {
-          "page": "LED Trong Nhà Archives - Toàn Trung",
-          "users": 2
+          "page": "/du-an/doanh-nghiep/ (30 ngày)",
+          "users": 83
         },
         {
-          "page": "Công ty màn hình LED uy tín | Báo giá màn hình LED mới nhất 2026",
-          "users": 1
+          "page": "/du-an/quang-cao-ngoai-troi/ (30 ngày)",
+          "users": 52
+        },
+        {
+          "page": "/gioi-thieu-don-vi-thi-cong-man-hinh-led-uy-tin/ (30 ngày)",
+          "users": 50
+        },
+        {
+          "page": "/lien-he-bao-gia-man-hinh-led/ (30 ngày)",
+          "users": 47
         }
       ],
       "activeEvents": [
         {
-          "event": "page_view",
-          "count": 20
+          "event": "page_view (30d)",
+          "count": 2851
+        },
+        {
+          "event": "user_engagement (30d)",
+          "count": 1889
+        },
+        {
+          "event": "users10s (30d)",
+          "count": 1621
+        },
+        {
+          "event": "session_start (30d)",
+          "count": 1161
+        },
+        {
+          "event": "scroll (30d)",
+          "count": 834
+        },
+        {
+          "event": "first_visit (30d)",
+          "count": 664
+        }
+      ]
+    },
+    "538179128": {
+      "lastRealtimeSyncAt": "2026-11-13T17:38:26.467Z",
+      "lastActiveUsers30m": 0,
+      "activePages": [
+        {
+          "page": "/ (30 ngày)",
+          "users": 78
+        },
+        {
+          "page": "/bao-gia/ (30 ngày)",
+          "users": 57
+        },
+        {
+          "page": "/san-pham/ (30 ngày)",
+          "users": 29
+        },
+        {
+          "page": "/bang-led-an-toan-lao-dong/ (30 ngày)",
+          "users": 17
+        },
+        {
+          "page": "/bao-gia/page/2/ (30 ngày)",
+          "users": 17
+        },
+        {
+          "page": "/dong-ho-led-dem-giay-cho-gameshow/ (30 ngày)",
+          "users": 17
+        }
+      ],
+      "activeEvents": [
+        {
+          "event": "session_start",
+          "count": 1
         },
         {
           "event": "user_engagement",
-          "count": 12
-        },
-        {
-          "event": "users10s",
-          "count": 11
-        },
-        {
-          "event": "session_start",
-          "count": 9
-        },
-        {
-          "event": "first_visit",
-          "count": 5
-        },
-        {
-          "event": "GA4_Form",
           "count": 1
         }
       ]

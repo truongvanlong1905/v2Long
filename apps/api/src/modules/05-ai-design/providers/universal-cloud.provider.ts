@@ -156,7 +156,7 @@ export class UniversalCloudAiProvider implements AiDesignProvider {
             Authorization: `Bearer ${this.apiKey}`,
           },
           body: form,
-          signal: AbortSignal.timeout(75000),
+          signal: AbortSignal.timeout(90000),
         });
       } else {
         const payloadBody: Record<string, unknown> = {
@@ -176,7 +176,7 @@ export class UniversalCloudAiProvider implements AiDesignProvider {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(payloadBody),
-          signal: AbortSignal.timeout(75000),
+          signal: AbortSignal.timeout(90000),
         });
       }
 

@@ -161,8 +161,8 @@ export function validateLeadIntakeByChannel(input: WebhookLeadIntakeInput): void
     }
   } else if (input.intakeSourceProvider === 'gmail_sync') {
     const email = (input.email || '').trim();
-    if (!email) {
-      throw new IntakeValidationError('Lead đồng bộ từ Gmail bắt buộc có Email người gửi.');
+    if (!email && !phone) {
+      throw new IntakeValidationError('Lead đồng bộ từ Gmail bắt buộc có Email hoặc Số điện thoại.');
     }
     if (!input.intakeSourceAccountKey || !input.externalSubmissionId) {
       throw new IntakeValidationError('Lead đồng bộ từ Gmail bắt buộc có tài khoản Gmail và mã thư (externalSubmissionId).');

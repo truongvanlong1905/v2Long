@@ -2260,7 +2260,8 @@ export function AiDesignWorkspace() {
                     {
                       id: `msg-ai-err-${Date.now() + 1}`,
                       role: 'assistant',
-                      text: `⚠️ Không thể xuất ảnh (${errTxt}). Đã hoàn trả lại câu lệnh vào ô nhập để bạn thử lại với Model **GPT-Image 2** (Khuyên dùng).`,
+                      text: `⚠️ Không thể kết xuất ảnh (${errTxt}). Đã hoàn trả lại câu lệnh vào ô nhập để bạn bấm gửi lại.`,
+                      modelUsed: consultantModelName,
                       timestamp: new Date().toISOString(),
                       status: 'failed',
                     },

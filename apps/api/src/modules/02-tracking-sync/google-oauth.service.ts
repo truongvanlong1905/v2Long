@@ -719,6 +719,47 @@ export const ALLOWED_COMPANY_GSC_SITES = [
   'sc-domain:bangled.vn',
 ];
 
+const globalForTrackingSync = globalThis as typeof globalThis & {
+  __googleTrackingAutoSyncInFlight?: Promise<unknown> | null;
+  __googleTrackingLastAutoSyncAttemptMs?: number;
+};
+
+/**
+ * Tự động kích hoạt đồng bộ nền nhẹ (2 ngày gần nhất) khi dữ liệu đã cũ (>15 phút hoặc sang ngày mới)
+ * để trang /tracking luôn có số liệu ngày mới mà không cần chờ ca 02:00 / 11:00 / 17:00.
+ */
+export function triggerBackgroundTrackingSyncIfStale(): void {
+  if (globalForTrackingSync.__googleTrackingAutoSyncInFlight) return;
+  const now = Date.now();
+  const lastAttempt = globalForTrackingSync.__googleTrackingLastAutoSyncAttemptMs || 0;
+  if (now - lastAttempt < 5 * 60_000) return;
+
+  globalForTrackingSync.__googleTrackingLastAutoSyncAttemptMs = now;
+  const run = (async () => {
+    try {
+      const conn = await getGoogleConnection();
+      if (!conn?.connected || conn.isSandboxDemo) return;
+      const lastIso = conn.lastSuccessfulSyncAt || conn.lastSyncAt;
+      if (lastIso) {
+        const lastMs = Date.parse(lastIso);
+        const todayVn = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date(now));
+        const lastVn = Number.isFinite(lastMs)
+          ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date(lastMs))
+          : '';
+        if (lastVn === todayVn && Number.isFinite(lastMs) && now - lastMs < 15 * 60_000) {
+          return;
+        }
+      }
+      await syncAllGoogleDataAcrossModules('LIGHT_1100');
+    } catch {
+      // Never block or throw from background refresh
+    } finally {
+      globalForTrackingSync.__googleTrackingAutoSyncInFlight = null;
+    }
+  })();
+  globalForTrackingSync.__googleTrackingAutoSyncInFlight = run;
+}
+
 /**
  * FULL SYNC ACROSS ALL MODULES (02, 03, 04)
  * Called during manual sync button, OAuth callback, or scheduled worker slots (02:00, 11:00, 17:00)
